@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 环境配置（含API Key，不提交）
+.env
+
+# 向量数据库（自动重建）
+data/chroma/
+
+# 大文件（模型92MB，单独分发）
+local_models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 临时文件
+temp_*/
+*.tmp
+
+# 文档输出
+*.docx
