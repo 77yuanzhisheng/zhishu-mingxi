@@ -8,6 +8,7 @@ __pycache__/
 
 # 向量数据库（自动重建）
 data/chroma/
+data/chroma_bge_small/
 
 # 大文件（模型92MB，单独分发）
 local_models/

@@ -109,7 +109,9 @@ app.add_middleware(
 
 # 知识库模块（队员2）
 from backend.kb.router import router as kb_router
+from backend.chat.router import router as chat_router
 app.include_router(kb_router)
+app.include_router(chat_router)
 
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
@@ -139,3 +141,4 @@ async def health():
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
     }
+
