@@ -120,6 +120,10 @@ app.include_router(kb_router)
 from backend.learning.router import router as learning_router
 app.include_router(learning_router)
 
+# 多轮 RAG 对话模块（队员3）
+from backend.chat.router import router as chat_router
+app.include_router(chat_router)
+
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
 # app.include_router(rag_router)

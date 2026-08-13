@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS session_summaries (
+    session_id INTEGER PRIMARY KEY,
+    content TEXT NOT NULL,
+    summarized_through_message_id INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (summarized_through_message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS node_mastery (
     user_id INTEGER NOT NULL,
     node_id TEXT NOT NULL,
