@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+annotated-doc
+httpx
