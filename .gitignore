@@ -9,6 +9,9 @@ __pycache__/
 # 向量数据库（自动重建）
 data/chroma/
 
+# 学情分析运行时数据库（首次启动自动创建）
+data/learning.db
+
 # 大文件（模型92MB，单独分发）
 local_models/
 

@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动/关闭时的初始化与清理"""
+    # 启动时：初始化学情分析 SQLite 数据库
+    from backend.learning.database import init_database
+    init_database()
+    logger.info("学情分析数据库初始化完成")
+
     # 启动时：初始化知识库模块
     logger.info("正在初始化知识库模块...")
     try:
@@ -110,6 +115,10 @@ app.add_middleware(
 # 知识库模块（队员2）
 from backend.kb.router import router as kb_router
 app.include_router(kb_router)
+
+# 学情分析模块（队员3）
+from backend.learning.router import router as learning_router
+app.include_router(learning_router)
 
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
