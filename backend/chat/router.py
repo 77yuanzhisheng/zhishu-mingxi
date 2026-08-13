@@ -11,8 +11,10 @@ from pydantic import BaseModel, Field
 
 from backend.reasoning.service import (
     QuestionType,
+    build_proof_plan,
     detect_question_type,
     evaluate_reasoning_answer,
+    format_proof_plan_for_prompt,
     merge_reasoning_prompt,
     verify_symbolic_statement,
 )
@@ -43,6 +45,7 @@ class ChatPayload:
     reasoning_enabled: bool
     question_type: str
     symbolic_check: Any
+    proof_plan: Any
 
 
 def answer_token_limit(question: str) -> int:
@@ -111,6 +114,8 @@ def build_chat_payload(question: str, contexts: list[dict[str, Any]]) -> ChatPay
     system_prompt = merge_reasoning_prompt(base_system_prompt, question)
     question_type = detect_question_type(question)
     symbolic_result = verify_symbolic_statement(question)
+    proof_plan = build_proof_plan(question)
+    proof_plan_text = format_proof_plan_for_prompt(proof_plan)
     check_note = symbolic_check_note(question)
 
     context_parts = []
@@ -126,6 +131,7 @@ def build_chat_payload(question: str, contexts: list[dict[str, Any]]) -> ChatPay
         user_prompt = (
             f"## 参考资料\n{context_text}\n\n"
             f"## 符号校验\n{check_note or '暂无程序侧符号校验结果。'}\n\n"
+            f"## 符号证明计划\n{proof_plan_text}\n\n"
             f"## 学生问题\n{question}\n\n"
             "请根据以上参考资料回答学生的问题。"
         )
@@ -133,6 +139,7 @@ def build_chat_payload(question: str, contexts: list[dict[str, Any]]) -> ChatPay
         user_prompt = (
             f"## 学生问题\n{question}\n\n"
             f"## 符号校验\n{check_note or '暂无程序侧符号校验结果。'}\n\n"
+            f"## 符号证明计划\n{proof_plan_text}\n\n"
             "注意：知识库中未找到相关资料，请根据你的通用知识回答，并提醒学生资料不足。"
         )
 
@@ -141,6 +148,7 @@ def build_chat_payload(question: str, contexts: list[dict[str, Any]]) -> ChatPay
         reasoning_enabled=question_type != QuestionType.GENERAL,
         question_type=question_type.value,
         symbolic_check=symbolic_result,
+        proof_plan=proof_plan,
     )
 
 
@@ -206,6 +214,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             "enabled": payload.reasoning_enabled,
             "question_type": payload.question_type,
             "symbolic_check": asdict(payload.symbolic_check),
+            "proof_plan": asdict(payload.proof_plan),
             "evaluation": asdict(evaluation),
         },
     )

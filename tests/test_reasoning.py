@@ -207,3 +207,371 @@ def test_symbolic_check_note_reports_verified_result():
 
     assert "程序侧符号校验结果：通过" in note
     assert "truth table" in note
+
+
+
+def test_build_proof_plan_for_set_identity_uses_element_method():
+    from backend.reasoning.service import build_proof_plan
+
+    plan = build_proof_plan("\u8bc1\u660e\u96c6\u5408\u6052\u7b49\u5f0f\uff1a(A\u222aB)^c = A^c\u2229B^c")
+
+    assert plan.enabled is True
+    assert plan.method == "element_chasing"
+    assert any("\u4efb\u53d6\u5143\u7d20" in step for step in plan.steps)
+    assert any("\u53cd\u5411" in step for step in plan.steps)
+    assert plan.symbolic_check.checked is True
+
+
+def test_build_proof_plan_for_relation_transitivity_includes_counterexample():
+    from backend.reasoning.service import build_proof_plan
+
+    plan = build_proof_plan("\u5224\u65ad\u5173\u7cfb R={(1,2),(2,3)} \u662f\u5426\u4f20\u9012\uff0c\u5e76\u8bf4\u660e\u7406\u7531")
+
+    assert plan.enabled is True
+    assert plan.method == "relation_property_check"
+    assert any("(a,b),(b,c)" in step for step in plan.steps)
+    assert "missing" in plan.symbolic_check.evidence
+    assert plan.symbolic_check.valid is False
+
+
+def test_build_proof_plan_for_general_question_is_disabled():
+    from backend.reasoning.service import build_proof_plan
+
+    plan = build_proof_plan("\u4ec0\u4e48\u662f\u96c6\u5408\uff1f")
+
+    assert plan.enabled is False
+    assert plan.method == "none"
+    assert plan.steps == []
+
+def test_quantifier_negation_is_symbolically_checked():
+    from backend.reasoning.service import verify_symbolic_statement
+
+    result = verify_symbolic_statement("证明量词否定律：¬∀xP(x) ⇔ ∃x¬P(x)")
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "quantifier negation" in result.detail
+    assert "not all" in result.evidence
+
+
+def test_build_proof_plan_for_quantifier_negation_uses_quantifier_transform():
+    from backend.reasoning.service import build_proof_plan
+
+    plan = build_proof_plan("证明量词否定律：¬∃xP(x) ⇔ ∀x¬P(x)")
+
+    assert plan.enabled is True
+    assert plan.method == "quantifier_transformation"
+    assert any("量词" in step for step in plan.steps)
+    assert any("否定" in step for step in plan.steps)
+    assert plan.symbolic_check.checked is True
+
+def test_warshall_transitive_closure_for_relation_matrix():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "求关系矩阵 [[0,1,0],[0,0,1],[0,0,0]] 的传递闭包"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "Warshall" in result.detail
+    assert "[[0, 1, 1], [0, 0, 1], [0, 0, 0]]" in result.evidence
+    assert plan.method == "transitive_closure"
+
+
+def test_partial_order_checker_reports_all_required_properties():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断 A={1,2,3} 上关系 R={(1,1),(2,2),(3,3),(1,2),(1,3),(2,3)} 是否为偏序关系"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "partial order" in result.detail
+    assert "reflexive=True" in result.evidence
+    assert "antisymmetric=True" in result.evidence
+    assert "transitive=True" in result.evidence
+    assert plan.method == "partial_order_check"
+
+
+def test_equivalence_relation_checker_returns_partition():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断 A={1,2,3} 上关系 R={(1,1),(2,2),(3,3),(1,2),(2,1)} 是否为等价关系并给出划分"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "equivalence relation" in result.detail
+    assert "partition={{1,2},{3}}" in result.evidence
+    assert plan.method == "equivalence_partition"
+
+
+def test_boolean_simplification_checker_uses_symbolic_normal_form():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "化简布尔表达式：P∧(P∨Q) = P"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "boolean normal form" in result.detail
+    assert "equivalent=True" in result.evidence
+    assert plan.method == "boolean_simplification"
+
+
+def test_combination_identity_checker_verifies_pascal_rule():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "证明组合恒等式 C(5,2)+C(5,3)=C(6,3)"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "combination identity" in result.detail
+    assert "10 + 10 = 20" in result.evidence
+    assert plan.method == "combination_identity"
+
+
+def test_tree_edge_count_checker_verifies_basic_tree_property():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断树有 8 个顶点，边数为 7 是否正确"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "tree edge count" in result.detail
+    assert "n-1=7" in result.evidence
+    assert plan.method == "tree_edge_count"
+
+
+def test_euler_graph_checker_verifies_all_degrees_even():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断无向图度数序列 [2,4,2,6] 是否存在欧拉回路"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "Euler circuit" in result.detail
+    assert "all_even=True" in result.evidence
+    assert plan.method == "euler_graph_check"
+
+
+def test_propositional_satisfiability_checker_finds_model():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断命题公式 P∧¬Q 是否可满足"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "satisfiability" in result.detail
+    assert "model=" in result.evidence
+    assert "P=True" in result.evidence
+    assert "Q=False" in result.evidence
+    assert plan.method == "sat_check"
+
+
+def test_propositional_entailment_checker_finds_countermodel():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "判断 P 是否蕴含 Q"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is False
+    assert "entailment" in result.detail
+    assert "countermodel=" in result.evidence
+    assert "P=True" in result.evidence
+    assert "Q=False" in result.evidence
+    assert plan.method == "entailment_check"
+
+
+def test_relation_pair_transitive_closure_returns_new_pairs():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "求 A={1,2,3} 上关系 R={(1,2),(2,3)} 的传递闭包"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "transitive closure" in result.detail
+    assert "closure={(1,2),(1,3),(2,3)}" in result.evidence
+    assert "added={(1,3)}" in result.evidence
+    assert plan.method == "transitive_closure"
+
+
+def test_boolean_matrix_square_checker_computes_relation_composition():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "计算关系矩阵 [[0,1,0],[0,0,1],[0,0,0]] 的布尔平方"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "boolean matrix square" in result.detail
+    assert "[[0, 0, 1], [0, 0, 0], [0, 0, 0]]" in result.evidence
+    assert plan.method == "boolean_matrix_power"
+
+
+
+def test_relation_reflexive_closure_returns_missing_diagonal_pairs():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42 A={1,2,3} \u4e0a\u5173\u7cfb R={(1,2),(2,2)} \u7684\u81ea\u53cd\u95ed\u5305"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "reflexive closure" in result.detail
+    assert "closure={(1,1),(1,2),(2,2),(3,3)}" in result.evidence
+    assert "added={(1,1),(3,3)}" in result.evidence
+    assert plan.method == "reflexive_closure"
+
+
+def test_relation_symmetric_closure_returns_reverse_pairs():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42 A={1,2,3} \u4e0a\u5173\u7cfb R={(1,2),(2,3)} \u7684\u5bf9\u79f0\u95ed\u5305"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "symmetric closure" in result.detail
+    assert "closure={(1,2),(2,1),(2,3),(3,2)}" in result.evidence
+    assert "added={(2,1),(3,2)}" in result.evidence
+    assert plan.method == "symmetric_closure"
+
+
+def test_propositional_dnf_checker_generates_canonical_terms():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42\u547d\u9898\u516c\u5f0f P\u2227\u00acQ \u7684\u4e3b\u6790\u53d6\u8303\u5f0f"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "canonical DNF" in result.detail
+    assert "dnf=(P&!Q)" in result.evidence
+    assert "true_rows=1" in result.evidence
+    assert plan.method == "normal_form_conversion"
+
+
+def test_propositional_cnf_checker_generates_canonical_clauses():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42\u547d\u9898\u516c\u5f0f P\u2228Q \u7684\u4e3b\u5408\u53d6\u8303\u5f0f"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "canonical CNF" in result.detail
+    assert "cnf=(P|Q)" in result.evidence
+    assert "false_rows=1" in result.evidence
+    assert plan.method == "normal_form_conversion"
+
+
+
+def test_relation_composition_checker_composes_two_relations():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42 A={1,2,3} \u4e0a R={(1,2),(2,3)} \u548c S={(2,3),(3,1)} \u7684\u5173\u7cfb\u590d\u5408 S\u2218R"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "relation composition" in result.detail
+    assert "composition={(1,3),(2,1)}" in result.evidence
+    assert "witnesses=(1,2,3),(2,3,1)" in result.evidence
+    assert plan.method == "relation_composition"
+
+
+
+def test_inverse_relation_checker_reverses_ordered_pairs():
+    from backend.reasoning.service import build_proof_plan, verify_symbolic_statement
+
+    question = "\u6c42 A={1,2,3} \u4e0a\u5173\u7cfb R={(1,2),(2,3),(3,3)} \u7684\u9006\u5173\u7cfb R^{-1}"
+    result = verify_symbolic_statement(question)
+    plan = build_proof_plan(question)
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "inverse relation" in result.detail
+    assert "inverse={(2,1),(3,2),(3,3)}" in result.evidence
+    assert plan.method == "inverse_relation"
+
+
+def test_boolean_simplification_uses_sympy_when_available():
+    import importlib.util
+    from backend.reasoning.service import verify_symbolic_statement
+
+    if importlib.util.find_spec("sympy") is None:
+        return
+
+    result = verify_symbolic_statement("\u5316\u7b80\u5e03\u5c14\u516c\u5f0f P\u2227Q \u2228 P\u2227\u00acQ = P")
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "SymPy" in result.detail
+    assert "simplified_left=P" in result.evidence
+
+
+def test_propositional_normal_form_uses_sympy_when_available():
+    import importlib.util
+    from backend.reasoning.service import verify_symbolic_statement
+
+    if importlib.util.find_spec("sympy") is None:
+        return
+
+    result = verify_symbolic_statement("\u6c42\u547d\u9898\u516c\u5f0f \u00ac(P\u2227Q) \u7684\u4e3b\u5408\u53d6\u8303\u5f0f")
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "SymPy" in result.detail
+    assert "cnf=!P|!Q" in result.evidence
+
+
+def test_sat_checker_marks_truth_table_fallback_without_z3():
+    import sys
+    from backend.reasoning.service import verify_symbolic_statement
+
+    if "z3" in sys.modules:
+        return
+
+    result = verify_symbolic_statement("\u5224\u65ad\u547d\u9898\u516c\u5f0f P\u2227\u00acQ \u662f\u5426\u53ef\u6ee1\u8db3")
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "backend=truth_table" in result.evidence
+
+
+def test_sat_checker_detail_names_z3_backend_when_available():
+    import importlib.util
+    from backend.reasoning.service import verify_symbolic_statement
+
+    if importlib.util.find_spec("z3") is None:
+        return
+
+    result = verify_symbolic_statement("\u5224\u65ad\u547d\u9898\u516c\u5f0f P\u2227\u00acQ \u662f\u5426\u53ef\u6ee1\u8db3")
+
+    assert result.checked is True
+    assert result.valid is True
+    assert "backend=z3" in result.evidence
+    assert "z3" in result.detail

@@ -77,4 +77,23 @@ def test_chat_endpoint_returns_reasoning_metadata():
     assert response.reasoning["enabled"] is True
     assert response.reasoning["symbolic_check"]["checked"] is True
     assert response.reasoning["evaluation"]["passed"] is True
+    assert response.reasoning["proof_plan"]["enabled"] is True
     assert response.sources[0]["source_document"] == "\u547d\u9898\u903b\u8f91.md"
+
+
+
+def test_chat_payload_injects_proof_plan():
+    payload = chat_router.build_chat_payload("\u8bc1\u660e\u96c6\u5408\u6052\u7b49\u5f0f\uff1a(A\u222aB)^c = A^c\u2229B^c", [])
+
+    assert payload.proof_plan.enabled is True
+    assert payload.proof_plan.method == "element_chasing"
+    assert "\u7b26\u53f7\u8bc1\u660e\u8ba1\u5212" in payload.messages[1]["content"]
+    assert "element_chasing" in payload.messages[1]["content"]
+
+def test_chat_payload_injects_quantifier_proof_plan():
+    payload = chat_router.build_chat_payload("证明量词否定律：¬∀xP(x) ⇔ ∃x¬P(x)", [])
+
+    assert payload.proof_plan.enabled is True
+    assert payload.proof_plan.method == "quantifier_transformation"
+    assert "量词" in payload.messages[1]["content"]
+    assert "quantifier negation" in payload.messages[1]["content"]
