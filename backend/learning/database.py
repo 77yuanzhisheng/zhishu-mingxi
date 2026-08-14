@@ -113,10 +113,79 @@ CREATE TABLE IF NOT EXISTS node_mastery (
     CHECK (correct_count <= total_count)
 );
 
+CREATE TABLE IF NOT EXISTS exams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL,
+    teacher_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    total_score REAL NOT NULL CHECK (total_score >= 0),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'closed')),
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (teacher_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS exam_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exam_id INTEGER NOT NULL,
+    node_id TEXT NOT NULL,
+    question_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    answer TEXT,
+    score REAL NOT NULL CHECK (score >= 0),
+    sort_order INTEGER NOT NULL,
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+    UNIQUE (exam_id, sort_order)
+);
+
+CREATE TABLE IF NOT EXISTS exam_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exam_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    submitted_at TEXT NOT NULL,
+    total_score REAL NOT NULL DEFAULT 0 CHECK (total_score >= 0),
+    status TEXT NOT NULL CHECK (status IN ('graded', 'pending_review')),
+    FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (exam_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS exam_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    submission_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    student_answer TEXT NOT NULL DEFAULT '',
+    is_correct INTEGER CHECK (is_correct IN (0, 1) OR is_correct IS NULL),
+    score REAL NOT NULL DEFAULT 0 CHECK (score >= 0),
+    review_status TEXT NOT NULL CHECK (review_status IN ('graded', 'pending_review')),
+    FOREIGN KEY (submission_id) REFERENCES exam_submissions(id) ON DELETE CASCADE,
+    FOREIGN KEY (question_id) REFERENCES exam_questions(id) ON DELETE CASCADE,
+    UNIQUE (submission_id, question_id)
+);
+
+CREATE TABLE IF NOT EXISTS share_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester_id INTEGER NOT NULL,
+    target_user_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CHECK (requester_id != target_user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_class_id ON users(class_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_node_mastery_user_id ON node_mastery(user_id);
+CREATE INDEX IF NOT EXISTS idx_exams_class_id ON exams(class_id);
+CREATE INDEX IF NOT EXISTS idx_exam_questions_exam_id ON exam_questions(exam_id);
+CREATE INDEX IF NOT EXISTS idx_exam_submissions_exam_id ON exam_submissions(exam_id);
+CREATE INDEX IF NOT EXISTS idx_exam_answers_submission_id ON exam_answers(submission_id);
+CREATE INDEX IF NOT EXISTS idx_share_requests_target ON share_requests(target_user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_share_requests_unique_pending
+    ON share_requests(requester_id, target_user_id) WHERE status = 'pending';
 """
 
 

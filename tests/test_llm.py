@@ -21,6 +21,8 @@ def test_env_file_overrides_stale_process_key_and_builds_bearer_header(
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-process-key")
+    monkeypatch.delenv("OPENAI_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("OPENAI_MAX_TOKENS", raising=False)
     captured = {}
 
     def fake_post(url, *, headers, json, timeout):

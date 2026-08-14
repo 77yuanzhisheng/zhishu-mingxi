@@ -124,6 +124,10 @@ app.include_router(learning_router)
 from backend.chat.router import router as chat_router
 app.include_router(chat_router)
 
+# 用户、班级、考试与学情共享模块（队员3）
+from backend.management.router import router as management_router
+app.include_router(management_router)
+
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
 # app.include_router(rag_router)
