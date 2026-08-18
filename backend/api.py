@@ -129,7 +129,7 @@ from backend.management.router import router as management_router
 app.include_router(management_router)
 
 # 算法工具模块（队员5）
-from backend.tools.router import router as tools_router
+from algorithm_tools.router import router as tools_router
 app.include_router(tools_router)
 
 
@@ -154,4 +154,3 @@ async def health():
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
     }
-
