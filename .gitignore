@@ -10,6 +10,9 @@ __pycache__/
 data/chroma/
 data/chroma_bge_small/
 
+# 学情分析运行时数据库（首次启动自动创建）
+data/learning.db
+
 # 大文件（模型92MB，单独分发）
 local_models/
 
