@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>离散数学智能学习平台</title>
+  <link rel="stylesheet" href="style.css?v=25">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">DM</div>
+        <div>
+          <h1>离散数学智能学习平台</h1>
+          <p>RAG 问答 · 算法工具 · 可视化验证</p>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="功能导航">
+        <button class="nav-item active" data-tab="dashboard">
+          <span>首页</span>
+          <strong>个人仪表盘</strong>
+        </button>
+        <button class="nav-item" data-tab="chat">
+          <span>问答</span>
+          <strong>知识库 RAG</strong>
+        </button>
+        <button class="nav-item" data-tab="truth">
+          <span>工具</span>
+          <strong>真值表生成</strong>
+        </button>
+        <button class="nav-item" data-tab="relation">
+          <span>工具</span>
+          <strong>关系矩阵判断</strong>
+        </button>
+        <button class="nav-item" data-tab="tools">
+          <span>工具</span>
+          <strong>算法工具箱</strong>
+        </button>
+        <button class="nav-item" data-tab="graph">
+          <span>图谱</span>
+          <strong>知识图谱</strong>
+        </button>
+        <button class="nav-item" data-tab="practice">
+          <span>练习</span>
+          <strong>自测练习</strong>
+        </button>
+        <button class="nav-item" data-tab="learning">
+          <span>分析</span>
+          <strong>学情面板</strong>
+        </button>
+        <button class="nav-item" data-tab="classes">
+          <span>协作</span>
+          <strong>班级管理</strong>
+        </button>
+        <button class="nav-item" data-tab="exam">
+          <span>测评</span>
+          <strong>在线考试</strong>
+        </button>
+      </nav>
+
+      <div class="system-card">
+        <span class="status-dot" id="statusDot"></span>
+        <div>
+          <p>后端状态</p>
+          <strong id="statusText">检测中</strong>
+        </div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Team 4 Frontend</p>
+          <h2 id="pageTitle">个人学习仪表盘</h2>
+        </div>
+        <div class="top-actions">
+          <button class="ghost-button" id="checkStatusButton">检测服务</button>
+          <a class="docs-link" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">API 文档</a>
+        </div>
+      </header>
+
+      <section class="learning-overview" aria-label="学习概览">
+        <article>
+          <span>01</span>
+          <strong>概念理解</strong>
+          <p>通过 RAG 问答查看定义、定理与教材引用。</p>
+        </article>
+        <article>
+          <span>02</span>
+          <strong>算法验证</strong>
+          <p>用真值表和关系矩阵验证离散数学结论。</p>
+        </article>
+        <article>
+          <span>03</span>
+          <strong>结果解释</strong>
+          <p>输出不只给答案，也提示满足条件与关系类型。</p>
+        </article>
+      </section>
+
+      <section id="dashboard" class="panel active">
+        <div class="dashboard-header">
+          <div>
+            <p class="eyebrow">Personal Learning</p>
+            <h3>上午好，继续完成你的离散数学学习计划</h3>
+            <p id="dashboardSummary" class="hint">正在汇总今日学习与薄弱知识点。</p>
+          </div>
+          <button id="continueLearningButton">继续学习</button>
+        </div>
+
+        <div class="dashboard-metrics">
+          <article><span>今日学习</span><strong id="todayMinutes">0 分钟</strong><small>由本地学习事件统计</small></article>
+          <article><span>本周完成题目</span><strong id="weeklyQuestions">0</strong><small>最近 7 天答题记录</small></article>
+          <article><span>总体进度</span><strong id="dashboardProgress">0%</strong><small id="dashboardProgressText">等待学情数据</small></article>
+          <article class="alert-metric"><span>薄弱提醒</span><strong id="dashboardWeakCount">0</strong><small>建议优先巩固</small></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div><p class="eyebrow">Weekly Activity</p><h3>近 7 天学习活动</h3></div>
+            </div>
+            <div id="activityChart" class="activity-chart"></div>
+          </section>
+          <aside class="insight-panel">
+            <h3>下一步学习</h3>
+            <div id="dashboardNextStep" class="next-step-box">正在读取推荐路径...</div>
+            <div class="study-card compact-card">
+              <h4>当前知识点</h4>
+              <p id="dashboardCurrentNode">rel_02 · 关系性质</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="chat" class="panel">
+        <div class="split-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">RAG Assistant</p>
+                <h3>课程知识问答</h3>
+              </div>
+              <span class="tag">POST /chat</span>
+            </div>
+
+            <div id="chatMessages" class="chat-messages">
+              <article class="message assistant">
+                <p>你好，我是离散数学问答助手。请输入课程问题，我会检索知识库、调用 Qwen 生成回答，并显示引用来源。</p>
+                <div class="citation-list">
+                  <span>示例引用：第 3 章 · 关系及其性质 · p.52</span>
+                </div>
+              </article>
+            </div>
+
+            <div class="composer">
+              <input id="questionInput" type="text" placeholder="输入问题，例如：什么是等价关系？">
+              <button id="askButton">发送</button>
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3>学习助手能力</h3>
+            <div class="metric-list">
+              <div><span>回答内容</span><strong>概念解释</strong></div>
+              <div><span>引用来源</span><strong>章节 / 页码</strong></div>
+              <div><span>学习建议</span><strong>关联练习</strong></div>
+            </div>
+            <div class="study-card">
+              <h4>推荐提问</h4>
+              <button class="prompt-button" data-question="什么是等价关系？">什么是等价关系？</button>
+              <button class="prompt-button" data-question="偏序关系和等价关系有什么区别？">偏序关系和等价关系有什么区别？</button>
+              <button class="prompt-button" data-question="如何判断一个关系是否具有传递性？">如何判断传递性？</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="truth" class="panel">
+        <div class="tool-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Logic Calculator</p>
+                <h3>真值表生成</h3>
+              </div>
+              <span class="tag">POST /tools/truth-table</span>
+            </div>
+
+            <label for="expressionInput">逻辑表达式</label>
+            <div class="composer">
+              <input id="expressionInput" type="text" value="p -> q">
+              <button id="truthButton">生成</button>
+            </div>
+
+            <div class="sample-row">
+              <button class="sample-button" data-expression="p -> q">p -> q</button>
+              <button class="sample-button" data-expression="(p and q) or not r">(p and q) or not r</button>
+              <button class="sample-button" data-expression="p <-> q">p <-> q</button>
+              <button class="sample-button" data-expression="p xor q">p xor q</button>
+            </div>
+
+            <div id="truthResult" class="result-box empty-state">
+              输入表达式后生成完整真值表。
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3>支持符号</h3>
+            <div class="token-cloud">
+              <span>not</span><span>and</span><span>or</span><span>xor</span>
+              <span>~</span><span>!</span><span>&</span><span>|</span>
+              <span>-></span><span><-></span><span>true</span><span>false</span>
+            </div>
+            <div class="study-card">
+              <h4>学习提示</h4>
+              <p>若结果全为真，则公式为永真式；若全为假，则为矛盾式；否则为可满足式。</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="relation" class="panel">
+        <div class="tool-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Relation Analyzer</p>
+                <h3>关系矩阵性质判断</h3>
+              </div>
+              <span class="tag">POST /tools/relation-properties</span>
+            </div>
+
+            <label for="matrixInput">关系矩阵 JSON</label>
+            <textarea id="matrixInput" rows="8">[
+  [1, 0, 1],
+  [0, 1, 0],
+  [1, 0, 1]
+]</textarea>
+
+            <div class="button-row">
+              <button id="relationButton">判断性质</button>
+              <button class="ghost-button" id="loadOrderSample">偏序示例</button>
+              <button class="ghost-button" id="loadEquivalenceSample">等价关系示例</button>
+            </div>
+
+            <div id="relationResult" class="result-box empty-state">
+              输入 0/1 方阵后判断自反、对称、传递等性质。
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3>矩阵预览</h3>
+            <div id="matrixPreview" class="matrix-preview"></div>
+            <p class="hint">矩阵必须是非空方阵，元素只能是 0、1、true 或 false。</p>
+            <div class="study-card">
+              <h4>判断口诀</h4>
+              <p>看对角线判断自反；看关于主对角线是否镜像判断对称；用 aRb 且 bRc 推 aRc 判断传递。</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="tools" class="panel">
+        <div class="extended-tools-layout">
+          <aside class="tool-selector" aria-label="算法工具">
+            <button class="extended-tool-button active" type="button" data-tool-name="formula-simplify">命题公式化简</button>
+            <button class="extended-tool-button" type="button" data-tool-name="normal-forms">主范式转换</button>
+            <button class="extended-tool-button" type="button" data-tool-name="set-operation">集合运算</button>
+            <button class="extended-tool-button" type="button" data-tool-name="hasse-diagram">哈斯图生成</button>
+            <button class="extended-tool-button" type="button" data-tool-name="dijkstra">最短路径</button>
+            <button class="extended-tool-button" type="button" data-tool-name="bipartite">二分图判定</button>
+            <button class="extended-tool-button" type="button" data-tool-name="code-generate">Python/C 代码生成</button>
+          </aside>
+          <section class="work-panel extended-tool-workspace">
+            <div class="section-title">
+              <div><p class="eyebrow">Algorithm Lab</p><h3 id="extendedToolTitle">命题公式化简</h3></div>
+              <span id="extendedToolEndpoint" class="tag">POST /tools/formula-simplify</span>
+            </div>
+            <form id="extendedToolForm" class="extended-tool-form"></form>
+            <button id="runExtendedToolButton" type="button">运行工具</button>
+            <div id="extendedToolResult" class="tool-response empty-state">填写参数后运行工具。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="graph" class="panel">
+        <div class="graph-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Knowledge Graph</p>
+                <h3>离散数学知识图谱</h3>
+              </div>
+              <span class="tag">GET /kb/knowledge-graph</span>
+            </div>
+
+            <div class="graph-toolbar">
+              <div class="graph-view-switch" role="group" aria-label="知识图谱视图">
+                <button class="graph-view-button active" type="button" data-graph-view="tree" aria-pressed="true">思维导图</button>
+                <button class="graph-view-button" type="button" data-graph-view="force" aria-pressed="false">关系图</button>
+              </div>
+              <button class="ghost-button" id="refreshGraphButton">刷新图谱</button>
+              <button class="ghost-button" id="resetGraphButton">收起全部</button>
+              <div class="graph-legend" aria-label="图例">
+                <span class="mastered">已掌握</span>
+                <span class="learning">理解中</span>
+                <span class="weak">薄弱</span>
+                <span class="unlearned">未学</span>
+                <span class="dependency" hidden>模块依赖</span>
+              </div>
+            </div>
+
+            <p id="graphViewHint" class="graph-view-hint">思维导图按课程顺序展示层级；点击模块或子概念可继续展开。</p>
+
+            <div id="knowledgeGraphChart" class="knowledge-graph-chart">
+              正在加载知识图谱...
+            </div>
+
+            <div class="path-strip">
+              <span>推荐路径</span>
+              <strong>命题逻辑 → 集合论 → 谓词逻辑 → 数学归纳法 → 关系 → 图论</strong>
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3 id="graphDetailTitle">知识图谱</h3>
+            <p id="graphDetailPrereq" class="hint">默认展示 6 大模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。</p>
+            <div class="study-card">
+              <h4>节点说明</h4>
+              <p id="graphDetailConcepts">请选择一个节点查看详情。</p>
+            </div>
+            <div class="study-card">
+              <h4>知识库内容</h4>
+              <p id="graphDetailLinks">模块 → 子概念 → 条目。条目类型包括 definition、theorem、example、rule。</p>
+            </div>
+            <div class="study-card">
+              <h4>学情追踪</h4>
+              <p id="graphDetailTasks">拖动画布可观察节点关系，滚轮可缩放。再次点击已展开节点可以收起。</p>
+            </div>
+            <div class="study-card">
+              <div class="detail-card-title"><h4>推荐题目</h4><span id="graphMasteryBadge" class="mastery-badge unlearned">未学</span></div>
+              <button id="loadGraphRecommendationsButton" class="recommend-refresh-button" type="button">获取推荐题目</button>
+              <div id="graphRecommendedQuestions" class="recommended-question-list" aria-live="polite">选择知识点后获取个性化题目。</div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="learning" class="panel">
+        <div class="learning-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Learning Analytics</p>
+                <h3>学情分析面板</h3>
+              </div>
+              <span class="tag">GET /api/learning/report</span>
+            </div>
+
+            <div class="learning-toolbar">
+              <label for="learningUserInput">用户 ID</label>
+              <input id="learningUserInput" type="number" min="1" step="1" value="1">
+              <button id="refreshLearningButton">刷新学情</button>
+            </div>
+
+            <div class="learning-summary-grid">
+              <article>
+                <span>已掌握</span>
+                <strong id="masteredCount">0</strong>
+              </article>
+              <article>
+                <span>薄弱</span>
+                <strong id="weakCount">0</strong>
+              </article>
+              <article>
+                <span>未学</span>
+                <strong id="unlearnedCount">0</strong>
+              </article>
+            </div>
+
+            <div class="progress-overview">
+              <div><strong id="learningProgressPercent">0%</strong><span id="learningProgressLabel">总知识点 0 · 已掌握 0</span></div>
+              <div class="progress-track"><span id="learningProgressBar" style="width: 0%"></span></div>
+            </div>
+
+            <div id="learningChart" class="learning-chart">
+              点击刷新学情后展示掌握情况。
+            </div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3>薄弱知识点</h3>
+            <div id="weakNodes" class="learning-node-list empty-state">暂无数据。</div>
+
+            <div class="study-card">
+              <h4>推荐学习路径</h4>
+              <div id="recommendedPath" class="path-list">暂无数据。</div>
+            </div>
+
+            <div class="study-card">
+              <h4>当前追踪节点</h4>
+              <p id="currentLearningNode">rel_02 · 关系性质</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="practice" class="panel">
+        <div class="practice-grid">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Quick Practice</p>
+                <h3>自测练习</h3>
+              </div>
+              <span class="tag">POST /api/learning/update-mastery</span>
+            </div>
+
+            <div class="practice-toolbar">
+              <button class="practice-filter active" type="button" data-practice-filter="all">全部</button>
+              <button class="practice-filter" type="button" data-practice-filter="propositional_logic">命题逻辑</button>
+              <button class="practice-filter" type="button" data-practice-filter="set_theory">集合论</button>
+              <button class="practice-filter" type="button" data-practice-filter="relations">关系</button>
+              <button class="practice-filter" type="button" data-practice-filter="graph_theory">图论</button>
+            </div>
+
+            <div id="practiceList" class="practice-list"></div>
+          </section>
+
+          <aside class="insight-panel">
+            <h3>自测结果</h3>
+            <div class="practice-score-card">
+              <span>当前正确率</span>
+              <strong id="practiceAccuracy">0%</strong>
+              <p id="practiceProgress">尚未答题。</p>
+            </div>
+            <div class="study-card">
+              <h4>学情记录</h4>
+              <p>每次提交答案都会记录 answer 事件，正确与否会影响“已掌握/薄弱”的判断。</p>
+            </div>
+            <div class="study-card">
+              <h4>下一步</h4>
+              <p>答完题后进入“学情面板”，点击刷新学情查看掌握度变化。</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="classes" class="panel">
+        <div class="role-switch" role="group" aria-label="班级角色">
+          <button class="role-button active" type="button" data-class-role="student">学生端</button>
+          <button class="role-button" type="button" data-class-role="teacher">教师端</button>
+        </div>
+
+        <div id="studentClassView" class="class-layout">
+          <section class="work-panel">
+            <div class="section-title"><div><p class="eyebrow">Student Classroom</p><h3>我的班级</h3></div><span class="tag">POST /api/class/join</span></div>
+            <form id="joinClassForm" class="inline-form">
+              <label for="inviteCodeInput">班级邀请码</label>
+              <input id="inviteCodeInput" maxlength="12" placeholder="例如 DM2026">
+              <button type="submit">加入班级</button>
+            </form>
+            <div id="studentClassList" class="data-list empty-state">尚未加入班级。</div>
+          </section>
+          <aside class="insight-panel">
+            <h3>同学学情授权</h3>
+            <form id="shareRequestForm" class="stack-form">
+              <label for="shareTargetInput">同学用户 ID</label>
+              <input id="shareTargetInput" placeholder="输入对方用户 ID">
+              <button type="submit">申请查看</button>
+            </form>
+            <div id="shareRequestStatus" class="inline-status">授权申请需经对方同意。</div>
+            <div class="study-card">
+              <h4>待处理申请</h4>
+              <div id="incomingShareRequests" class="approval-list empty-state">暂无待处理申请。</div>
+            </div>
+          </aside>
+        </div>
+
+        <div id="teacherClassView" class="class-layout" hidden>
+          <section class="work-panel">
+            <div class="section-title"><div><p class="eyebrow">Teacher Classroom</p><h3>班级与学生</h3></div><span class="tag">GET /api/class/{id}/students</span></div>
+            <form id="createClassForm" class="inline-form">
+              <label for="classNameInput">班级名称</label>
+              <input id="classNameInput" placeholder="例如 离散数学 2026 春">
+              <button type="submit">创建班级</button>
+            </form>
+            <div id="teacherClassList" class="data-list empty-state">尚未创建班级。</div>
+          </section>
+          <aside class="insight-panel">
+            <h3>班级概览</h3>
+            <div id="classOverview" class="metric-list">
+              <div><span>学生人数</span><strong>0</strong></div>
+              <div><span>平均掌握度</span><strong>--</strong></div>
+              <div><span>待关注学生</span><strong>0</strong></div>
+            </div>
+            <div id="classStudentList" class="student-report-list empty-state">请选择一个班级查看学生学情。</div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="exam" class="panel">
+        <div class="exam-layout">
+          <section class="work-panel">
+            <div class="exam-topline">
+              <div><p class="eyebrow">Online Assessment</p><h3 id="examTitle">离散数学阶段自测</h3></div>
+              <div id="examTimer" class="exam-timer">15:00</div>
+            </div>
+            <div id="examSetup" class="exam-setup">
+              <label>选择测评模块</label>
+              <div class="exam-module-grid">
+                <label><input type="checkbox" value="propositional_logic" checked> 命题逻辑</label>
+                <label><input type="checkbox" value="set_theory" checked> 集合论</label>
+                <label><input type="checkbox" value="relations" checked> 关系</label>
+                <label><input type="checkbox" value="graph_theory" checked> 图论</label>
+              </div>
+              <button id="startExamButton">开始测评</button>
+            </div>
+            <form id="examForm" class="exam-paper" hidden></form>
+            <div id="examResult" class="exam-result" hidden></div>
+          </section>
+          <aside class="insight-panel">
+            <h3>测评状态</h3>
+            <div class="metric-list">
+              <div><span>题目数量</span><strong id="examQuestionCount">0</strong></div>
+              <div><span>已作答</span><strong id="examAnsweredCount">0</strong></div>
+              <div><span>当前模式</span><strong>自动判分</strong></div>
+            </div>
+            <div class="study-card"><h4>提交说明</h4><p>后端考试接口可用时提交到服务器；接口尚未合并时在本地完成判分，并保留清晰状态提示。</p></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="vendor/echarts/echarts.min.js"></script>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [["\\(", "\\)"], ["$", "$"]],
+        displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+        processEscapes: true,
+        processEnvironments: true,
+      },
+      chtml: {
+        fontURL: "vendor/mathjax/output/chtml/fonts/woff-v2",
+      },
+      options: {
+        skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      },
+    };
+  </script>
+  <script defer src="vendor/mathjax/tex-chtml.js"></script>
+  <script defer src="app.js?v=25"></script>
+</body>
+</html>
