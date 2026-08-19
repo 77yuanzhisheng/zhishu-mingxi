@@ -9,9 +9,14 @@ from backend.chat.rag import RAGAdapter
 from backend.chat.repository import ChatRepository
 
 
-SYSTEM_PROMPT = """你是“知数·明析”的离散数学助教。回答应准确、循序渐进。
+SYSTEM_PROMPT = “””你是”知数·明析”的离散数学助教。回答应准确、循序渐进。
 优先利用给出的知识库材料；材料不足时应明确说明，不要编造来源。
-结合对话历史回答当前问题，并关注用户尚未理解的概念。"""
+结合对话历史回答当前问题，并关注用户尚未理解的概念。
+
+【回答长度要求】
+- 概念题控制在300字以内，直接给出定义和要点
+- 证明题只写关键推导步骤，总长控制在500字以内，最后以”证毕”结尾
+- 公式使用LaTeX行内格式，不用多行公式块”””
 
 
 class ChatService:
@@ -52,7 +57,8 @@ class ChatService:
         llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         if references:
             knowledge = "\n\n".join(
-                f"[资料{i}] {reference.content}" for i, reference in enumerate(references, 1)
+                f"[资料{i}] {reference.content[:400]}"
+                for i, reference in enumerate(references, 1)
             )
             llm_messages.append(
                 {"role": "system", "content": f"可参考的知识库材料：\n{knowledge}"}

@@ -124,6 +124,12 @@ app.include_router(chat_router)
 from backend.learning.router import router as learning_router
 app.include_router(learning_router)
 
+# 前端兼容层（桥接队员4前端契约与队员3后端差异）
+from backend.compat import router as compat_router
+from backend.compat import stream_router as compat_stream_router
+app.include_router(compat_stream_router)
+app.include_router(compat_router)
+
 # 用户、班级、考试与学情共享模块（队员3）
 from backend.management.router import router as management_router
 app.include_router(management_router)

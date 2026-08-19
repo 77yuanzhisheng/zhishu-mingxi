@@ -395,7 +395,7 @@ async function handleAsk() {
     updateMessage(
       loading,
       data.answer,
-      formatReferences(data.sources || data.references || [])
+      []
     );
   } catch (error) {
     updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
@@ -1603,7 +1603,7 @@ function renderKnowledgeSearchResults(results) {
 }
 
 function formatKnowledgeSource(metadata) {
-  const chapter = metadata.chapter || metadata.section || "未知章节";
+  const chapter = metadata.chapter || metadata.section || "";
   const page = metadata.page_start || metadata.page || metadata.page_end;
   const source = metadata.source || metadata.file_name || metadata.filename || "";
   return [chapter, page ? `p.${page}` : "", source].filter(Boolean).join(" · ");
@@ -2758,9 +2758,15 @@ function truncateText(text, length) {
 
 function formatReferences(references) {
   return references.map((reference) => {
-    const chapter = reference.chapter || "未知章节";
-    const page = reference.page || "未知页码";
-    return `${chapter} · p.${page}`;
+    const meta = reference.metadata || {};
+    const chapter = meta.chapter || meta.section || "";
+    const page = meta.page_start || meta.page || meta.page_end || "";
+    const source = meta.source_document || meta.source || "";
+    const parts = [];
+    if (chapter) parts.push(chapter);
+    if (page) parts.push(`p.${page}`);
+    if (source) parts.push(source);
+    return parts.join(" · ");
   });
 }
 
