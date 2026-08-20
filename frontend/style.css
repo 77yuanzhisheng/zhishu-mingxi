@@ -691,22 +691,6 @@ textarea {
   background: var(--primary);
 }
 
-.citation-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.citation-list span {
-  padding: 5px 8px;
-  color: #315f73;
-  border: 1px solid #c7dce8;
-  border-radius: 999px;
-  background: #eef8fb;
-  font-size: 12px;
-}
-
 .sample-row {
   flex-wrap: wrap;
   margin: 12px 0 16px;

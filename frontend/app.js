@@ -393,11 +393,7 @@ async function handleAsk() {
     }, loading);
     chatState.sessionId = data.session_id || chatState.sessionId;
 
-    updateMessage(
-      loading,
-      data.answer,
-      formatReferences(data.sources || data.references || [])
-    );
+    updateMessage(loading, data.answer);
   } catch (error) {
     updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
   }
@@ -935,7 +931,7 @@ function formatGenerationMode(mode) {
   return mode === "qwen" ? "Qwen 按题生成" : "离线模板回退";
 }
 
-function addMessage(text, type, citations = []) {
+function addMessage(text, type) {
   const messages = document.getElementById("chatMessages");
   const message = document.createElement("article");
   message.className = `message ${type}`;
@@ -945,41 +941,19 @@ function addMessage(text, type, citations = []) {
   content.innerHTML = formatAnswerHtml(text);
   message.appendChild(content);
 
-  if (citations.length > 0) {
-    const list = document.createElement("div");
-    list.className = "citation-list";
-    citations.forEach((citation) => {
-      const item = document.createElement("span");
-      item.textContent = citation;
-      list.appendChild(item);
-    });
-    message.appendChild(list);
-  }
-
   messages.appendChild(message);
   typesetMath(message);
   messages.scrollTop = messages.scrollHeight;
   return message;
 }
 
-function updateMessage(message, text, citations = []) {
+function updateMessage(message, text) {
   message.innerHTML = "";
 
   const content = document.createElement("div");
   content.className = "message-content";
   content.innerHTML = formatAnswerHtml(text);
   message.appendChild(content);
-
-  if (citations.length > 0) {
-    const list = document.createElement("div");
-    list.className = "citation-list";
-    citations.forEach((citation) => {
-      const item = document.createElement("span");
-      item.textContent = citation;
-      list.appendChild(item);
-    });
-    message.appendChild(list);
-  }
 
   typesetMath(message);
 }
@@ -2832,20 +2806,6 @@ function findNodeName(nodeId) {
 function truncateText(text, length) {
   const value = String(text || "");
   return value.length > length ? `${value.slice(0, length)}...` : value;
-}
-
-function formatReferences(references) {
-  return references.map((reference) => {
-    const meta = reference.metadata || {};
-    const chapter = meta.chapter || meta.section || "";
-    const page = meta.page_start || meta.page || meta.page_end || "";
-    const source = meta.source_document || meta.source || "";
-    const parts = [];
-    if (chapter) parts.push(chapter);
-    if (page) parts.push(`p.${page}`);
-    if (source) parts.push(source);
-    return parts.join(" · ");
-  });
 }
 
 function formatAnswerHtml(text) {
