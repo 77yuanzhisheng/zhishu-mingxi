@@ -136,6 +136,10 @@ app.include_router(management_router)
 from algorithm_tools.router import router as tools_router
 app.include_router(tools_router)
 
+# 账户注册、登录与当前用户
+from backend.auth.router import router as auth_router
+app.include_router(auth_router)
+
 
 # ==================== 基础端点 ====================
 
