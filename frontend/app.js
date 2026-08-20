@@ -1052,11 +1052,19 @@ async function loadKnowledgeGraph(forceReload = false) {
     return;
   }
 
-  container.textContent = "正在从知识库加载知识图谱...";
+  // 首次加载（无画布）时才显示占位文字；刷新时保留现有画布，避免 textContent 覆盖 echarts DOM。
+  if (!graphState.chart) {
+    container.textContent = "正在从知识库加载知识图谱...";
+  }
 
   try {
-    const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`, {
+      signal: controller.signal,
+    });
     const data = await response.json();
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error(data.detail || "知识图谱接口请求失败");
     }
@@ -1066,6 +1074,12 @@ async function loadKnowledgeGraph(forceReload = false) {
     graphState.expandedModules.clear();
     graphState.expandedConcepts.clear();
     graphState.loaded = true;
+
+    // 强制刷新：销毁旧 echarts 实例，重新挂载画布（否则 setOption 画到被覆盖的 DOM 上）。
+    if (forceReload && graphState.chart) {
+      graphState.chart.dispose();
+      graphState.chart = null;
+    }
     renderKnowledgeGraph();
     showGraphNodeDetail({
       name: "知识图谱",
@@ -1073,7 +1087,11 @@ async function loadKnowledgeGraph(forceReload = false) {
       description: `已加载 ${graphState.modules.length} 个课程模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。`,
     });
   } catch (error) {
-    container.textContent = `${error.message}。请确认主后端 8000 已启动，并且接口 /kb/knowledge-graph 可用。`;
+    clearTimeout(timeoutId);
+    const message = error.name === "AbortError"
+      ? "知识图谱加载超时（15s）。"
+      : error.message;
+    container.textContent = `${message}。请确认主后端 8000 已启动，并且接口 /kb/knowledge-graph 可用。`;
   }
 }
 
