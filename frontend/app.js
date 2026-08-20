@@ -395,7 +395,7 @@ async function handleAsk() {
     updateMessage(
       loading,
       data.answer,
-      []
+      formatReferences(data.sources || data.references || [])
     );
   } catch (error) {
     updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
