@@ -1544,13 +1544,13 @@ function showGraphNodeDetail(node) {
 
   if (node.type === "module") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
+    renderGraphNodeLearning(node);
   } else if (node.type === "concept") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
+    renderGraphNodeLearning(node);
   } else {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
+    renderGraphNodeLearning(node);
   }
 
   typesetMath(document.getElementById("graphDetailConcepts"));
@@ -1642,27 +1642,98 @@ function buildNodeSummaryHtml(node, searchQuery) {
   `;
 }
 
+const LEARNING_LEVEL_NAMES = ["未学", "了解", "理解", "掌握", "熟练"];
+
+// 本地浏览统计（learning_events 写入 localStorage）
 function buildTrackingHtml(node) {
   const nodeId = node.nodeId || node.id || "";
-  const mastery = node.masteryLevels || {};
+  const events = parseLocalLearningEvents().filter((event) => event.node_id === nodeId);
+  const viewCount = events.length;
+  const lastView = viewCount > 0
+    ? new Date(events[viewCount - 1].timestamp).toLocaleString("zh-CN")
+    : "暂无";
+  return `
+    <div class="tracking-box">
+      <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
+    </div>
+  `;
+}
 
-  // 本地行为记录统计（recordLearningEvent 写入 localStorage）
+// 先渲染本地浏览统计，再异步加载后端真实学情（答题掌握度）替换。
+function renderGraphNodeLearning(node) {
+  const target = document.getElementById("graphDetailTasks");
+  if (!target) return;
+  target.innerHTML = buildTrackingHtml(node);
+  loadGraphNodeLearning(node);
+}
+
+async function loadGraphNodeLearning(node) {
+  const target = document.getElementById("graphDetailTasks");
+  const nodeId = node.nodeId || node.id || "";
+  if (!nodeId || node.level === "overview") return;
+  const userId = getCurrentUserId();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`${API_BASE_URL}/api/learning/report?user_id=${encodeURIComponent(userId)}`, {
+      signal: controller.signal,
+    });
+    const data = await response.json();
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
+    if (!response.ok) throw new Error(data.detail || "学情获取失败");
+
+    const mastery = (data.node_mastery || []).find((record) => record.node_id === nodeId) || null;
+    target.innerHTML = renderNodeLearningHtml(node, mastery);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
+    if (error.name !== "AbortError") {
+      target.innerHTML = buildTrackingHtml(node);
+    }
+  }
+}
+
+function renderNodeLearningHtml(node, mastery) {
+  const nodeId = node.nodeId || node.id || "";
   const events = parseLocalLearningEvents().filter((event) => event.node_id === nodeId);
   const viewCount = events.length;
   const lastView = viewCount > 0
     ? new Date(events[viewCount - 1].timestamp).toLocaleString("zh-CN")
     : "暂无";
 
-  const masteryLevels = ["0_未学", "1_了解", "2_理解", "3_掌握", "4_熟练"];
-  const masteryHtml = masteryLevels
-    .filter((key) => mastery[key])
-    .map((key) => `<li><strong>${key.replace("_", " ")}</strong>：${escapeHtml(mastery[key])}</li>`)
-    .join("");
+  if (!mastery) {
+    return `
+      <div class="tracking-box">
+        <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
+        <p class="muted-line">该节点暂无练习记录。在「自测练习」完成答题后，这里会显示真实掌握度。</p>
+      </div>
+    `;
+  }
+
+  const level = Number(mastery.level ?? 0);
+  const levelName = LEARNING_LEVEL_NAMES[level] || "未知";
+  const correct = Number(mastery.correct_count ?? 0);
+  const total = Number(mastery.total_count ?? 0);
+  const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const weak = level > 0 && level <= 2;
+  const lastTime = mastery.last_practice_time
+    ? new Date(mastery.last_practice_time).toLocaleString("zh-CN")
+    : "暂无";
 
   return `
     <div class="tracking-box">
       <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
-      ${masteryHtml ? `<ul class="mastery-list">${masteryHtml}</ul>` : ""}
+      <div class="mastery-badge ${weak ? "weak" : ""}">掌握等级 ${level} · ${levelName}${weak ? "（薄弱）" : ""}</div>
+      <div class="progress-track"><span style="display:block;width:${level / 4 * 100}%;background:#22c55e;height:8px;border-radius:4px;"></span></div>
+      <ul class="mastery-stats">
+        <li>答题：${correct} / ${total}</li>
+        <li>准确率：${accuracy}%</li>
+        <li>最近练习：${lastTime}</li>
+      </ul>
     </div>
   `;
 }
