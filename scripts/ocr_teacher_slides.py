@@ -4,18 +4,20 @@ ocr_teacher_slides.py — 把老师教材的幻灯片图片批量 OCR 成文本�
 =============================================================================
 背景:
     老师提供的 output.rar 中 6 部分教材是 856 张课件截图（slide_images/*.png），
-    图片无法直接进入文本向量知识库。本脚本用 SiliconFlow Qwen3-VL 视觉模型
-    把每张幻灯片转成文字描述，按章节汇总成 Markdown 放入 data/documents/。
+    图片无法直接进入文本向量知识库。本脚本用 SiliconFlow PaddleOCR-VL 视觉模型
+    把每张幻灯片转成文字，按章节汇总成 Markdown 放入 data/documents/。
 
-用法:
-    python scripts/ocr_teacher_slides.py [--part 图论] [--limit 5] [--resume]
-      --part    只处理指定章节目录名（可选，默认全部）
-      --limit   每章最多处理张数（测试用，默认不限制）
-      --resume  跳过已生成的输出文件（断点续跑）
+支持并行:
+    每个章节使用独立的进度文件（scripts/ocr_progress_<章名>.json），
+    可同时启动多个进程处理不同章节，互不干扰。建议 3 路并行：
+      python scripts/ocr_teacher_slides.py --part 集合论,初等数论 --resume
+      python scripts/ocr_teacher_slides.py --part 图论,组合数学 --resume
+      python scripts/ocr_teacher_slides.py --part 代数结构,数理逻辑 --resume
 
-输出:
-    data/documents/老师教材_<章名>.md （每章一个文件）
-    scripts/ocr_progress.json           （进度记录）
+参数:
+    --part    章节名，逗号分隔（默认全部，按 CHAPTERS 顺序串行）
+    --limit   每章最多处理张数（测试用）
+    --resume  跳过已生成的进度（断点续跑）
 """
 
 import argparse
@@ -32,7 +34,8 @@ from vision import describe  # noqa: E402
 WORKSPACE = os.path.dirname(BASE_DIR)
 SLIDES_ROOT = os.path.join(WORKSPACE, "output_teacher")
 OUT_DIR = os.path.join(BASE_DIR, "data", "documents")
-PROGRESS_FILE = os.path.join(BASE_DIR, "scripts", "ocr_progress.json")
+SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
+LEGACY_PROGRESS = os.path.join(SCRIPTS_DIR, "ocr_progress.json")
 
 # 章节目录 → 知识库文档名（与现有知识库命名风格一致）
 CHAPTERS = [
@@ -50,25 +53,39 @@ PROMPT = (
     "如果包含图形/表格请简述其内容。只输出提取的正文，不要评论。"
 )
 
-OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"  # OCR 专用，约 1-3s/张（Qwen3-VL-8B 慢且易限流）
+OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"  # OCR 专用，约 1-3s/张
 
 BATCH_WAIT = 0.5  # 请求间隔（秒），避免 SiliconFlow 限流
 
 
-def load_progress() -> dict:
+def progress_file(part_name: str) -> str:
+    return os.path.join(SCRIPTS_DIR, f"ocr_progress_{part_name}.json")
+
+
+def load_progress(part_name: str) -> list:
     try:
-        with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+        with open(progress_file(part_name), "r", encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
-        return {}
+        # 兼容旧版单文件进度（ocr_progress.json）
+        try:
+            with open(LEGACY_PROGRESS, "r", encoding="utf-8") as f:
+                legacy = json.load(f)
+            key = f"chap-{part_name}"
+            for k, v in legacy.items():
+                if part_name in k:
+                    return v
+        except (OSError, ValueError):
+            pass
+        return []
 
 
-def save_progress(prog: dict) -> None:
-    with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
-        json.dump(prog, f, ensure_ascii=False, indent=1)
+def save_progress(part_name: str, done: list) -> None:
+    with open(progress_file(part_name), "w", encoding="utf-8") as f:
+        json.dump(done, f, ensure_ascii=False, indent=1)
 
 
-def process_part(part_dir: str, part_name: str, limit: int | None, progress: dict) -> None:
+def process_part(part_dir: str, part_name: str, limit: int | None, resume: bool) -> None:
     img_dir = os.path.join(SLIDES_ROOT, part_dir, "slide_images")
     if not os.path.isdir(img_dir):
         print(f"[skip] {part_dir}: 无 slide_images 目录")
@@ -83,10 +100,9 @@ def process_part(part_dir: str, part_name: str, limit: int | None, progress: dic
     if limit:
         images = images[:limit]
 
-    done_key = f"{part_dir}:{part_name}"
-    done = set(progress.get(done_key, []))
+    done = set(load_progress(part_name)) if resume else set()
     todo = [img for img in images if img not in done]
-    print(f"[{part_name}] {len(todo)}/{len(images)} 张待处理（已跳过 {len(done)}）")
+    print(f"[{part_name}] {len(todo)}/{len(images)} 张待处理（已跳过 {len(done)}）", flush=True)
 
     lines = [
         f"# 离散数学教材 · {part_name}（老师课件幻灯片转录）",
@@ -98,17 +114,16 @@ def process_part(part_dir: str, part_name: str, limit: int | None, progress: dic
     for i, img in enumerate(images, 1):
         path = os.path.join(img_dir, img)
         if img in done:
-            print(f"  [{i}/{len(images)}] {img} 已处理，跳过")
             continue
-        print(f"  [{i}/{len(images)}] OCR: {img} ...", end="", flush=True)
+        print(f"  [{i}/{len(images)}] {img} ...", end="", flush=True)
+        text = None
         for attempt in range(3):
             try:
                 text = describe(path, PROMPT, model=OCR_MODEL)
                 break
             except Exception as exc:
-                print(f" 失败({exc})，重试{attempt + 1}/3", flush=True)
+                print(f" 重试{attempt + 1}/3({str(exc)[:40]})", end="", flush=True)
                 time.sleep(2 * (attempt + 1))
-                text = None
         if not text:
             print(" 放弃", flush=True)
             continue
@@ -117,32 +132,34 @@ def process_part(part_dir: str, part_name: str, limit: int | None, progress: dic
         lines.append(text.strip())
         lines.append("")
         done.add(img)
-        progress[done_key] = sorted(done)
-        save_progress(progress)
+        save_progress(part_name, sorted(done))
         print(" OK", flush=True)
         time.sleep(BATCH_WAIT)
 
     out_path = os.path.join(OUT_DIR, f"老师教材_{part_name}.md")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"[完成] {part_name}: {out_path} ({len(images)} 张)")
+    print(f"[完成] {part_name}: {out_path} ({len(images)} 张)", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--part", default=None, help="章节名（如 图论）")
+    parser.add_argument("--part", default=None, help="章节名，逗号分隔（如 集合论,图论）")
     parser.add_argument("--limit", type=int, default=None, help="每章最多处理张数")
     parser.add_argument("--resume", action="store_true", help="断点续跑")
     args = parser.parse_args()
 
-    progress = load_progress() if args.resume else {}
-    targets = CHAPTERS if not args.part else [c for c in CHAPTERS if c[1] == args.part]
+    if args.part:
+        names = [n.strip() for n in args.part.split(",") if n.strip()]
+        targets = [c for c in CHAPTERS if c[1] in names]
+    else:
+        targets = CHAPTERS
     if not targets:
         print(f"未知章节: {args.part}，可选: {[c[1] for c in CHAPTERS]}")
         sys.exit(1)
 
     for part_dir, part_name in targets:
-        process_part(part_dir, part_name, args.limit, progress)
+        process_part(part_dir, part_name, args.limit, args.resume)
 
     print("全部完成。生成的文件位于 data/documents/老师教材_*.md")
 
