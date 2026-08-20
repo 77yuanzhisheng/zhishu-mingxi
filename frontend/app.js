@@ -1681,9 +1681,10 @@ async function loadGraphNodeLearning(node) {
     clearTimeout(timeoutId);
     const current = graphState.selectedNode;
     if (!current || (current.nodeId || current.id || "") !== nodeId) return;
-    if (error.name !== "AbortError") {
-      target.innerHTML = buildTrackingHtml(node);
-    }
+    const message = error.name === "AbortError"
+      ? "学情加载超时（10s）。"
+      : "学情接口暂不可用，请确认后端服务已启动。";
+    target.innerHTML = `<p class="muted-line">${message}</p>`;
   }
 }
 
