@@ -403,24 +403,36 @@ async function handleAsk() {
 }
 
 async function requestStreamingChat(payload, message) {
-  const response = await fetch(`${RAG_API_BASE_URL}/chat/stream`, {
+  let response = await fetch(`${RAG_API_BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (response.status === 404) {
+    response = await fetch(`${RAG_API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "问答请求失败");
+    const fallbackWriter = createTypewriter(message);
+    fallbackWriter.enqueue(data.answer || "");
+    await fallbackWriter.drain();
+    return data;
+  }
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail || "问答请求失败");
   }
-  if (!response.body) {
-    throw new Error("浏览器不支持流式回答");
-  }
+  if (!response.body) throw new Error("当前浏览器不支持流式回答");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
+  const writer = createTypewriter(message);
   let buffer = "";
-  let answer = "";
   let result = null;
+  let streamedAnswer = "";
 
   const consumeLine = (line) => {
     if (!line.trim()) return;
@@ -428,8 +440,9 @@ async function requestStreamingChat(payload, message) {
     if (event.type === "meta") {
       chatState.sessionId = event.session_id || chatState.sessionId;
     } else if (event.type === "delta") {
-      answer += event.content || "";
-      updateStreamingMessage(message, answer);
+      const content = event.content || "";
+      streamedAnswer += content;
+      writer.enqueue(content);
     } else if (event.type === "done") {
       result = event;
     } else if (event.type === "error") {
@@ -446,11 +459,43 @@ async function requestStreamingChat(payload, message) {
     if (done) break;
   }
   if (buffer.trim()) consumeLine(buffer);
-  if (!result) {
-    throw new Error("流式回答提前结束");
-  }
-  result.answer = result.answer || answer;
+  await writer.drain();
+  if (!result) throw new Error("流式回答提前结束");
+  result.answer = result.answer || streamedAnswer;
   return result;
+}
+
+function createTypewriter(message) {
+  const pending = [];
+  const waiters = [];
+  let displayed = "";
+  let timer = null;
+
+  const resolveWaiters = () => {
+    while (waiters.length) waiters.shift()();
+  };
+  const tick = () => {
+    const character = pending.shift();
+    if (character === undefined) {
+      timer = null;
+      resolveWaiters();
+      return;
+    }
+    displayed += character;
+    updateStreamingMessage(message, displayed);
+    timer = setTimeout(tick, 12);
+  };
+
+  return {
+    enqueue(text) {
+      pending.push(...Array.from(String(text || "")));
+      if (!timer && pending.length) tick();
+    },
+    drain() {
+      if (!timer && !pending.length) return Promise.resolve();
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+  };
 }
 
 function updateStreamingMessage(message, text) {

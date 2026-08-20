@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from backend.chat.context import prepare_context
 from backend.chat.llm import LLMClient, OpenAICompatibleLLM
 from backend.chat.models import ChatRequest, ChatResponse, ContextStatus
@@ -31,6 +33,27 @@ class ChatService:
         self.rag = rag or RAGAdapter()
 
     def chat(self, request: ChatRequest) -> ChatResponse:
+        work = self._prepare_chat(request)
+        answer = self.llm.generate(work["llm_messages"])
+        return self._complete_chat(work, answer)
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[dict]:
+        """Stream answer deltas while preserving the same RAG and history flow."""
+
+        work = self._prepare_chat(request)
+        yield {
+            "type": "meta",
+            "session_id": work["session_id"],
+            "node_ids": request.node_ids,
+        }
+        chunks: list[str] = []
+        for content in self.llm.stream(work["llm_messages"]):
+            chunks.append(content)
+            yield {"type": "delta", "content": content}
+        response = self._complete_chat(work, "".join(chunks).strip())
+        yield {"type": "done", **response.model_dump()}
+
+    def _prepare_chat(self, request: ChatRequest) -> dict:
         self.llm.ensure_available()
         if request.session_id is None:
             session_id = self.repository.create_session(request.user_id)
@@ -64,22 +87,37 @@ class ChatService:
                 {"role": "system", "content": f"可参考的知识库材料：\n{knowledge}"}
             )
         llm_messages.extend(prepared.messages)
-        answer = self.llm.generate(llm_messages)
-        self.repository.add_message(session_id, "assistant", answer, request.node_ids)
+        return {
+            "request": request,
+            "session_id": session_id,
+            "references": references,
+            "rag_status": rag_status,
+            "topic_switch_hint": topic_switch_hint,
+            "prepared": prepared,
+            "llm_messages": llm_messages,
+        }
+
+    def _complete_chat(self, work: dict, answer: str) -> ChatResponse:
+        request = work["request"]
+        self.repository.add_message(
+            work["session_id"], "assistant", answer, request.node_ids
+        )
+        prepared = work["prepared"]
+        references = work["references"]
 
         return ChatResponse(
             answer=answer,
-            session_id=session_id,
+            session_id=work["session_id"],
             references=references,
             node_ids=request.node_ids,
-            topic_switch_hint=topic_switch_hint,
+            topic_switch_hint=work["topic_switch_hint"],
             context=ContextStatus(
                 history_messages_used=len(prepared.messages),
                 total_rounds=prepared.total_rounds,
                 compressed=prepared.compressed,
                 summary_available=prepared.summary_available,
                 rag_used=bool(references),
-                rag_status=rag_status,
+                rag_status=work["rag_status"],
             ),
         )
 

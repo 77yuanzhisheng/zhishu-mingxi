@@ -32,6 +32,12 @@ class RecordingLLM(LLMClient):
         user_messages = [message["content"] for message in messages if message["role"] == "user"]
         return f"回答：{user_messages[-1]}"
 
+    def stream(self, messages: list[dict[str, str]]):
+        self.calls.append(messages)
+        user_messages = [message["content"] for message in messages if message["role"] == "user"]
+        yield "回答："
+        yield user_messages[-1]
+
 
 class EmptyRAG(RAGAdapter):
     def search(self, query: str):
@@ -201,3 +207,22 @@ def test_chat_router_and_existing_learning_api_work_together(tmp_path, monkeypat
             "SELECT node_ids FROM messages ORDER BY id LIMIT 1"
         ).fetchone()
     assert json.loads(stored["node_ids"]) == ["st_01_01"]
+
+
+def test_stream_chat_emits_meta_deltas_done_and_persists_answer(tmp_path):
+    database_path = tmp_path / "stream.db"
+    user_id = create_user("流式用户", database_path=database_path)
+    service, _ = build_service(database_path)
+
+    events = list(
+        service.stream_chat(
+            ChatRequest(user_id=user_id, message="什么是图？", node_id="gt_01_01")
+        )
+    )
+
+    assert [event["type"] for event in events] == ["meta", "delta", "delta", "done"]
+    assert "".join(event["content"] for event in events if event["type"] == "delta") == "回答：什么是图？"
+    assert events[-1]["answer"] == "回答：什么是图？"
+    messages = service.repository.get_messages(events[0]["session_id"])
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["content"] == "回答：什么是图？"

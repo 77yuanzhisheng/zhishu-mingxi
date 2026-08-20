@@ -1,6 +1,11 @@
-"""FastAPI routes for classes, exams and learning-report sharing."""
+"""FastAPI routes for users, classes, exams and learning-report sharing."""
+
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from backend.learning.database import connection_scope, init_database
 
 from backend.management.class_service import (
     create_class,
@@ -37,8 +42,36 @@ from backend.management.share_service import (
 router = APIRouter(tags=["用户、班级与考试管理"])
 
 
+class UserEnsureRequest(BaseModel):
+    user_id: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=100)
+    role: Literal["student", "teacher", "admin"] = "student"
+
+
 def _raise_http(exc: ManagementError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/api/user/ensure", summary="确保前端当前用户存在")
+def ensure_user_endpoint(request: UserEnsureRequest):
+    """Create the requested demo user once and return the persisted record."""
+
+    init_database()
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT id, name, role, class_id FROM users WHERE id = ?",
+            (request.user_id,),
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                "INSERT INTO users (id, name, role) VALUES (?, ?, ?)",
+                (request.user_id, request.name.strip(), request.role),
+            )
+            row = connection.execute(
+                "SELECT id, name, role, class_id FROM users WHERE id = ?",
+                (request.user_id,),
+            ).fetchone()
+    return dict(row)
 
 
 @router.post("/api/class/create", response_model=ClassInfo)
