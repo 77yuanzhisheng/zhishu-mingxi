@@ -107,6 +107,28 @@ class GraphToolTests(unittest.TestCase):
         self.assertEqual(len(edges), 2)
         self.assertNotIn({"source": "1", "target": "4", "relation": "covers"}, edges)
 
+    def test_hasse_divisibility_rebuilds_relation_for_new_elements(self):
+        response = generate_hasse_diagram(
+            [1, 2, 3, 6, 12], relation_type="divisibility"
+        )
+        result = response["result"]
+
+        self.assertEqual(result["relation_type"], "divisibility")
+        self.assertIn(
+            {"source": "3", "target": "6", "relation": "covers"},
+            result["edges"],
+        )
+        self.assertNotIn(
+            {"source": "1", "target": "12", "relation": "covers"},
+            result["edges"],
+        )
+
+    def test_hasse_subset_mode(self):
+        response = generate_hasse_diagram(
+            [[], [1], [2], [1, 2]], relation_type="subset"
+        )
+        self.assertEqual(len(response["result"]["edges"]), 4)
+
     def test_dijkstra(self):
         response = dijkstra_shortest_path(
             [["A", "B", 2], ["A", "C", 7], ["B", "C", 1]],
@@ -142,6 +164,58 @@ class CodeGenerationTests(unittest.TestCase):
         response = generate_discrete_math_code("求带权图的最短路径", "python")
         self.assertEqual(response["result"]["problem_type"], "dijkstra")
         self.assertIn("def dijkstra", response["result"]["code"])
+
+    def test_qwen_generation_uses_complete_problem(self):
+        class FakeLLM:
+            def __init__(self):
+                self.messages = []
+
+            def generate(self, messages):
+                self.messages = messages
+                return """```python
+numbers = [12, 18]
+print(6)
+```"""
+
+        llm = FakeLLM()
+        response = generate_discrete_math_code(
+            "编写程序求 12 和 18 的最大公约数",
+            "python",
+            use_llm=True,
+            llm_client=llm,
+        )
+
+        self.assertEqual(response["result"]["problem_type"], "general")
+        self.assertEqual(response["result"]["generation_mode"], "qwen")
+        self.assertIn("12 和 18", llm.messages[1]["content"])
+        self.assertIn("numbers = [12, 18]", response["result"]["code"])
+
+    def test_known_problem_falls_back_when_llm_is_unavailable(self):
+        class FailingLLM:
+            def generate(self, messages):
+                raise RuntimeError("offline")
+
+        response = generate_discrete_math_code(
+            "求带权图的最短路径",
+            "python",
+            use_llm=True,
+            llm_client=FailingLLM(),
+        )
+
+        self.assertEqual(response["result"]["generation_mode"], "verified_template")
+        self.assertIn("def dijkstra", response["result"]["code"])
+
+    def test_dijkstra_fallback_embeds_problem_edges_and_endpoints(self):
+        response = generate_discrete_math_code(
+            "给定 A-B 权重为2、A-C权重为7、B-C权重为1，求 A 到 C 的最短路径和距离",
+            "python",
+            use_llm=False,
+        )
+        code = response["result"]["code"]
+
+        self.assertIn("'A': [('B', 2), ('C', 7)]", code)
+        self.assertIn("dijkstra(graph, 'A', 'C')", code)
+        self.assertIn("最短路径", code)
 
 
 class ExtendedApiTests(unittest.TestCase):
@@ -180,6 +254,37 @@ class ExtendedApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["result"]["reflexive"])
+
+    def test_hasse_api_can_build_divisibility_relation_from_elements(self):
+        response = self.client.post(
+            "/tools/hasse-diagram",
+            json={
+                "params": {
+                    "elements": [1, 2, 3, 6],
+                    "relation_type": "divisibility",
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["relation_type"], "divisibility")
+
+    def test_code_api_infers_problem_type_without_dropdown(self):
+        response = self.client.post(
+            "/tools/code-generate",
+            json={
+                "params": {
+                    "problem": "求带权图中两个顶点的最短路径",
+                    "language": "python",
+                    "use_llm": False,
+                }
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()["result"]
+        self.assertEqual(result["problem_type"], "dijkstra")
+        self.assertEqual(result["problem_type_source"], "automatic")
 
 
 if __name__ == "__main__":

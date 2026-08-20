@@ -63,6 +63,8 @@ http://127.0.0.1:5500/tools
 - `POST /tools/bipartite`
 - `POST /tools/code-generate`
 
+哈斯图页面支持整除、小于等于、子集和手动关系；自动模式会根据元素集合重建关系。代码生成页面直接提交完整题目给 Qwen 自动识别并生成 Python/C 代码，模型不可用时对已支持题型回退到离线模板。
+
 按队员三接口约定对接：
 
 - `GET /api/learning/report`

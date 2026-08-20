@@ -205,8 +205,9 @@ const extendedToolConfigs = {
   "hasse-diagram": {
     title: "哈斯图生成",
     fields: [
+      { name: "relation_type", label: "偏序关系类型", type: "select", value: "divisibility", options: [["divisibility", "整除关系 a | b"], ["less_equal", "小于等于 a ≤ b"], ["subset", "子集关系 A ⊆ B"], ["explicit", "手动输入有序对"]] },
       { name: "elements", label: "元素集合", type: "json", value: "[1, 2, 4]" },
-      { name: "relation", label: "偏序关系", type: "json", rows: 5, value: "[[1,1],[2,2],[4,4],[1,2],[2,4],[1,4]]" },
+      { name: "relation", label: "偏序关系有序对", type: "json", rows: 5, value: "[[1,1],[2,2],[4,4],[1,2],[2,4],[1,4]]", showWhen: { name: "relation_type", value: "explicit" } },
     ],
   },
   dijkstra: {
@@ -225,9 +226,9 @@ const extendedToolConfigs = {
   "code-generate": {
     title: "Python/C 代码生成",
     fields: [
-      { name: "problem", label: "离散数学问题", type: "textarea", rows: 4, value: "求带权图中从起点到终点的最短路径" },
+      { name: "problem", label: "完整题目", type: "textarea", rows: 6, value: "给定带权图 A-B 权重为 2，A-C 权重为 7，B-C 权重为 1，请用 Dijkstra 算法求 A 到 C 的最短路径并输出路径和距离。" },
       { name: "language", label: "编程语言", type: "select", value: "python", options: [["python", "Python"], ["c", "C"]] },
-      { name: "problem_type", label: "问题类型", type: "select", value: "dijkstra", options: [["truth_table", "真值表"], ["relation_properties", "关系性质"], ["set_operation", "集合运算"], ["dijkstra", "最短路径"], ["bipartite", "二分图"], ["hasse", "哈斯图"]] },
+      { name: "use_llm", label: "使用 Qwen 按完整题意生成", type: "checkbox", value: true },
     ],
   },
 };
@@ -576,7 +577,9 @@ function selectExtendedTool(toolName) {
   });
   document.getElementById("extendedToolTitle").textContent = config.title;
   document.getElementById("extendedToolEndpoint").textContent = `POST /tools/${toolName}`;
-  document.getElementById("extendedToolForm").innerHTML = config.fields.map(renderExtendedToolField).join("");
+  const form = document.getElementById("extendedToolForm");
+  form.innerHTML = config.fields.map(renderExtendedToolField).join("");
+  bindExtendedToolFieldRules(config, form);
   const result = document.getElementById("extendedToolResult");
   result.className = "tool-response empty-state";
   result.textContent = "填写参数后运行工具。";
@@ -584,16 +587,35 @@ function selectExtendedTool(toolName) {
 
 function renderExtendedToolField(field) {
   const value = escapeHtml(String(field.value ?? ""));
+  const wrapper = `data-tool-field="${escapeHtml(field.name)}"`;
   if (field.type === "select") {
-    return `<label>${escapeHtml(field.label)}<select name="${escapeHtml(field.name)}">${field.options.map(([optionValue, label]) => `<option value="${escapeHtml(optionValue)}" ${optionValue === field.value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>`;
+    return `<label ${wrapper}>${escapeHtml(field.label)}<select name="${escapeHtml(field.name)}">${field.options.map(([optionValue, label]) => `<option value="${escapeHtml(optionValue)}" ${optionValue === field.value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>`;
   }
   if (field.type === "checkbox") {
-    return `<label class="tool-checkbox"><input type="checkbox" name="${escapeHtml(field.name)}" ${field.value ? "checked" : ""}><span>${escapeHtml(field.label)}</span></label>`;
+    return `<label class="tool-checkbox" ${wrapper}><input type="checkbox" name="${escapeHtml(field.name)}" ${field.value ? "checked" : ""}><span>${escapeHtml(field.label)}</span></label>`;
   }
   if (field.type === "json" || field.type === "textarea") {
-    return `<label>${escapeHtml(field.label)}<textarea name="${escapeHtml(field.name)}" rows="${Number(field.rows || 3)}">${value}</textarea></label>`;
+    return `<label ${wrapper}>${escapeHtml(field.label)}<textarea name="${escapeHtml(field.name)}" rows="${Number(field.rows || 3)}">${value}</textarea></label>`;
   }
-  return `<label>${escapeHtml(field.label)}<input name="${escapeHtml(field.name)}" value="${value}"></label>`;
+  return `<label ${wrapper}>${escapeHtml(field.label)}<input name="${escapeHtml(field.name)}" value="${value}"></label>`;
+}
+
+function bindExtendedToolFieldRules(config, form) {
+  const updateVisibility = () => {
+    config.fields.forEach((field) => {
+      const wrapper = form.querySelector(`[data-tool-field="${field.name}"]`);
+      if (!wrapper || !field.showWhen) return;
+      const dependency = form.querySelector(`[name="${field.showWhen.name}"]`);
+      wrapper.hidden = !dependency || dependency.value !== field.showWhen.value;
+    });
+  };
+  const dependencies = new Set(
+    config.fields.filter((field) => field.showWhen).map((field) => field.showWhen.name),
+  );
+  dependencies.forEach((name) => {
+    form.querySelector(`[name="${name}"]`)?.addEventListener("change", updateVisibility);
+  });
+  updateVisibility();
 }
 
 async function runExtendedTool() {
@@ -608,6 +630,8 @@ async function runExtendedTool() {
   try {
     const params = {};
     config.fields.forEach((field) => {
+      const wrapper = form.querySelector(`[data-tool-field="${field.name}"]`);
+      if (wrapper?.hidden) return;
       const control = form.querySelector(`[name="${field.name}"]`);
       if (!control) {
         throw new Error(`未找到“${field.label}”输入框，请刷新页面后重试`);
@@ -735,7 +759,7 @@ function renderHasseDiagramResult(result) {
   return `<section class="tool-result-visual">
     <div class="result-heading-row">
       <div><div class="result-kicker">偏序关系可视化</div><h4>哈斯图</h4></div>
-      <div class="result-counts"><span>${nodes.length} 个元素</span><span>${edges.length} 条覆盖关系</span></div>
+      <div class="result-counts"><span>${escapeHtml(formatHasseRelationType(result.relation_type))}</span><span>${nodes.length} 个元素</span><span>${edges.length} 条覆盖关系</span></div>
     </div>
     <div id="hasseResultChart" class="hasse-result-chart" role="img" aria-label="哈斯图计算结果"></div>
   </section>`;
@@ -783,8 +807,9 @@ function renderCodeGenerationResult(result) {
     </div>
     <div class="result-meta-row">
       <span><b>问题类型</b> ${escapeHtml(formatProblemType(result.problem_type))}</span>
-      <span><b>任务</b> ${escapeHtml(result.problem || "未说明")}</span>
+      <span><b>生成方式</b> ${escapeHtml(formatGenerationMode(result.generation_mode))}</span>
     </div>
+    <p class="result-caption">${escapeHtml(result.problem || "未说明任务")}</p>
     <pre class="generated-code"><code>${escapeHtml(result.code || "未生成代码")}</code></pre>
   </section>`;
 }
@@ -899,7 +924,15 @@ function formatNumber(value) {
 
 function formatProblemType(type) {
   return ({ truth_table: "真值表", relation_properties: "关系性质", set_operation: "集合运算",
-    dijkstra: "最短路径", bipartite: "二分图判定", hasse: "哈斯图" })[type] || type || "通用算法";
+    dijkstra: "最短路径", bipartite: "二分图判定", hasse: "哈斯图", general: "自定义离散数学问题" })[type] || type || "通用算法";
+}
+
+function formatHasseRelationType(type) {
+  return ({ explicit: "手动偏序", divisibility: "整除关系", less_equal: "小于等于关系", subset: "子集关系" })[type] || "偏序关系";
+}
+
+function formatGenerationMode(mode) {
+  return mode === "qwen" ? "Qwen 按题生成" : "离线模板回退";
 }
 
 function addMessage(text, type, citations = []) {
