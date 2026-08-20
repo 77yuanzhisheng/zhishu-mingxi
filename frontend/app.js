@@ -1105,11 +1105,19 @@ async function loadKnowledgeGraph(forceReload = false) {
     return;
   }
 
-  container.textContent = "正在从知识库加载知识图谱...";
+  // 首次加载（无画布）时才显示占位文字；刷新时保留现有画布，避免 textContent 覆盖 echarts DOM。
+  if (!graphState.chart) {
+    container.textContent = "正在从知识库加载知识图谱...";
+  }
 
   try {
-    const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`, {
+      signal: controller.signal,
+    });
     const data = await response.json();
+    clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error(data.detail || "知识图谱接口请求失败");
     }
@@ -1119,6 +1127,12 @@ async function loadKnowledgeGraph(forceReload = false) {
     graphState.expandedModules.clear();
     graphState.expandedConcepts.clear();
     graphState.loaded = true;
+
+    // 强制刷新：销毁旧 echarts 实例，重新挂载画布（否则 setOption 画到被覆盖的 DOM 上）。
+    if (forceReload && graphState.chart) {
+      graphState.chart.dispose();
+      graphState.chart = null;
+    }
     renderKnowledgeGraph();
     showGraphNodeDetail({
       name: "知识图谱",
@@ -1126,7 +1140,11 @@ async function loadKnowledgeGraph(forceReload = false) {
       description: `已加载 ${graphState.modules.length} 个课程模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。`,
     });
   } catch (error) {
-    container.textContent = `${error.message}。请确认主后端 8000 已启动，并且接口 /kb/knowledge-graph 可用。`;
+    clearTimeout(timeoutId);
+    const message = error.name === "AbortError"
+      ? "知识图谱加载超时（15s）。"
+      : error.message;
+    container.textContent = `${message}。请确认主后端 8000 已启动，并且接口 /kb/knowledge-graph 可用。`;
   }
 }
 
@@ -1597,13 +1615,13 @@ function showGraphNodeDetail(node) {
 
   if (node.type === "module") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录模块访问，可传给学情分析服务。");
+    renderGraphNodeLearning(node);
   } else if (node.type === "concept") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录子概念访问，后续可计算掌握度。");
+    renderGraphNodeLearning(node);
   } else {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录知识条目访问，适合用于薄弱点定位。");
+    renderGraphNodeLearning(node);
   }
 
   typesetMath(document.getElementById("graphDetailConcepts"));
@@ -1612,13 +1630,24 @@ function showGraphNodeDetail(node) {
 async function loadGraphNodeKnowledge(node) {
   const target = document.getElementById("graphDetailLinks");
   const query = node.searchQuery || node.name;
+  const nodeId = node.nodeId || node.id || "";
   if (!query || node.level === "overview") {
     return;
   }
 
   try {
-    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`, {
+      signal: controller.signal,
+    });
     const data = await response.json();
+    clearTimeout(timeoutId);
+    // 竞态保护：期间用户切到了别的节点，丢弃过期结果。
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) {
+      return;
+    }
     if (!response.ok) {
       throw new Error(data.detail || "知识库检索失败");
     }
@@ -1627,7 +1656,15 @@ async function loadGraphNodeKnowledge(node) {
     target.innerHTML = renderKnowledgeSearchResults(results);
     typesetMath(target);
   } catch (error) {
-    target.innerHTML = `<p class="error">${escapeHtml(error.message)}。请确认主后端 8000 的 /kb/search 可用。</p>`;
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) {
+      return;
+    }
+    const message = error.name === "AbortError"
+      ? "知识库检索超时（15s）。请确认主后端 8000 的 /kb/search 可用。"
+      : error.message;
+    target.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
   }
 }
 
@@ -1655,10 +1692,8 @@ function renderKnowledgeSearchResults(results) {
 }
 
 function formatKnowledgeSource(metadata) {
-  const chapter = metadata.chapter || metadata.section || "";
-  const page = metadata.page_start || metadata.page || metadata.page_end;
-  const source = metadata.source || metadata.file_name || metadata.filename || "";
-  return [chapter, page ? `p.${page}` : "", source].filter(Boolean).join(" · ");
+  // 只显示来源文档名，不显示章节/页码。
+  return metadata.source || metadata.file_name || metadata.filename || "";
 }
 
 function buildNodeSummaryHtml(node, searchQuery) {
@@ -1678,11 +1713,80 @@ function buildNodeSummaryHtml(node, searchQuery) {
   `;
 }
 
-function buildTrackingHtml(node, message) {
+const LEARNING_LEVEL_NAMES = ["未学", "了解", "理解", "掌握", "熟练"];
+
+// 加载前的占位提示（真实学情到达后替换）
+function buildTrackingHtml(node) {
+  return `<p class="muted-line">正在加载学情数据...</p>`;
+}
+
+// 先渲染本地浏览统计，再异步加载后端真实学情（答题掌握度）替换。
+function renderGraphNodeLearning(node) {
+  const target = document.getElementById("graphDetailTasks");
+  if (!target) return;
+  target.innerHTML = buildTrackingHtml(node);
+  loadGraphNodeLearning(node);
+}
+
+async function loadGraphNodeLearning(node) {
+  const target = document.getElementById("graphDetailTasks");
+  const nodeId = node.nodeId || node.id || "";
+  if (!nodeId || node.level === "overview") return;
+  const userId = getCurrentUserId();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`${API_BASE_URL}/api/learning/report?user_id=${encodeURIComponent(userId)}`, {
+      signal: controller.signal,
+    });
+    const data = await response.json();
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
+    if (!response.ok) throw new Error(data.detail || "学情获取失败");
+
+    const mastery = (data.node_mastery || []).find((record) => record.node_id === nodeId) || null;
+    target.innerHTML = renderNodeLearningHtml(node, mastery);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
+    const message = error.name === "AbortError"
+      ? "学情加载超时（10s）。"
+      : "学情接口暂不可用，请确认后端服务已启动。";
+    target.innerHTML = `<p class="muted-line">${message}</p>`;
+  }
+}
+
+function renderNodeLearningHtml(node, mastery) {
+  if (!mastery) {
+    return `
+      <div class="tracking-box">
+        <p class="muted-line">该节点暂无练习记录。在「自测练习」完成答题后，这里会显示真实掌握度。</p>
+      </div>
+    `;
+  }
+
+  const level = Number(mastery.level ?? 0);
+  const levelName = LEARNING_LEVEL_NAMES[level] || "未知";
+  const correct = Number(mastery.correct_count ?? 0);
+  const total = Number(mastery.total_count ?? 0);
+  const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const weak = level > 0 && level <= 2;
+  const lastTime = mastery.last_practice_time
+    ? new Date(mastery.last_practice_time).toLocaleString("zh-CN")
+    : "暂无";
+
   return `
     <div class="tracking-box">
-      <strong>${escapeHtml(message)}</strong>
-      <span>payload：node_id=${escapeHtml(node.nodeId || node.id || "")}，event_type=view，user_id=${escapeHtml(getCurrentUserId())}</span>
+      <div class="mastery-badge ${weak ? "weak" : ""}">掌握等级 ${level} · ${levelName}${weak ? "（薄弱）" : ""}</div>
+      <div class="progress-track"><span style="display:block;width:${level / 4 * 100}%;background:#22c55e;height:8px;border-radius:4px;"></span></div>
+      <ul class="mastery-stats">
+        <li>答题：${correct} / ${total}</li>
+        <li>准确率：${accuracy}%</li>
+        <li>最近练习：${lastTime}</li>
+      </ul>
     </div>
   `;
 }

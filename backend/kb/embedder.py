@@ -23,7 +23,11 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# 始终从项目根加载 .env，避免启动目录不同导致嵌入模型配置丢失（384d 回退污染索引）
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +90,16 @@ class EmbeddingService:
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"加载嵌入模型: {self.model_name} (device={self.device})")
-            self._model = SentenceTransformer(self.model_name, device=self.device)
+            # 相对路径（./local_models/...）基于项目根解析，避免依赖启动时的 cwd
+            model_path = self.model_name
+            if model_path.startswith("./") or model_path.startswith(".\\") or model_path.startswith("."):
+                project_root = os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )  # backend/kb/embedder.py → 项目根
+                model_path = os.path.join(project_root, model_path.lstrip("./\\"))
+            self._model = SentenceTransformer(model_path, device=self.device)
             self.dimension = self._model.get_sentence_embedding_dimension()
-            logger.info(f"嵌入模型加载完成，向量维度: {self.dimension}")
+            logger.info(f"嵌入模型加载完成，向量维度: {self.dimension} ({model_path})")
         except ImportError:
             logger.error("sentence-transformers 未安装，请执行: pip install sentence-transformers")
             raise
