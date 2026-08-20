@@ -50,7 +50,9 @@ PROMPT = (
     "如果包含图形/表格请简述其内容。只输出提取的正文，不要评论。"
 )
 
-BATCH_WAIT = 0.3  # 请求间隔（秒），避免限流
+OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"  # OCR 专用，约 1-3s/张（Qwen3-VL-8B 慢且易限流）
+
+BATCH_WAIT = 0.5  # 请求间隔（秒），避免 SiliconFlow 限流
 
 
 def load_progress() -> dict:
@@ -101,7 +103,7 @@ def process_part(part_dir: str, part_name: str, limit: int | None, progress: dic
         print(f"  [{i}/{len(images)}] OCR: {img} ...", end="", flush=True)
         for attempt in range(3):
             try:
-                text = describe(path, PROMPT)
+                text = describe(path, PROMPT, model=OCR_MODEL)
                 break
             except Exception as exc:
                 print(f" 失败({exc})，重试{attempt + 1}/3", flush=True)
