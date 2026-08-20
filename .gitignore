@@ -26,5 +26,9 @@ local_models/
 temp_*/
 *.tmp
 
+# 服务运行产物（watchdog 日志与 pid）
+scripts/*.log
+scripts/*.pid
+
 # 文档输出
 *.docx
