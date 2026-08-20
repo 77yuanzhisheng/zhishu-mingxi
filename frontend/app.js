@@ -395,7 +395,7 @@ async function handleAsk() {
     updateMessage(
       loading,
       data.answer,
-      []
+      formatReferences(data.references),
     );
   } catch (error) {
     updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
@@ -2757,17 +2757,20 @@ function truncateText(text, length) {
 }
 
 function formatReferences(references) {
-  return references.map((reference) => {
-    const meta = reference.metadata || {};
-    const chapter = meta.chapter || meta.section || "";
-    const page = meta.page_start || meta.page || meta.page_end || "";
-    const source = meta.source_document || meta.source || "";
-    const parts = [];
-    if (chapter) parts.push(chapter);
-    if (page) parts.push(`p.${page}`);
-    if (source) parts.push(source);
-    return parts.join(" · ");
-  });
+  return (references || [])
+    .map((reference) => {
+      const meta = reference.metadata || {};
+      const chapter = meta.chapter || meta.section || "";
+      const page = meta.page_start || meta.page || meta.page_end || "";
+      const source = meta.source_document || meta.source || "";
+      const parts = [];
+      if (chapter) parts.push(chapter);
+      if (page) parts.push(`p.${page}`);
+      if (source) parts.push(source);
+      return parts.join(" · ");
+    })
+    // 章节/页码/来源全部缺失的引用直接忽略，不渲染任何"未知"占位按钮。
+    .filter(Boolean);
 }
 
 function formatAnswerHtml(text) {
