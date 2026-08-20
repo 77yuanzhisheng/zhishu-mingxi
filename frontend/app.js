@@ -1644,19 +1644,9 @@ function buildNodeSummaryHtml(node, searchQuery) {
 
 const LEARNING_LEVEL_NAMES = ["未学", "了解", "理解", "掌握", "熟练"];
 
-// 本地浏览统计（learning_events 写入 localStorage）
+// 加载前的占位提示（真实学情到达后替换）
 function buildTrackingHtml(node) {
-  const nodeId = node.nodeId || node.id || "";
-  const events = parseLocalLearningEvents().filter((event) => event.node_id === nodeId);
-  const viewCount = events.length;
-  const lastView = viewCount > 0
-    ? new Date(events[viewCount - 1].timestamp).toLocaleString("zh-CN")
-    : "暂无";
-  return `
-    <div class="tracking-box">
-      <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
-    </div>
-  `;
+  return `<p class="muted-line">正在加载学情数据...</p>`;
 }
 
 // 先渲染本地浏览统计，再异步加载后端真实学情（答题掌握度）替换。
@@ -1698,17 +1688,9 @@ async function loadGraphNodeLearning(node) {
 }
 
 function renderNodeLearningHtml(node, mastery) {
-  const nodeId = node.nodeId || node.id || "";
-  const events = parseLocalLearningEvents().filter((event) => event.node_id === nodeId);
-  const viewCount = events.length;
-  const lastView = viewCount > 0
-    ? new Date(events[viewCount - 1].timestamp).toLocaleString("zh-CN")
-    : "暂无";
-
   if (!mastery) {
     return `
       <div class="tracking-box">
-        <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
         <p class="muted-line">该节点暂无练习记录。在「自测练习」完成答题后，这里会显示真实掌握度。</p>
       </div>
     `;
@@ -1726,7 +1708,6 @@ function renderNodeLearningHtml(node, mastery) {
 
   return `
     <div class="tracking-box">
-      <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
       <div class="mastery-badge ${weak ? "weak" : ""}">掌握等级 ${level} · ${levelName}${weak ? "（薄弱）" : ""}</div>
       <div class="progress-track"><span style="display:block;width:${level / 4 * 100}%;background:#22c55e;height:8px;border-radius:4px;"></span></div>
       <ul class="mastery-stats">
