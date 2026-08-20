@@ -1544,13 +1544,13 @@ function showGraphNodeDetail(node) {
 
   if (node.type === "module") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录模块访问，可传给学情分析服务。");
+    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
   } else if (node.type === "concept") {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录子概念访问，后续可计算掌握度。");
+    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
   } else {
     document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node, "已记录知识条目访问，适合用于薄弱点定位。");
+    document.getElementById("graphDetailTasks").innerHTML = buildTrackingHtml(node);
   }
 
   typesetMath(document.getElementById("graphDetailConcepts"));
@@ -1559,13 +1559,24 @@ function showGraphNodeDetail(node) {
 async function loadGraphNodeKnowledge(node) {
   const target = document.getElementById("graphDetailLinks");
   const query = node.searchQuery || node.name;
+  const nodeId = node.nodeId || node.id || "";
   if (!query || node.level === "overview") {
     return;
   }
 
   try {
-    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`, {
+      signal: controller.signal,
+    });
     const data = await response.json();
+    clearTimeout(timeoutId);
+    // 竞态保护：期间用户切到了别的节点，丢弃过期结果。
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) {
+      return;
+    }
     if (!response.ok) {
       throw new Error(data.detail || "知识库检索失败");
     }
@@ -1574,7 +1585,15 @@ async function loadGraphNodeKnowledge(node) {
     target.innerHTML = renderKnowledgeSearchResults(results);
     typesetMath(target);
   } catch (error) {
-    target.innerHTML = `<p class="error">${escapeHtml(error.message)}。请确认主后端 8000 的 /kb/search 可用。</p>`;
+    clearTimeout(timeoutId);
+    const current = graphState.selectedNode;
+    if (!current || (current.nodeId || current.id || "") !== nodeId) {
+      return;
+    }
+    const message = error.name === "AbortError"
+      ? "知识库检索超时（15s）。请确认主后端 8000 的 /kb/search 可用。"
+      : error.message;
+    target.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
   }
 }
 
@@ -1623,11 +1642,27 @@ function buildNodeSummaryHtml(node, searchQuery) {
   `;
 }
 
-function buildTrackingHtml(node, message) {
+function buildTrackingHtml(node) {
+  const nodeId = node.nodeId || node.id || "";
+  const mastery = node.masteryLevels || {};
+
+  // 本地行为记录统计（recordLearningEvent 写入 localStorage）
+  const events = parseLocalLearningEvents().filter((event) => event.node_id === nodeId);
+  const viewCount = events.length;
+  const lastView = viewCount > 0
+    ? new Date(events[viewCount - 1].timestamp).toLocaleString("zh-CN")
+    : "暂无";
+
+  const masteryLevels = ["0_未学", "1_了解", "2_理解", "3_掌握", "4_熟练"];
+  const masteryHtml = masteryLevels
+    .filter((key) => mastery[key])
+    .map((key) => `<li><strong>${key.replace("_", " ")}</strong>：${escapeHtml(mastery[key])}</li>`)
+    .join("");
+
   return `
     <div class="tracking-box">
-      <strong>${escapeHtml(message)}</strong>
-      <span>payload：node_id=${escapeHtml(node.nodeId || node.id || "")}，event_type=view，user_id=${escapeHtml(getCurrentUserId())}</span>
+      <span>node_id：<strong>${escapeHtml(nodeId)}</strong> · 浏览 ${viewCount} 次 · 最近：${lastView}</span>
+      ${masteryHtml ? `<ul class="mastery-list">${masteryHtml}</ul>` : ""}
     </div>
   `;
 }
