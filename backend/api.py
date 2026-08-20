@@ -128,6 +128,10 @@ app.include_router(chat_router)
 from backend.management.router import router as management_router
 app.include_router(management_router)
 
+# 账户注册、登录与当前用户
+from backend.auth.router import router as auth_router
+app.include_router(auth_router)
+
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
 # app.include_router(rag_router)

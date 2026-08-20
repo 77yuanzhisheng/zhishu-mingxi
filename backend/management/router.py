@@ -8,7 +8,13 @@ from backend.management.class_service import (
     get_class_students,
     join_class,
 )
-from backend.management.exam_service import generate_exam, get_exam_results, submit_exam
+from backend.management.exam_service import (
+    generate_exam,
+    get_exam_results,
+    get_student_exam,
+    get_student_exams,
+    submit_exam,
+)
 from backend.management.exceptions import ManagementError
 from backend.management.models import (
     ClassCreateRequest,
@@ -26,6 +32,8 @@ from backend.management.models import (
     ShareRequestDecision,
     ShareRequestInfo,
     SharedLearningReport,
+    StudentExamDetail,
+    StudentExamInfo,
 )
 from backend.management.share_service import (
     create_share_request,
@@ -97,6 +105,22 @@ def generate_exam_endpoint(request: ExamGenerateRequest):
 def submit_exam_endpoint(request: ExamSubmitRequest):
     try:
         return submit_exam(request.exam_id, request.user_id, request.answers)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.get("/api/exam/student/{user_id}", response_model=list[StudentExamInfo])
+def student_exams_endpoint(user_id: int):
+    try:
+        return get_student_exams(user_id)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.get("/api/exam/{exam_id}", response_model=StudentExamDetail)
+def student_exam_endpoint(exam_id: int):
+    try:
+        return get_student_exam(exam_id)
     except ManagementError as exc:
         _raise_http(exc)
 
