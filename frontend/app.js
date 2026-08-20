@@ -1603,10 +1603,8 @@ function renderKnowledgeSearchResults(results) {
 }
 
 function formatKnowledgeSource(metadata) {
-  const chapter = metadata.chapter || metadata.section || "";
-  const page = metadata.page_start || metadata.page || metadata.page_end;
-  const source = metadata.source || metadata.file_name || metadata.filename || "";
-  return [chapter, page ? `p.${page}` : "", source].filter(Boolean).join(" · ");
+  // 只显示来源文档名，不显示章节/页码。
+  return metadata.source || metadata.file_name || metadata.filename || "";
 }
 
 function buildNodeSummaryHtml(node, searchQuery) {
@@ -2760,16 +2758,10 @@ function formatReferences(references) {
   return (references || [])
     .map((reference) => {
       const meta = reference.metadata || {};
-      const chapter = meta.chapter || meta.section || "";
-      const page = meta.page_start || meta.page || meta.page_end || "";
-      const source = meta.source_document || meta.source || "";
-      const parts = [];
-      if (chapter) parts.push(chapter);
-      if (page) parts.push(`p.${page}`);
-      if (source) parts.push(source);
-      return parts.join(" · ");
+      // 只显示来源文档名，不显示章节/页码。
+      return meta.source_document || meta.source || "";
     })
-    // 章节/页码/来源全部缺失的引用直接忽略，不渲染任何"未知"占位按钮。
+    // 连来源都没有的引用直接忽略，不渲染占位按钮。
     .filter(Boolean);
 }
 
