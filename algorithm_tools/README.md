@@ -129,16 +129,22 @@ complement
 POST /tools/hasse-diagram
 {
   "params": {
-    "elements": [1, 2, 4],
-    "relation": [
-      [1, 1], [2, 2], [4, 4],
-      [1, 2], [2, 4], [1, 4]
-    ]
+    "elements": [1, 2, 3, 6, 12],
+    "relation_type": "divisibility"
   }
 }
 ```
 
-也可以用与 `elements` 顺序对应的 `matrix` 代替 `relation`。接口会验证偏序关系，并进行传递约简，返回：
+`relation_type` 支持：
+
+```text
+divisibility  根据正整数元素自动构造整除关系
+less_equal    根据数值元素自动构造小于等于关系
+subset        把每个数组视为集合，自动构造子集关系
+explicit      使用 relation 有序对或 matrix 手动定义关系
+```
+
+自动模式会在 `elements` 改变后重新计算关系，不需要同步修改旧矩阵。`explicit` 模式下，也可以用与 `elements` 顺序对应的 `matrix` 代替 `relation`。接口会验证偏序关系，并进行传递约简，返回：
 
 - `nodes`：节点 ID、显示文字和层级
 - `edges`：哈斯图覆盖边
@@ -198,14 +204,16 @@ POST /tools/bipartite
 POST /tools/code-generate
 {
   "params": {
-    "problem": "求带权图中从起点到其余顶点的最短路径",
+    "problem": "给定 A-B 权重2、A-C权重7、B-C权重1，求 A 到 C 的最短路径并输出路径和距离",
     "language": "python",
-    "problem_type": "dijkstra"
+    "use_llm": true
   }
 }
 ```
 
-`language` 可取 `python` 或 `c`。`problem_type` 可省略，由题目关键词识别，也可显式指定：
+`language` 可取 `python` 或 `c`。默认会自动识别问题类型，并调用已配置的 Qwen 根据完整题意生成代码，不再要求前端选择固定模板。模型生成的 Python 会进行语法检查；模型暂时不可用时，已支持的题型自动回退到可靠模板。
+
+API 调试时仍可显式传入可选的 `problem_type`：
 
 ```text
 truth_table
@@ -214,9 +222,10 @@ set_operation
 dijkstra
 bipartite
 hasse
+general
 ```
 
-这里使用经过检查的确定性算法模板，不调用大模型，因此不会生成不可预测或无法运行的内容。
+返回的 `generation_mode` 为 `qwen` 或 `verified_template`，用于区分按题生成和离线模板回退。设置 `use_llm: false` 可以强制使用离线模板。
 
 ## 原有接口兼容性
 
