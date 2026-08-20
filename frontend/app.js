@@ -395,7 +395,6 @@ async function handleAsk() {
     updateMessage(
       loading,
       data.answer,
-      formatReferences(data.references),
     );
   } catch (error) {
     updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
@@ -2752,17 +2751,6 @@ function findNodeName(nodeId) {
 function truncateText(text, length) {
   const value = String(text || "");
   return value.length > length ? `${value.slice(0, length)}...` : value;
-}
-
-function formatReferences(references) {
-  return (references || [])
-    .map((reference) => {
-      const meta = reference.metadata || {};
-      // 只显示来源文档名，不显示章节/页码。
-      return meta.source_document || meta.source || "";
-    })
-    // 连来源都没有的引用直接忽略，不渲染占位按钮。
-    .filter(Boolean);
 }
 
 function formatAnswerHtml(text) {
