@@ -117,6 +117,35 @@ class ExamGenerateResponse(BaseModel):
     questions: list[ExamQuestion]
 
 
+class StudentExamInfo(BaseModel):
+    exam_id: int
+    title: str
+    class_id: int
+    status: str
+    created_at: datetime
+    total_score: float
+    submitted: bool
+
+
+class StudentExamQuestion(BaseModel):
+    question_id: int
+    node_id: str
+    question_type: str
+    content: str
+    score: float
+    sort_order: int
+
+
+class StudentExamDetail(BaseModel):
+    exam_id: int
+    title: str
+    class_id: int
+    status: str
+    created_at: datetime
+    total_score: float
+    questions: list[StudentExamQuestion]
+
+
 class SubmittedAnswer(BaseModel):
     question_id: int = Field(gt=0)
     answer: str = Field(default="", max_length=10000)

@@ -60,6 +60,8 @@ def connection_scope(
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password_hash TEXT,
     name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
     class_id INTEGER,
@@ -189,8 +191,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_share_requests_unique_pending
 """
 
 
+def _migrate_users_auth_columns(connection: sqlite3.Connection) -> None:
+    """Add nullable authentication columns to databases created by older versions."""
+
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "username" not in columns:
+        connection.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    if "password_hash" not in columns:
+        connection.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique
+        ON users(username) WHERE username IS NOT NULL
+        """
+    )
+
+
 def init_database(database_path: str | Path | None = None) -> None:
-    """Create all learning tables and indexes if they do not exist."""
+    """Create tables and apply additive migrations without rebuilding existing data."""
 
     with connection_scope(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
+        _migrate_users_auth_columns(connection)

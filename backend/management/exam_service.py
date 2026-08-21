@@ -20,6 +20,9 @@ from backend.management.models import (
     ExamResultsResponse,
     ExamSubmitResponse,
     NodeExamStatistic,
+    StudentExamDetail,
+    StudentExamInfo,
+    StudentExamQuestion,
     StudentExamResult,
 )
 from backend.management.question_source import recommend_exam_questions
@@ -36,6 +39,81 @@ def _question_from_row(row, include_answer: bool = True) -> ExamQuestion:
         score=row["score"],
         sort_order=row["sort_order"],
         grading_mode="automatic" if row["answer"] else "pending_review",
+    )
+
+
+def get_student_exams(user_id: int, database_path=None) -> list[StudentExamInfo]:
+    """Return published exams for a student's class, including submission state."""
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        user = require_user(connection, user_id)
+        if user["role"] != "student":
+            raise PermissionDeniedError("仅 student 用户可以查看学生考试列表")
+        if user["class_id"] is None:
+            return []
+        rows = connection.execute(
+            """
+            SELECT e.*,
+                   EXISTS(
+                       SELECT 1 FROM exam_submissions s
+                       WHERE s.exam_id = e.id AND s.user_id = ?
+                   ) AS submitted
+            FROM exams e
+            WHERE e.class_id = ? AND e.status = 'published'
+            ORDER BY e.created_at DESC, e.id DESC
+            """,
+            (user_id, user["class_id"]),
+        ).fetchall()
+    return [
+        StudentExamInfo(
+            exam_id=row["id"],
+            title=row["title"],
+            class_id=row["class_id"],
+            status=row["status"],
+            created_at=row["created_at"],
+            total_score=row["total_score"],
+            submitted=bool(row["submitted"]),
+        )
+        for row in rows
+    ]
+
+
+def get_student_exam(exam_id: int, database_path=None) -> StudentExamDetail:
+    """Return an exam and its questions without any answer or grading metadata."""
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        exam = connection.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
+        if exam is None:
+            raise ResourceNotFoundError(f"考试 {exam_id} 不存在")
+        questions = connection.execute(
+            """
+            SELECT id, node_id, question_type, content, score, sort_order
+            FROM exam_questions
+            WHERE exam_id = ?
+            ORDER BY sort_order
+            """,
+            (exam_id,),
+        ).fetchall()
+    return StudentExamDetail(
+        exam_id=exam["id"],
+        title=exam["title"],
+        class_id=exam["class_id"],
+        status=exam["status"],
+        created_at=exam["created_at"],
+        total_score=exam["total_score"],
+        questions=[
+            StudentExamQuestion(
+                question_id=row["id"],
+                node_id=row["node_id"],
+                question_type=row["question_type"],
+                content=row["content"],
+                score=row["score"],
+                sort_order=row["sort_order"],
+            )
+            for row in questions
+        ],
     )
 
 
