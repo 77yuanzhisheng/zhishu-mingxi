@@ -110,10 +110,16 @@ def parse_judge_json(text: str) -> dict:
         return {}
 
 
+class _FastLLM(OpenAICompatibleLLM):
+    """固定 120s 超时的 LLM 客户端（generate 内部 _refresh_config 会重置 timeout，需每次强制）。"""
+
+    def _refresh_config(self) -> None:
+        super()._refresh_config()
+        self.timeout = LLM_TIMEOUT
+
+
 def _new_llm() -> OpenAICompatibleLLM:
-    llm = OpenAICompatibleLLM()
-    llm.timeout = LLM_TIMEOUT  # 每题快速失败，不阻塞整体
-    return llm
+    return _FastLLM()
 
 
 def process_one(item: dict) -> dict:
@@ -169,6 +175,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--workers", type=int, default=3, help="并发路数")
+    parser.add_argument("--retry-failed", action="store_true",
+                        help="把此前作答超时/失败的题重新加入待处理")
     args = parser.parse_args()
 
     types = [t.strip() for t in args.types.split(",") if t.strip()]
@@ -179,6 +187,20 @@ def main() -> None:
     if args.resume and os.path.exists(PROGRESS_FILE):
         with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
             done_ids = [p["id"] for p in json.load(f)]
+
+    if args.retry_failed and os.path.exists(RESULTS_FILE):
+        with open(RESULTS_FILE, "r", encoding="utf-8") as f:
+            old_results = json.load(f).get("results", [])
+        result_ids = {r["id"] for r in old_results}
+        failed_ids = {r["id"] for r in old_results if not r.get("answer_ok")}
+        # 早期被中断轮次只写了 progress 没写 results 的题，也一并补跑
+        missing_ids = {i for i in done_ids if i not in result_ids}
+        retry_ids = failed_ids | missing_ids
+        removed = [i for i in done_ids if i in retry_ids]
+        done_ids = [i for i in done_ids if i not in retry_ids]
+        if removed:
+            print(f"重试失败/缺失题: {len(removed)} 道 ({', '.join(removed[:8])}...)")
+
     todo = [q for q in questions if q["id"] not in set(done_ids)]
     print(f"剩余待处理: {len(todo)} 道（已跳过 {len(done_ids)}）", flush=True)
 
@@ -219,7 +241,9 @@ def main() -> None:
 
 
 def write_report(results: list[dict], types: list[str]) -> None:
-    scored = [r for r in results if r.get("score") is not None]
+    # 只统计「作答成功且有评分」的题；作答超时/失败单独统计，不拖低平均分
+    scored = [r for r in results if r.get("answer_ok") and isinstance(r.get("score"), (int, float))]
+    failed = [r for r in results if not r.get("answer_ok")]
     lines = [
         "# 大模型数学推理评测报告（老师训练题库）",
         "",
@@ -239,7 +263,7 @@ def write_report(results: list[dict], types: list[str]) -> None:
             f"- 有效作答/评分：**{total}/{len(results)}** 题",
             f"- 平均得分：**{avg:.2f} / 10**（得分率 {avg * 10:.1f}%）",
             f"- 平均作答耗时：{sum(r.get('answer_seconds', 0) for r in scored) / total:.1f}s",
-            f"- 失败/超时题：{len([r for r in results if not r.get('answer_ok')])} 道",
+            f"- 作答失败/超时（不计入平均分）：{len(failed)} 道",
             "",
             "## 按题型",
             "",
