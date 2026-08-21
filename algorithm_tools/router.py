@@ -55,6 +55,9 @@ class HasseDiagramParams(BaseModel):
     elements: list[Any]
     relation: list[Any] | None = None
     matrix: list[list[Union[int, bool]]] | None = None
+    relation_type: Literal[
+        "explicit", "divisibility", "less_equal", "subset"
+    ] = "explicit"
 
 
 class HasseDiagramRequest(BaseModel):
@@ -84,6 +87,7 @@ class BipartiteRequest(BaseModel):
 class CodeGenerationParams(BaseModel):
     problem: str
     language: Literal["python", "c"] = "python"
+    use_llm: bool = True
     problem_type: Literal[
         "truth_table",
         "relation_properties",
@@ -91,6 +95,7 @@ class CodeGenerationParams(BaseModel):
         "dijkstra",
         "bipartite",
         "hasse",
+        "general",
     ] | None = None
 
 
