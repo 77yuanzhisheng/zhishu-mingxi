@@ -142,6 +142,10 @@ app.include_router(tools_router)
 from backend.auth.router import router as auth_router
 app.include_router(auth_router)
 
+# 自测练习题目（知识库即题库）
+from backend.practice.router import router as practice_router
+app.include_router(practice_router)
+
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
 # app.include_router(rag_router)

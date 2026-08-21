@@ -78,7 +78,8 @@ const practiceState = {
   answered: new Map(),
 };
 
-const practiceQuestions = [
+let practiceQuestions = [];
+const FALLBACK_PRACTICE_QUESTIONS = [
   {
     id: "q_pl_01",
     module: "propositional_logic",
@@ -176,6 +177,29 @@ const practiceQuestions = [
     explanation: "每条边会给两个端点各贡献 1 个度数，所以所有顶点度数之和为 2|E|。",
   },
 ];
+
+// 从后端 /api/practice/questions 加载自测练习题目（知识库即题库）。
+// 后端会解析 选择题题库.md 与 老师训练题库.json，动态扩充题目。
+// 请求失败时回退到内置 FALLBACK_PRACTICE_QUESTIONS。
+async function loadPracticeQuestions() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/questions`);
+    if (!response.ok) {
+      throw new Error(`practice api ${response.status}`);
+    }
+    const data = await response.json();
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      practiceQuestions = data.questions;
+    } else {
+      practiceQuestions = FALLBACK_PRACTICE_QUESTIONS;
+    }
+  } catch (error) {
+    console.warn("加载练习题目失败，使用内置题库:", error);
+    practiceQuestions = FALLBACK_PRACTICE_QUESTIONS;
+  }
+  practiceState.answered.clear();
+  renderPracticeList();
+}
 
 const defaultModuleDependencies = [
   { source: "propositional_logic", target: "predicate_logic", label: "逻辑基础" },
@@ -306,7 +330,7 @@ document.querySelectorAll(".extended-tool-button").forEach((button) => {
 document.getElementById("runExtendedToolButton").addEventListener("click", runExtendedTool);
 
 updateMatrixPreview();
-renderPracticeList();
+loadPracticeQuestions();
 renderDashboard();
 selectExtendedTool(extendedToolState.current);
 switchTab(getTabFromLocation(), false);
@@ -2007,6 +2031,7 @@ function renderPracticeList() {
       Number(button.dataset.optionIndex),
     ));
   });
+  typesetMath(target);
   updatePracticeScore();
 }
 
