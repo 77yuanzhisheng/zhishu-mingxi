@@ -116,6 +116,10 @@ app.add_middleware(
 from backend.kb.router import router as kb_router
 app.include_router(kb_router)
 
+# 结构化题库 + 评分要点映射（队员2，供批阅引擎取题）
+from backend.kb.structured import router as structured_router
+app.include_router(structured_router)
+
 # 多轮 RAG 对话模块（队员3，含队员1推理增强集成）
 from backend.chat.router import router as chat_router
 app.include_router(chat_router)

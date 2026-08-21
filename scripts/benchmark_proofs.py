@@ -7,13 +7,14 @@ benchmark_proofs.py — 老师训练题库 112 题大模型推理能力评测基
     2. 评分：LLM-as-judge，按 5 维（结论/关键步骤/严密性/术语/表达）对照标准答案打分
     3. 汇总：按题型与知识点模块统计得分率、平均分、耗时、超时率、错误类型
 
+并发: 默认 3 路并发调用（--workers 调整），每题 LLM 超时 120s，失败记 0 分不阻塞。
+
 用法:
-    python scripts/benchmark_proofs.py                    # 全量 proof+calc
-    python scripts/benchmark_proofs.py --types proof      # 只跑证明题
+    python scripts/benchmark_proofs.py                     # proof+calc 全量
     python scripts/benchmark_proofs.py --types proof,calc,fill
-    python scripts/benchmark_proofs.py --limit 5          # 冒烟测试
-    python scripts/benchmark_proofs.py --resume           # 断点续跑
-    python scripts/benchmark_proofs.py --no-rag           # 对比：不做知识库检索（当前评测先不加 RAG）
+    python scripts/benchmark_proofs.py --limit 5           # 冒烟测试
+    python scripts/benchmark_proofs.py --resume            # 断点续跑
+    python scripts/benchmark_proofs.py --workers 4
 
 输出:
     scripts/benchmark_results.json   （每题明细）
@@ -24,8 +25,10 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
@@ -40,6 +43,7 @@ QUIZ_FILE = os.path.join(BASE_DIR, "data", "documents", "老师训练题库.json
 RESULTS_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_results.json")
 REPORT_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_report.md")
 PROGRESS_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_progress.json")
+LLM_TIMEOUT = 120.0  # 单次调用超时（秒），限流时快速失败记 0 分
 
 TYPE_NAMES = {"fill": "填空题", "calc": "计算与简答题", "proof": "证明题", "app": "应用题"}
 
@@ -66,6 +70,8 @@ JUDGE_PROMPT = (
     '"comment": "一两句评语"}}'
 )
 
+_write_lock = threading.Lock()
+
 
 def load_questions(types: list[str], limit: int | None) -> list[dict]:
     with open(QUIZ_FILE, "r", encoding="utf-8") as f:
@@ -89,7 +95,6 @@ def load_questions(types: list[str], limit: int | None) -> list[dict]:
 
 
 def parse_judge_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON（容忍 ``` 包裹和前后杂讯）。"""
     text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -105,75 +110,99 @@ def parse_judge_json(text: str) -> dict:
         return {}
 
 
+def _new_llm() -> OpenAICompatibleLLM:
+    llm = OpenAICompatibleLLM()
+    llm.timeout = LLM_TIMEOUT  # 每题快速失败，不阻塞整体
+    return llm
+
+
+def process_one(item: dict) -> dict:
+    """单题：作答 + 评分。每个调用创建独立 LLM 实例（并发安全）。"""
+    rec = dict(item)
+    llm = _new_llm()
+    t0 = time.time()
+    try:
+        answer = llm.generate([{"role": "user", "content": ANSWER_PROMPT.format(
+            type_name=item["type_name"], q=item["q"])}])
+        rec["answer"] = answer
+        rec["answer_seconds"] = round(time.time() - t0, 1)
+        rec["answer_ok"] = True
+    except Exception as exc:
+        rec["answer"] = ""
+        rec["answer_seconds"] = round(time.time() - t0, 1)
+        rec["answer_ok"] = False
+        rec["answer_error"] = str(exc)[:120]
+        rec["score"] = 0.0
+        rec["error"] = f"作答失败: {str(exc)[:60]}"
+        return rec
+
+    t1 = time.time()
+    try:
+        judge = llm.generate([{"role": "user", "content": JUDGE_PROMPT.format(
+            q=item["q"], a=item["a"], s=answer)}])
+        rec["judge_seconds"] = round(time.time() - t1, 1)
+        parsed = parse_judge_json(judge)
+        score = parsed.get("total")
+        rec["score"] = float(score) if isinstance(score, (int, float)) else 0.0
+        rec["dimensions"] = parsed.get("dimensions", {})
+        rec["error_types"] = parsed.get("error_types", [])
+        rec["comment"] = parsed.get("comment", "")
+        if not isinstance(rec["score"], (int, float)) or rec["score"] < 0:
+            rec["score"] = 0.0
+            rec["error"] = "评分 JSON 解析失败"
+    except Exception as exc:
+        rec["score"] = 0.0
+        rec["error"] = f"评分失败: {str(exc)[:60]}"
+    return rec
+
+
+def save_progress(done_ids: list[str]) -> None:
+    with _write_lock:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+            json.dump([{"id": i} for i in done_ids], f, ensure_ascii=False, indent=1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--types", default="proof,calc",
                         help="题型，逗号分隔（proof/calc/fill/app）")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--workers", type=int, default=3, help="并发路数")
     args = parser.parse_args()
 
     types = [t.strip() for t in args.types.split(",") if t.strip()]
     questions = load_questions(types, args.limit)
-    print(f"待评测题目: {len(questions)} 道 ({', '.join(TYPE_NAMES[t] for t in types)})")
+    print(f"待评测题目: {len(questions)} 道 ({', '.join(TYPE_NAMES[t] for t in types)})，并发 {args.workers} 路")
 
-    llm = OpenAICompatibleLLM()
-    llm.ensure_available()
-
-    progress = []
+    done_ids = []
     if args.resume and os.path.exists(PROGRESS_FILE):
         with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
-            progress = json.load(f)
-    done_ids = {p["id"] for p in progress}
+            done_ids = [p["id"] for p in json.load(f)]
+    todo = [q for q in questions if q["id"] not in set(done_ids)]
+    print(f"剩余待处理: {len(todo)} 道（已跳过 {len(done_ids)}）", flush=True)
 
     results = []
-    for i, item in enumerate(questions, 1):
-        if item["id"] in done_ids:
-            continue
-        print(f"  [{i}/{len(questions)}] {item['id']} ({item['type_name']}) ...", end="", flush=True)
-        rec = dict(item)
-        t0 = time.time()
-        try:
-            answer = llm.generate([{"role": "user", "content": ANSWER_PROMPT.format(
-                type_name=item["type_name"], q=item["q"])}])
-            rec["answer"] = answer
-            rec["answer_seconds"] = round(time.time() - t0, 1)
-            rec["answer_ok"] = True
-        except Exception as exc:
-            rec["answer"] = ""
-            rec["answer_seconds"] = round(time.time() - t0, 1)
-            rec["answer_ok"] = False
-            rec["answer_error"] = str(exc)[:120]
-            print(f" 作答失败({str(exc)[:40]})", flush=True)
-            progress.append({"id": item["id"]})
-            with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
-                json.dump(progress, f, ensure_ascii=False, indent=1)
-            continue
+    t_start = time.time()
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {pool.submit(process_one, item): item for item in todo}
+        for i, fut in enumerate(as_completed(futures), 1):
+            item = futures[fut]
+            try:
+                rec = fut.result()
+            except Exception as exc:
+                rec = dict(item)
+                rec["score"] = 0.0
+                rec["error"] = f"异常: {str(exc)[:60]}"
+            results.append(rec)
+            done_ids.append(rec["id"])
+            save_progress(done_ids)
+            elapsed = time.time() - t_start
+            print(f"  [{i}/{len(todo)}] {rec['id']} ({rec['type_name']}/{rec.get('kp')}) "
+                  f"得分={rec.get('score')} 用时={rec.get('answer_seconds', '?')}s "
+                  f"总耗时={elapsed:.0f}s", flush=True)
 
-        # 评分（LLM-as-judge）
-        t1 = time.time()
-        try:
-            judge = llm.generate([{"role": "user", "content": JUDGE_PROMPT.format(
-                q=item["q"], a=item["a"], s=answer)}])
-            rec["judge_seconds"] = round(time.time() - t1, 1)
-            parsed = parse_judge_json(judge)
-            rec["score"] = parsed.get("total")
-            rec["dimensions"] = parsed.get("dimensions", {})
-            rec["error_types"] = parsed.get("error_types", [])
-            rec["comment"] = parsed.get("comment", "")
-            rec["judge_raw"] = judge[:200]
-        except Exception as exc:
-            rec["score"] = None
-            rec["judge_error"] = str(exc)[:120]
-            print(f" 评分失败({str(exc)[:40]})", flush=True)
-
-        results.append(rec)
-        progress.append({"id": item["id"]})
-        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
-            json.dump(progress, f, ensure_ascii=False, indent=1)
-        print(f" 得分={rec.get('score')}", flush=True)
-
-    # 合并历史结果
+    # 合并历史结果（断点续跑后汇总）
     if os.path.exists(RESULTS_FILE):
         with open(RESULTS_FILE, "r", encoding="utf-8") as f:
             old = json.load(f)
@@ -210,6 +239,7 @@ def write_report(results: list[dict], types: list[str]) -> None:
             f"- 有效作答/评分：**{total}/{len(results)}** 题",
             f"- 平均得分：**{avg:.2f} / 10**（得分率 {avg * 10:.1f}%）",
             f"- 平均作答耗时：{sum(r.get('answer_seconds', 0) for r in scored) / total:.1f}s",
+            f"- 失败/超时题：{len([r for r in results if not r.get('answer_ok')])} 道",
             "",
             "## 按题型",
             "",
