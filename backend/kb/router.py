@@ -263,16 +263,8 @@ def _generate_mastery_levels(node_type: str, text: str) -> dict:
     }
 
 
-@router.get("/knowledge-graph")
-async def get_knowledge_graph():
-    """返回离散数学知识图谱结构化数据，供前端可视化渲染。
-
-    每个节点含 search_query、node_id 和 mastery_levels：
-    - 前端点节点 → 调用 /kb/search?q=search_query → 展示对应内容
-    - node_id 供学情分析追踪每个知识点的掌握度
-    - mastery_levels 定义该知识点的五级掌握标准（0未学→4熟练）
-    """
-    kg = {
+# 知识图谱结构化数据（模块级常量，供图谱端点和强定义检索共用）
+KG_DATA = {
         "modules": [
             {
                 "id": "propositional_logic",
@@ -558,6 +550,19 @@ async def get_knowledge_graph():
             "⑥ 图论（可视化网络）",
         ],
     }
+
+
+@router.get("/knowledge-graph")
+async def get_knowledge_graph():
+    """返回离散数学知识图谱结构化数据，供前端可视化渲染。
+
+    每个节点含 search_query、node_id 和 mastery_levels：
+    - 前端点节点 → 调用 /kb/search?q=search_query → 展示对应内容
+    - node_id 供学情分析追踪每个知识点的掌握度
+    - mastery_levels 定义该知识点的五级掌握标准（0未学→4熟练）
+    """
+    import copy
+    kg = copy.deepcopy(KG_DATA)
 
     # 后处理：给所有 items 节点自动生成 mastery_levels
     for module in kg["modules"]:

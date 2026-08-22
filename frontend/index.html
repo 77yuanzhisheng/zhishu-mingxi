@@ -4,10 +4,63 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=29">
+  <link rel="stylesheet" href="style.css?v=30">
 </head>
 <body>
-  <div class="layout">
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
+    <div class="auth-shell">
+      <aside class="auth-intro">
+        <div class="brand-mark">DM</div>
+        <p class="eyebrow">Discrete Mathematics Studio</p>
+        <h1>离散数学智能学习平台</h1>
+        <p>连接知识问答、符号推演、个性化练习与班级学情，让每次学习都有清晰的下一步。</p>
+        <div class="auth-capabilities" aria-label="平台能力">
+          <span>知识图谱导航</span>
+          <span>六维学情分析</span>
+          <span>班级与在线考试</span>
+        </div>
+      </aside>
+
+      <main class="auth-panel">
+        <div>
+          <p class="eyebrow">Account Access</p>
+          <h2 id="authTitle">登录学习空间</h2>
+          <p id="authSubtitle" class="hint">使用你的账户继续上次学习。</p>
+        </div>
+
+        <div class="auth-mode-switch" role="tablist" aria-label="账户操作">
+          <button id="showLoginButton" class="auth-mode-button active" type="button" role="tab" aria-selected="true">登录</button>
+          <button id="showRegisterButton" class="auth-mode-button" type="button" role="tab" aria-selected="false">注册</button>
+        </div>
+
+        <form id="loginForm" class="auth-form">
+          <label for="loginUsername">用户名</label>
+          <input id="loginUsername" name="username" autocomplete="username" required maxlength="100" placeholder="输入用户名">
+          <label for="loginPassword">密码</label>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required maxlength="72" placeholder="输入密码">
+          <button type="submit">登录</button>
+        </form>
+
+        <form id="registerForm" class="auth-form" hidden>
+          <label for="registerName">姓名</label>
+          <input id="registerName" name="name" autocomplete="name" required maxlength="100" placeholder="输入姓名">
+          <label for="registerUsername">用户名</label>
+          <input id="registerUsername" name="username" autocomplete="username" required maxlength="100" placeholder="设置用户名">
+          <label for="registerPassword">密码</label>
+          <input id="registerPassword" name="password" type="password" autocomplete="new-password" required minlength="6" maxlength="72" placeholder="至少 6 位">
+          <fieldset class="role-choice">
+            <legend>身份</legend>
+            <label><input type="radio" name="role" value="student" checked><span>学生</span><small>加入班级、学习与参加考试</small></label>
+            <label><input type="radio" name="role" value="teacher"><span>教师</span><small>创建班级、发布考试与查看学情</small></label>
+          </fieldset>
+          <button type="submit">创建账户</button>
+        </form>
+        <div id="authStatus" class="auth-status" aria-live="polite"></div>
+      </main>
+    </div>
+  </section>
+
+  <div id="appLayout" class="layout" hidden>
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">DM</div>
@@ -77,7 +130,11 @@
         </div>
         <div class="top-actions">
           <button class="ghost-button" id="checkStatusButton">检测服务</button>
-          <a class="docs-link" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">API 文档</a>
+          <a class="docs-link" id="docsLink" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">API 文档</a>
+          <div class="account-menu">
+            <div><strong id="currentUserName">未登录</strong><span id="currentUserRole">--</span></div>
+            <button class="ghost-button" id="logoutButton" type="button">退出</button>
+          </div>
         </div>
       </header>
 
@@ -356,8 +413,8 @@
             </div>
 
             <div class="learning-toolbar">
-              <label for="learningUserInput">用户 ID</label>
-              <input id="learningUserInput" type="number" min="1" step="1" value="1">
+              <label for="learningUserInput">当前账户</label>
+              <input id="learningUserInput" type="text" value="登录后自动加载" readonly>
               <button id="refreshLearningButton">刷新学情</button>
             </div>
 
@@ -417,9 +474,20 @@
             <div class="practice-toolbar">
               <button class="practice-filter active" type="button" data-practice-filter="all">全部</button>
               <button class="practice-filter" type="button" data-practice-filter="propositional_logic">命题逻辑</button>
+              <button class="practice-filter" type="button" data-practice-filter="predicate_logic">谓词逻辑</button>
               <button class="practice-filter" type="button" data-practice-filter="set_theory">集合论</button>
+              <button class="practice-filter" type="button" data-practice-filter="induction">数学归纳法</button>
               <button class="practice-filter" type="button" data-practice-filter="relations">关系</button>
               <button class="practice-filter" type="button" data-practice-filter="graph_theory">图论</button>
+              <button class="practice-filter" type="button" data-practice-filter="number_theory">初等数论</button>
+              <button class="practice-filter" type="button" data-practice-filter="combinatorics">组合数学</button>
+              <button class="practice-filter" type="button" data-practice-filter="algebraic_structure">代数结构</button>
+            </div>
+
+            <div class="practice-mode-bar">
+              <button class="practice-mode active" type="button" data-practice-mode="choice">选择题</button>
+              <button class="practice-mode" type="button" data-practice-mode="fill">填空题</button>
+              <button class="practice-mode" type="button" data-practice-mode="proof">证明题（拍照作答）</button>
             </div>
 
             <div id="practiceList" class="practice-list"></div>
@@ -445,9 +513,9 @@
       </section>
 
       <section id="classes" class="panel">
-        <div class="role-switch" role="group" aria-label="班级角色">
-          <button class="role-button active" type="button" data-class-role="student">学生端</button>
-          <button class="role-button" type="button" data-class-role="teacher">教师端</button>
+        <div class="role-context">
+          <span id="classRoleLabel">当前身份</span>
+          <strong id="classRoleName">登录后自动识别</strong>
         </div>
 
         <div id="studentClassView" class="class-layout">
@@ -498,22 +566,13 @@
       </section>
 
       <section id="exam" class="panel">
-        <div class="exam-layout">
+        <div id="studentExamView" class="exam-layout">
           <section class="work-panel">
             <div class="exam-topline">
-              <div><p class="eyebrow">Online Assessment</p><h3 id="examTitle">离散数学阶段自测</h3></div>
+              <div><p class="eyebrow">Student Assessment</p><h3 id="examTitle">我的班级考试</h3></div>
               <div id="examTimer" class="exam-timer">15:00</div>
             </div>
-            <div id="examSetup" class="exam-setup">
-              <label>选择测评模块</label>
-              <div class="exam-module-grid">
-                <label><input type="checkbox" value="propositional_logic" checked> 命题逻辑</label>
-                <label><input type="checkbox" value="set_theory" checked> 集合论</label>
-                <label><input type="checkbox" value="relations" checked> 关系</label>
-                <label><input type="checkbox" value="graph_theory" checked> 图论</label>
-              </div>
-              <button id="startExamButton">开始测评</button>
-            </div>
+            <div id="studentExamList" class="exam-list empty-state">正在读取已发布考试...</div>
             <form id="examForm" class="exam-paper" hidden></form>
             <div id="examResult" class="exam-result" hidden></div>
           </section>
@@ -522,9 +581,37 @@
             <div class="metric-list">
               <div><span>题目数量</span><strong id="examQuestionCount">0</strong></div>
               <div><span>已作答</span><strong id="examAnsweredCount">0</strong></div>
-              <div><span>当前模式</span><strong>自动判分</strong></div>
+              <div><span>提交状态</span><strong id="examSubmitStatus">待选择</strong></div>
             </div>
-            <div class="study-card"><h4>提交说明</h4><p>后端考试接口可用时提交到服务器；接口尚未合并时在本地完成判分，并保留清晰状态提示。</p></div>
+            <div class="study-card"><h4>考试说明</h4><p>试卷内容由教师发布，提交后由后端判分；证明题可能需要等待教师复核。</p></div>
+          </aside>
+        </div>
+
+        <div id="teacherExamView" class="exam-layout" hidden>
+          <section class="work-panel">
+            <div class="section-title"><div><p class="eyebrow">Teacher Assessment</p><h3>发布班级考试</h3></div><span class="tag">POST /api/exam/generate</span></div>
+            <form id="generateExamForm" class="exam-setup teacher-exam-form">
+              <label for="examClassSelect">班级</label>
+              <select id="examClassSelect" required></select>
+              <label for="teacherExamTitle">考试标题</label>
+              <input id="teacherExamTitle" required maxlength="200" placeholder="例如 命题逻辑单元测试">
+              <label for="teacherExamNodes">知识点 node_id</label>
+              <input id="teacherExamNodes" required value="pl_02_02,pl_03_01" placeholder="多个 ID 使用英文逗号分隔">
+              <label for="teacherExamCount">题目数量</label>
+              <input id="teacherExamCount" type="number" min="1" max="50" value="5" required>
+              <button type="submit">生成并发布</button>
+            </form>
+            <div id="teacherExamResult" class="exam-result empty-state">选择班级和知识点后生成试卷。</div>
+          </section>
+          <aside class="insight-panel">
+            <h3>发布状态</h3>
+            <div class="metric-list">
+              <div><span>管理班级</span><strong id="teacherExamClassCount">0</strong></div>
+              <div><span>最近试卷</span><strong id="teacherLatestExam">--</strong></div>
+              <div><span>题目数量</span><strong id="teacherLatestExamCount">0</strong></div>
+            </div>
+            <div class="study-card"><h4>成绩查看</h4><p>试卷生成后可读取提交人数、平均分和薄弱知识点。</p><button id="loadExamResultsButton" class="ghost-button" type="button" disabled>查看最近试卷成绩</button></div>
+            <div id="teacherExamAnalytics" class="student-report-list empty-state">暂无考试成绩。</div>
           </aside>
         </div>
       </section>
@@ -549,6 +636,6 @@
     };
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
-  <script defer src="app.js?v=29"></script>
+  <script defer src="app.js?v=31"></script>
 </body>
 </html>

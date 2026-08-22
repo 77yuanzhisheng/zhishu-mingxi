@@ -1,9 +1,21 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = resolveApiBaseUrl();
 const RAG_API_BASE_URL = API_BASE_URL;
 const TOOLS_API_BASE_URL = API_BASE_URL;
 const KB_API_BASE_URL = API_BASE_URL;
 const DEFAULT_USER_ID = 1;
 const DEFAULT_NODE_ID = "rel_02";
+const AUTH_TOKEN_KEY = "dm_auth_token";
+
+function resolveApiBaseUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("api")?.trim();
+  let selected = "";
+  if (requested && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(requested)) {
+    selected = requested.replace(/\/$/, "");
+    localStorage.setItem("dm_api_base_url", selected);
+  }
+  return (selected || localStorage.getItem("dm_api_base_url") || "http://127.0.0.1:8000").replace(/\/$/, "");
+}
 
 const tabRoutes = {
   dashboard: "/",
@@ -56,16 +68,22 @@ const learningState = {
 
 const dashboardState = { chart: null };
 const chatState = { sessionId: null };
-const classState = { role: "student", studentClass: null, teacherClasses: [], selectedClassId: null };
-const examState = { examId: null, questions: [], answers: new Map(), secondsLeft: 900, timer: null };
+const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
+const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
+const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 
 const practiceState = {
   filter: "all",
+  mode: "choice",
   answered: new Map(),
+  fillQuestions: [],
+  fillResults: new Map(),
+  proofQuestions: [],
 };
 
-const practiceQuestions = [
+let practiceQuestions = [];
+const FALLBACK_PRACTICE_QUESTIONS = [
   {
     id: "q_pl_01",
     module: "propositional_logic",
@@ -163,6 +181,29 @@ const practiceQuestions = [
     explanation: "每条边会给两个端点各贡献 1 个度数，所以所有顶点度数之和为 2|E|。",
   },
 ];
+
+// 从后端 /api/practice/questions 加载自测练习题目（知识库即题库）。
+// 后端会解析 选择题题库.md 与 老师训练题库.json，动态扩充题目。
+// 请求失败时回退到内置 FALLBACK_PRACTICE_QUESTIONS。
+async function loadPracticeQuestions() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/questions`);
+    if (!response.ok) {
+      throw new Error(`practice api ${response.status}`);
+    }
+    const data = await response.json();
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      practiceQuestions = data.questions;
+    } else {
+      practiceQuestions = FALLBACK_PRACTICE_QUESTIONS;
+    }
+  } catch (error) {
+    console.warn("加载练习题目失败，使用内置题库:", error);
+    practiceQuestions = FALLBACK_PRACTICE_QUESTIONS;
+  }
+  practiceState.answered.clear();
+  renderPracticeList();
+}
 
 const defaultModuleDependencies = [
   { source: "propositional_logic", target: "predicate_logic", label: "逻辑基础" },
@@ -274,12 +315,18 @@ document.getElementById("continueLearningButton").addEventListener("click", cont
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
 document.getElementById("shareRequestForm").addEventListener("submit", requestLearningShare);
-document.getElementById("startExamButton").addEventListener("click", startExam);
-document.querySelectorAll(".role-button").forEach((button) => {
-  button.addEventListener("click", () => setClassRole(button.dataset.classRole));
-});
+document.getElementById("loginForm").addEventListener("submit", loginAccount);
+document.getElementById("registerForm").addEventListener("submit", registerAccount);
+document.getElementById("showLoginButton").addEventListener("click", () => setAuthMode("login"));
+document.getElementById("showRegisterButton").addEventListener("click", () => setAuthMode("register"));
+document.getElementById("logoutButton").addEventListener("click", logoutAccount);
+document.getElementById("generateExamForm").addEventListener("submit", generateTeacherExam);
+document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
 document.querySelectorAll(".practice-filter").forEach((button) => {
   button.addEventListener("click", () => setPracticeFilter(button.dataset.practiceFilter));
+});
+document.querySelectorAll(".practice-mode").forEach((button) => {
+  button.addEventListener("click", () => setPracticeMode(button.dataset.practiceMode));
 });
 document.querySelectorAll(".graph-view-button").forEach((button) => {
   button.addEventListener("click", () => setGraphView(button.dataset.graphView));
@@ -290,14 +337,23 @@ document.querySelectorAll(".extended-tool-button").forEach((button) => {
 document.getElementById("runExtendedToolButton").addEventListener("click", runExtendedTool);
 
 updateMatrixPreview();
-renderPracticeList();
+loadPracticeQuestions();
 renderDashboard();
 selectExtendedTool(extendedToolState.current);
 switchTab(getTabFromLocation(), false);
 bootstrapApp();
 
 async function bootstrapApp() {
-  await ensureCurrentUser();
+  const restored = await restoreAuthSession();
+  if (!restored) {
+    showAuthGate();
+    return;
+  }
+  await startAuthenticatedApp();
+}
+
+async function startAuthenticatedApp() {
+  applyAuthenticatedUser();
   await Promise.allSettled([
     checkStatus(),
     loadLearningReport({ silent: true }),
@@ -305,16 +361,128 @@ async function bootstrapApp() {
   switchTab(getTabFromLocation(), false);
 }
 
-async function ensureCurrentUser() {
+async function restoreAuthSession() {
+  if (!authState.token) return false;
   try {
-    await postJson("/api/user/ensure", {
-      user_id: getCurrentUserId(),
-      name: "演示学生",
-      role: "student",
+    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${authState.token}` },
     });
+    if (!response.ok) throw new Error("登录状态已失效");
+    authState.user = await response.json();
+    return true;
   } catch (error) {
-    console.warn("用户初始化失败：", error);
+    clearAuthSession();
+    return false;
   }
+}
+
+function showAuthGate(message = "") {
+  document.getElementById("authGate").hidden = false;
+  document.getElementById("appLayout").hidden = true;
+  setAuthStatus(message);
+}
+
+function applyAuthenticatedUser() {
+  const user = authState.user;
+  if (!user) return;
+  document.getElementById("authGate").hidden = true;
+  document.getElementById("appLayout").hidden = false;
+  document.getElementById("currentUserName").textContent = user.name;
+  document.getElementById("currentUserRole").textContent = formatRole(user.role);
+  document.getElementById("learningUserInput").value = `${user.name} · ID ${user.user_id}`;
+  document.getElementById("docsLink").href = `${API_BASE_URL}/docs`;
+  classState.role = ["teacher", "admin"].includes(user.role) ? "teacher" : "student";
+  updateRoleInterface();
+}
+
+function setAuthMode(mode) {
+  const isLogin = mode === "login";
+  document.getElementById("loginForm").hidden = !isLogin;
+  document.getElementById("registerForm").hidden = isLogin;
+  document.getElementById("showLoginButton").classList.toggle("active", isLogin);
+  document.getElementById("showRegisterButton").classList.toggle("active", !isLogin);
+  document.getElementById("showLoginButton").setAttribute("aria-selected", String(isLogin));
+  document.getElementById("showRegisterButton").setAttribute("aria-selected", String(!isLogin));
+  document.getElementById("authTitle").textContent = isLogin ? "登录学习空间" : "创建学习账户";
+  document.getElementById("authSubtitle").textContent = isLogin ? "使用你的账户继续上次学习。" : "选择真实身份，系统会准备对应工作空间。";
+  setAuthStatus("");
+}
+
+async function loginAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  await submitAuth("/api/auth/login", {
+    username: form.elements.username.value.trim(),
+    password: form.elements.password.value,
+  }, form);
+}
+
+async function registerAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  await submitAuth("/api/auth/register", {
+    name: form.elements.name.value.trim(),
+    username: form.elements.username.value.trim(),
+    password: form.elements.password.value,
+    role: form.elements.role.value,
+  }, form);
+}
+
+async function submitAuth(path, payload, form) {
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  setAuthStatus("正在连接账户服务...", "loading");
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, `请求失败（${response.status}）`));
+    authState.token = data.token;
+    authState.user = data.user;
+    localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+    setAuthStatus("");
+    await startAuthenticatedApp();
+  } catch (error) {
+    setAuthStatus(error.message, "error");
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+function logoutAccount() {
+  clearInterval(examState.timer);
+  clearAuthSession();
+  classState.studentClass = null;
+  classState.teacherClasses = [];
+  examState.available = [];
+  setAuthMode("login");
+  showAuthGate("已安全退出当前账户。");
+}
+
+function clearAuthSession() {
+  authState.token = "";
+  authState.user = null;
+  chatState.sessionId = null;
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function setAuthStatus(message, state = "") {
+  const target = document.getElementById("authStatus");
+  target.textContent = message;
+  target.className = `auth-status${state ? ` ${state}` : ""}`;
+}
+
+function formatRole(role) {
+  return role === "teacher" ? "教师" : role === "admin" ? "管理员" : "学生";
+}
+
+function readApiError(data, fallback) {
+  if (typeof data?.detail === "string") return data.detail;
+  if (Array.isArray(data?.detail)) return data.detail.map((item) => item.msg).filter(Boolean).join("；") || fallback;
+  return fallback;
 }
 
 function switchTab(tabName, updateHistory = true) {
@@ -346,7 +514,7 @@ function switchTab(tabName, updateHistory = true) {
     renderPracticeList();
   }
   if (tabName === "classes") loadClassWorkspace();
-  if (tabName === "exam") updateExamStatus();
+  if (tabName === "exam") loadExamWorkspace();
 }
 
 function getTabFromLocation() {
@@ -395,7 +563,7 @@ async function handleAsk() {
 
     updateMessage(loading, data.answer);
   } catch (error) {
-    updateMessage(loading, `${error.message}。请确认主后端 8000 与模型接口都已启动。`);
+    updateMessage(loading, `${error.message}。当前后端：${API_BASE_URL}；请检查后端状态和模型网络连接。`);
   }
 }
 
@@ -532,7 +700,7 @@ async function generateTruthTable() {
 
     renderTruthTable(data);
   } catch (error) {
-    showError(resultBox, `${error.message}。请确认统一后端 8000 正在运行。`);
+    showError(resultBox, `${error.message}。请确认当前后端 ${API_BASE_URL} 正在运行。`);
   }
 }
 
@@ -1144,7 +1312,7 @@ async function loadKnowledgeGraph(forceReload = false) {
     const message = error.name === "AbortError"
       ? "知识图谱加载超时（15s）。"
       : error.message;
-    container.textContent = `${message}。请确认主后端 8000 已启动，并且接口 /kb/knowledge-graph 可用。`;
+    container.textContent = `${message}。请确认当前后端 ${API_BASE_URL} 已启动，并且接口 /kb/knowledge-graph 可用。`;
   }
 }
 
@@ -1662,7 +1830,7 @@ async function loadGraphNodeKnowledge(node) {
       return;
     }
     const message = error.name === "AbortError"
-      ? "知识库检索超时（15s）。请确认主后端 8000 的 /kb/search 可用。"
+      ? `知识库检索超时（15s）。请确认当前后端 ${API_BASE_URL} 的 /kb/search 可用。`
       : error.message;
     target.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
   }
@@ -1841,8 +2009,7 @@ function updateCurrentLearningNodeText() {
 }
 
 function getCurrentUserId() {
-  const input = document.getElementById("learningUserInput");
-  const value = Number(input?.value || DEFAULT_USER_ID);
+  const value = Number(authState.user?.user_id || DEFAULT_USER_ID);
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_USER_ID;
 }
 
@@ -1854,9 +2021,34 @@ function setPracticeFilter(filter) {
   renderPracticeList();
 }
 
+function setPracticeMode(mode) {
+  practiceState.mode = mode || "choice";
+  document.querySelectorAll(".practice-mode").forEach((button) => {
+    button.classList.toggle("active", button.dataset.practiceMode === practiceState.mode);
+  });
+  // 模式切换时同步加载对应题库
+  if (practiceState.mode === "fill" && practiceState.fillQuestions.length === 0) {
+    loadFillQuestions();
+    return;
+  }
+  if (practiceState.mode === "proof" && practiceState.proofQuestions.length === 0) {
+    loadProofQuestions();
+    return;
+  }
+  renderPracticeList();
+}
+
 function renderPracticeList() {
   const target = document.getElementById("practiceList");
   if (!target) {
+    return;
+  }
+  if (practiceState.mode === "fill") {
+    renderFillList(target);
+    return;
+  }
+  if (practiceState.mode === "proof") {
+    renderProofList(target);
     return;
   }
 
@@ -1871,6 +2063,7 @@ function renderPracticeList() {
       Number(button.dataset.optionIndex),
     ));
   });
+  typesetMath(target);
   updatePracticeScore();
 }
 
@@ -1914,6 +2107,256 @@ function renderPracticeQuestion(question) {
       ${resultHtml}
     </article>
   `;
+}
+
+// ==================== 填空题（学生输入答案，大模型判定） ====================
+
+async function loadFillQuestions() {
+  const target = document.getElementById("practiceList");
+  if (!target) return;
+  target.innerHTML = `<p class="muted-line">正在加载填空题…</p>`;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/fill-questions`);
+    if (!response.ok) throw new Error(`fill api ${response.status}`);
+    const data = await response.json();
+    practiceState.fillQuestions = data.questions || [];
+  } catch (error) {
+    console.warn("填空题加载失败:", error);
+    practiceState.fillQuestions = [];
+  }
+  renderPracticeList();
+}
+
+function renderFillList(target) {
+  const questions = practiceState.fillQuestions.filter((q) => (
+    practiceState.filter === "all" || q.module === practiceState.filter
+  ));
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无填空题。</p>`;
+    return;
+  }
+  target.innerHTML = questions.map((q) => {
+    const result = practiceState.fillResults.get(q.id);
+    const resultHtml = result
+      ? `<div class="practice-explanation ${result.correct ? "correct" : "wrong"}">
+          <strong>${result.correct ? "回答正确" : "回答错误"}</strong>
+          <p>${escapeHtml(result.comment || "")}</p>
+          <p class="muted-line">标准答案：${escapeHtml(result.reference || "")}</p>
+        </div>`
+      : "";
+    return `
+      <article class="practice-card">
+        <div class="practice-card-header">
+          <span>${escapeHtml(q.moduleName)}</span>
+          <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+        </div>
+        <h4>${escapeHtml(q.question)}</h4>
+        <div class="fill-answer-row">
+          <input class="fill-input" type="text" placeholder="在此输入你的答案…" data-fill-id="${escapeHtml(q.id)}" />
+          <button class="fill-submit" type="button" data-fill-submit="${escapeHtml(q.id)}">提交</button>
+        </div>
+        ${resultHtml}
+      </article>
+    `;
+  }).join("");
+  target.querySelectorAll(".fill-submit").forEach((button) => {
+    button.addEventListener("click", () => submitFillAnswer(button.dataset.fillSubmit));
+  });
+  target.querySelectorAll(".fill-input").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        submitFillAnswer(input.dataset.fillId);
+      }
+    });
+  });
+  typesetMath(target);
+}
+
+async function submitFillAnswer(questionId) {
+  const input = document.querySelector(`.fill-input[data-fill-id="${CSS.escape(questionId)}"]`);
+  const studentAnswer = input?.value?.trim() || "";
+  if (!studentAnswer) {
+    input?.focus();
+    return;
+  }
+  const question = practiceState.fillQuestions.find((q) => q.id === questionId);
+  if (!question) return;
+  const button = document.querySelector(`.fill-submit[data-fill-submit="${CSS.escape(questionId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "判定中…";
+  }
+  try {
+    const response = await postJson("/api/practice/grade-fill", {
+      question_id: questionId,
+      student_answer: studentAnswer,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "判定失败");
+    }
+    practiceState.fillResults.set(questionId, {
+      correct: Boolean(data.correct),
+      comment: data.comment || "",
+      reference: data.reference || "",
+    });
+    reportPracticeEvent(question, Boolean(data.correct), studentAnswer, "fill");
+  } catch (error) {
+    window.alert(`判定失败：${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "提交";
+    }
+  }
+  renderPracticeList();
+}
+
+// ==================== 证明题（拍照上传 → OCR 识别） ====================
+
+async function loadProofQuestions() {
+  const target = document.getElementById("practiceList");
+  if (!target) return;
+  target.innerHTML = `<p class="muted-line">正在加载证明题…</p>`;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/proof-questions`);
+    if (!response.ok) throw new Error(`proof api ${response.status}`);
+    const data = await response.json();
+    practiceState.proofQuestions = data.questions || [];
+  } catch (error) {
+    console.warn("证明题加载失败:", error);
+    practiceState.proofQuestions = [];
+  }
+  renderPracticeList();
+}
+
+function renderProofList(target) {
+  const questions = practiceState.proofQuestions.filter((q) => (
+    practiceState.filter === "all" || q.module === practiceState.filter
+  ));
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无证明题。</p>`;
+    return;
+  }
+  target.innerHTML = questions.map((q) => `
+    <article class="practice-card proof-card" data-proof-id="${escapeHtml(q.id)}">
+      <div class="practice-card-header">
+        <span>${escapeHtml(q.moduleName)}</span>
+        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+      </div>
+      <h4>${escapeHtml(q.question)}</h4>
+      <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
+      <div class="proof-action-row">
+        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">📷 拍照上传</label>
+        <input id="proof-file-${escapeHtml(q.id)}" class="proof-file-input" type="file"
+               accept="image/*" capture="environment"
+               data-proof-upload="${escapeHtml(q.id)}" />
+        <span class="proof-status" data-proof-status="${escapeHtml(q.id)}"></span>
+      </div>
+      <div class="proof-ocr-box" data-proof-ocr="${escapeHtml(q.id)}" hidden>
+        <strong>识别结果（可核对修正）：</strong>
+        <textarea class="proof-ocr-text" rows="6" data-proof-text="${escapeHtml(q.id)}"></textarea>
+        <div class="proof-action-row">
+          <button class="proof-recheck" type="button" data-proof-recheck="${escapeHtml(q.id)}">重新识别</button>
+          <button class="proof-submit" type="button" data-proof-submit="${escapeHtml(q.id)}">提交作答</button>
+        </div>
+        <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" hidden></div>
+      </div>
+    </article>
+  `).join("");
+  target.querySelectorAll(".proof-file-input").forEach((input) => {
+    input.addEventListener("change", () => handleProofPhoto(input.dataset.proofUpload, input.files[0]));
+  });
+  target.querySelectorAll(".proof-recheck").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById(`proof-file-${CSS.escape(button.dataset.proofRecheck)}`)?.click();
+    });
+  });
+  target.querySelectorAll(".proof-submit").forEach((button) => {
+    button.addEventListener("click", () => submitProofAnswer(button.dataset.proofSubmit));
+  });
+  typesetMath(target);
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleProofPhoto(questionId, file) {
+  if (!file) return;
+  const status = document.querySelector(`.proof-status[data-proof-status="${CSS.escape(questionId)}"]`);
+  const box = document.querySelector(`.proof-ocr-box[data-proof-ocr="${CSS.escape(questionId)}"]`);
+  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
+  if (!status || !box || !textarea) return;
+  status.textContent = "识别中…";
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await postJson("/api/practice/ocr", {
+      image_base64: base64,
+      filename: file.name || "photo.png",
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "OCR 失败");
+    }
+    textarea.value = data.text || "";
+    box.hidden = false;
+    status.textContent = `识别完成（${data.seconds || "?"}s）`;
+  } catch (error) {
+    status.textContent = "";
+    window.alert(`识别失败：${error.message}`);
+  }
+}
+
+async function submitProofAnswer(questionId) {
+  const question = practiceState.proofQuestions.find((q) => q.id === questionId);
+  if (!question) return;
+  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
+  const answerText = textarea?.value?.trim() || "";
+  if (!answerText) {
+    window.alert("请先拍照上传作答内容");
+    return;
+  }
+  const answerBox = document.querySelector(`.proof-answer[data-proof-answer="${CSS.escape(questionId)}"]`);
+  if (answerBox) {
+    answerBox.hidden = false;
+    answerBox.innerHTML = `
+      <div class="practice-explanation">
+        <strong>已提交（自动批阅引擎接入中）</strong>
+        <p class="muted-line">识别内容已保存，当前展示标准答案供对照：</p>
+        <p>${escapeHtml(question.answer)}</p>
+      </div>
+    `;
+    typesetMath(answerBox);
+  }
+  reportPracticeEvent(question, true, answerText, "proof");
+}
+
+async function reportPracticeEvent(question, isCorrect, answerText, questionType) {
+  // 统一上报做题事件（供学情统计：搜索/问答/答题全维度评估掌握度）
+  try {
+    const response = await postJson("/api/learning/events", {
+      user_id: getCurrentUserId(),
+      question_id: question.id,
+      question_type: questionType,
+      module: question.module,
+      node_id: question.nodeId,
+      is_correct: isCorrect,
+      answer_text: answerText,
+    });
+    if (!response.ok) throw new Error("events failed");
+  } catch (error) {
+    console.warn("做题事件上报失败:", error);
+  }
 }
 
 async function submitPracticeAnswer(questionId, selectedIndex) {
@@ -2258,12 +2701,14 @@ function continueLearning() {
   document.getElementById("questionInput").focus();
 }
 
-function setClassRole(role) {
-  classState.role = role === "teacher" ? "teacher" : "student";
-  document.querySelectorAll(".role-button").forEach((button) => button.classList.toggle("active", button.dataset.classRole === classState.role));
+function updateRoleInterface() {
+  classState.role = ["teacher", "admin"].includes(authState.user?.role) ? "teacher" : "student";
+  const roleName = formatRole(classState.role);
+  document.getElementById("classRoleName").textContent = `${roleName} · ${authState.user?.name || "--"}`;
   document.getElementById("studentClassView").hidden = classState.role !== "student";
   document.getElementById("teacherClassView").hidden = classState.role !== "teacher";
-  loadClassWorkspace();
+  document.getElementById("studentExamView").hidden = classState.role !== "student";
+  document.getElementById("teacherExamView").hidden = classState.role !== "teacher";
 }
 
 async function joinClass(event) {
@@ -2275,7 +2720,8 @@ async function joinClass(event) {
     const response = await postJson("/api/class/join", payload);
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "加入班级失败");
-    classState.studentClass = data;
+    classState.studentClass = data.class_info || data;
+    authState.user.class_id = classState.studentClass.class_id || classState.studentClass.id;
     document.getElementById("inviteCodeInput").value = "";
     await loadClassWorkspace();
   } catch (error) {
@@ -2292,10 +2738,10 @@ async function createClass(event) {
     const response = await postJson("/api/class/create", payload);
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "创建班级失败");
-    classState.selectedClassId = data.id;
+    classState.selectedClassId = data.class_id || data.id;
     document.getElementById("classNameInput").value = "";
     await loadClassWorkspace();
-    await loadTeacherClassDetails(data.id);
+    await loadTeacherClassDetails(classState.selectedClassId);
   } catch (error) {
     showClassError("teacherClassList", `创建失败：${error.message}`);
   }
@@ -2318,31 +2764,35 @@ async function requestLearningShare(event) {
 }
 
 async function loadClassWorkspace() {
+  if (!authState.user) return;
   const userId = getCurrentUserId();
-  const [studentResult, teacherResult, shareResult] = await Promise.allSettled([
+  updateRoleInterface();
+  if (classState.role === "teacher") {
+    try {
+      const data = await fetchApiJson(`/api/class/teacher/${userId}`);
+      classState.teacherClasses = data.classes || [];
+      renderClassList("teacherClassList", classState.teacherClasses, "教师", true);
+      syncTeacherExamClasses();
+      if (!classState.teacherClasses.length) renderEmptyClassOverview();
+    } catch (error) {
+      showClassError("teacherClassList", `班级读取失败：${error.message}`);
+      renderEmptyClassOverview("教师班级数据暂不可用。");
+    }
+    return;
+  }
+
+  const [studentResult, shareResult] = await Promise.allSettled([
     fetchApiJson(`/api/class/student/${userId}`),
-    fetchApiJson(`/api/class/teacher/${userId}`),
     fetchApiJson(`/api/share/requests?target_user_id=${userId}`),
   ]);
-
   if (studentResult.status === "fulfilled") {
     classState.studentClass = studentResult.value.class;
     renderClassList("studentClassList", classState.studentClass ? [classState.studentClass] : [], "已加入");
   } else {
     showClassError("studentClassList", `班级读取失败：${studentResult.reason.message}`);
   }
-
-  if (teacherResult.status === "fulfilled") {
-    classState.teacherClasses = teacherResult.value.classes || [];
-    renderClassList("teacherClassList", classState.teacherClasses, "教师", true);
-    if (!classState.teacherClasses.length) renderEmptyClassOverview();
-  } else {
-    showClassError("teacherClassList", `班级读取失败：${teacherResult.reason.message}`);
-    renderEmptyClassOverview("教师班级数据暂不可用。");
-  }
-
   if (shareResult.status === "fulfilled") {
-    renderIncomingShareRequests(shareResult.value.requests || []);
+    renderIncomingShareRequests((shareResult.value.requests || []).filter((item) => item.status === "pending"));
   } else {
     showClassError("incomingShareRequests", `申请读取失败：${shareResult.reason.message}`);
   }
@@ -2357,7 +2807,7 @@ function renderClassList(targetId, items, roleLabel, selectable = false) {
     return;
   }
   target.className = "data-list";
-  target.innerHTML = items.map((item) => `<article class="class-row"><div><strong>${escapeHtml(item.name || "未命名班级")}</strong><span>${escapeHtml(roleLabel)} · 邀请码 ${escapeHtml(item.invite_code || "--")}</span></div>${selectable ? `<button type="button" class="class-detail-button" data-class-id="${Number(item.id)}">查看学情</button>` : '<span class="source-badge synced">已同步</span>'}</article>`).join("");
+  target.innerHTML = items.map((item) => `<article class="class-row"><div><strong>${escapeHtml(item.name || "未命名班级")}</strong><span>${escapeHtml(roleLabel)} · 邀请码 ${escapeHtml(item.invite_code || "--")}</span></div>${selectable ? `<button type="button" class="class-detail-button" data-class-id="${Number(item.class_id || item.id)}">查看学情</button>` : '<span class="source-badge synced">已同步</span>'}</article>`).join("");
   target.querySelectorAll(".class-detail-button").forEach((button) => {
     button.addEventListener("click", () => loadTeacherClassDetails(Number(button.dataset.classId)));
   });
@@ -2372,16 +2822,14 @@ async function loadTeacherClassDetails(classId) {
   studentList.textContent = "正在读取学生学情...";
   try {
     const [studentsData, reportData] = await Promise.all([
-      fetchApiJson(`/api/class/${classId}/students`),
-      fetchApiJson(`/api/class/${classId}/report`),
+      fetchApiJson(`/api/class/${classId}/students?requester_id=${getCurrentUserId()}`),
+      fetchApiJson(`/api/class/${classId}/report?requester_id=${getCurrentUserId()}`),
     ]);
-    const reports = reportData.reports || [];
-    const average = reports.length
-      ? Math.round(reports.reduce((sum, item) => sum + Number(item.summary?.overall_accuracy || 0), 0) / reports.length * 100)
-      : 0;
-    const attention = reports.filter((item) => (item.weak_nodes || []).length > 0).length;
-    overview.innerHTML = `<div><span>学生人数</span><strong>${studentsData.students?.length || 0}</strong></div><div><span>平均正确率</span><strong>${average}%</strong></div><div><span>待关注学生</span><strong>${attention}</strong></div>`;
-    renderStudentReports(reports);
+    const students = reportData.students || studentsData.students || [];
+    const average = Math.round(Number(reportData.overall_accuracy || 0) * 100);
+    const attention = students.filter((item) => Number(item.learning_summary?.weak_nodes || 0) > 0).length;
+    overview.innerHTML = `<div><span>学生人数</span><strong>${students.length}</strong></div><div><span>平均正确率</span><strong>${average}%</strong></div><div><span>待关注学生</span><strong>${attention}</strong></div>`;
+    renderStudentReports(students);
   } catch (error) {
     renderEmptyClassOverview(`班级报告读取失败：${error.message}`);
   }
@@ -2395,7 +2843,11 @@ function renderStudentReports(reports) {
     return;
   }
   target.className = "student-report-list";
-  target.innerHTML = reports.map((item) => `<article><div><strong>${escapeHtml(item.user?.name || `用户 ${item.user?.id}`)}</strong><span>答题 ${Number(item.summary?.total_answers || 0)} 次</span></div><span class="mastery-badge ${(item.weak_nodes || []).length ? "weak" : "mastered"}">${(item.weak_nodes || []).length ? `薄弱 ${(item.weak_nodes || []).length}` : "状态良好"}</span></article>`).join("");
+  target.innerHTML = reports.map((item) => {
+    const summary = item.learning_summary || item.summary || {};
+    const weakCount = Number(summary.weak_nodes || 0);
+    return `<article><div><strong>${escapeHtml(item.name || item.user?.name || `用户 ${item.user_id || item.user?.id}`)}</strong><span>答题 ${Number(summary.total_answers || 0)} 次 · 正确率 ${Math.round(Number(summary.overall_accuracy || 0) * 100)}%</span></div><span class="mastery-badge ${weakCount ? "weak" : "mastered"}">${weakCount ? `薄弱 ${weakCount}` : "状态良好"}</span></article>`;
+  }).join("");
 }
 
 function renderIncomingShareRequests(requests) {
@@ -2406,7 +2858,7 @@ function renderIncomingShareRequests(requests) {
     return;
   }
   target.className = "approval-list";
-  target.innerHTML = requests.map((item) => `<article><div><strong>${escapeHtml(item.requester_name || `用户 ${item.requester_id}`)}</strong><span>申请查看你的学情</span></div><div class="approval-actions"><button type="button" data-share-id="${Number(item.id)}" data-approved="true">同意</button><button type="button" class="ghost-button" data-share-id="${Number(item.id)}" data-approved="false">拒绝</button></div></article>`).join("");
+  target.innerHTML = requests.map((item) => `<article><div><strong>${escapeHtml(item.requester_name || `用户 ${item.requester_id}`)}</strong><span>申请查看你的学情</span></div><div class="approval-actions"><button type="button" data-share-id="${Number(item.request_id || item.id)}" data-approved="true">同意</button><button type="button" class="ghost-button" data-share-id="${Number(item.request_id || item.id)}" data-approved="false">拒绝</button></div></article>`).join("");
   target.querySelectorAll("[data-share-id]").forEach((button) => {
     button.addEventListener("click", () => decideShareRequest(Number(button.dataset.shareId), button.dataset.approved === "true"));
   });
@@ -2439,69 +2891,115 @@ function showClassError(targetId, message) {
 }
 
 async function fetchApiJson(path) {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await authenticatedFetch(path);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || `请求失败（${response.status}）`);
+  if (!response.ok) throw new Error(readApiError(data, `请求失败（${response.status}）`));
   return data;
 }
 
 async function postJson(path, payload) {
-  return fetch(`${API_BASE_URL}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  return authenticatedFetch(path, { method: "POST", body: JSON.stringify(payload) });
 }
 
-async function startExam() {
-  const modules = Array.from(document.querySelectorAll(".exam-module-grid input:checked")).map((input) => input.value);
-  if (!modules.length) return;
-  const localQuestions = practiceQuestions.filter((question) => modules.includes(question.module)).slice(0, 6);
-  examState.questions = localQuestions;
-  examState.answers.clear();
-  try {
-    const response = await postJson("/api/exam/generate", { user_id: getCurrentUserId(), node_ids: localQuestions.map((question) => question.nodeId), count: 6 });
-    const data = await response.json();
-    if (response.ok && Array.isArray(data.questions) && data.questions.length) {
-      examState.examId = data.exam_id || null;
-      examState.questions = data.questions.map((question, index) => normalizeExamQuestion(question, index));
-    }
-  } catch (error) {
-    // 队员3接口尚未合并时使用经过验证的本地题库。
+function authenticatedFetch(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (authState.token) headers.set("Authorization", `Bearer ${authState.token}`);
+  return fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+}
+
+async function loadExamWorkspace() {
+  if (!authState.user) return;
+  updateRoleInterface();
+  if (classState.role === "teacher") {
+    await loadClassWorkspace();
+    syncTeacherExamClasses();
+    return;
   }
-  document.getElementById("examSetup").hidden = true;
-  document.getElementById("examResult").hidden = true;
-  document.getElementById("examForm").hidden = false;
-  renderExamPaper();
-  startExamTimer();
+  await loadStudentExams();
 }
 
-function normalizeExamQuestion(question, index) {
-  return {
-    id: question.id || `server_exam_${index}`,
-    nodeId: question.node_id || question.nodeId || "",
-    nodeName: question.node_name || question.nodeName || "知识点",
-    moduleName: question.module || question.moduleName || "离散数学",
-    question: question.content || question.question || "",
-    options: question.options || [],
-    answer: Number(question.answer ?? question.correct_index ?? 0),
-    explanation: question.explanation || question.analysis || "提交后查看解析。",
-  };
+async function loadStudentExams() {
+  const target = document.getElementById("studentExamList");
+  target.hidden = false;
+  target.className = "exam-list empty-state";
+  target.textContent = "正在读取已发布考试...";
+  document.getElementById("examForm").hidden = true;
+  document.getElementById("examResult").hidden = true;
+  try {
+    examState.available = await fetchApiJson(`/api/exam/student/${getCurrentUserId()}`);
+    renderStudentExamList();
+  } catch (error) {
+    target.className = "exam-list error-state";
+    target.textContent = `考试读取失败：${error.message}`;
+  }
+}
+
+function renderStudentExamList() {
+  const target = document.getElementById("studentExamList");
+  if (!examState.available.length) {
+    target.className = "exam-list empty-state";
+    target.textContent = authState.user?.class_id ? "所在班级暂无已发布考试。" : "请先加入班级，之后可以在这里参加教师发布的考试。";
+    return;
+  }
+  target.className = "exam-list";
+  target.innerHTML = examState.available.map((exam) => `
+    <article>
+      <div><strong>${escapeHtml(exam.title)}</strong><span>${formatDateTime(exam.created_at)} · 满分 ${Number(exam.total_score)}</span></div>
+      <span class="source-badge ${exam.submitted ? "synced" : "local"}">${exam.submitted ? "已提交" : "待作答"}</span>
+      <button type="button" data-exam-id="${Number(exam.exam_id)}" ${exam.submitted ? "disabled" : ""}>${exam.submitted ? "已完成" : "进入考试"}</button>
+    </article>`).join("");
+  target.querySelectorAll("[data-exam-id]:not(:disabled)").forEach((button) => {
+    button.addEventListener("click", () => openStudentExam(Number(button.dataset.examId)));
+  });
+}
+
+async function openStudentExam(examId) {
+  const target = document.getElementById("studentExamList");
+  target.className = "exam-list empty-state";
+  target.textContent = "正在加载试卷...";
+  try {
+    const exam = await fetchApiJson(`/api/exam/${examId}`);
+    examState.examId = exam.exam_id;
+    examState.questions = (exam.questions || []).map((question) => ({
+      id: question.question_id,
+      nodeId: question.node_id,
+      type: question.question_type,
+      question: question.content,
+      score: Number(question.score || 0),
+    }));
+    examState.answers.clear();
+    document.getElementById("examTitle").textContent = exam.title;
+    target.hidden = true;
+    document.getElementById("examResult").hidden = true;
+    document.getElementById("examForm").hidden = false;
+    renderExamPaper();
+    startExamTimer();
+  } catch (error) {
+    target.className = "exam-list error-state";
+    target.textContent = `试卷加载失败：${error.message}`;
+  }
 }
 
 function renderExamPaper() {
   const form = document.getElementById("examForm");
-  form.innerHTML = examState.questions.map((question, questionIndex) => `
+  form.innerHTML = examState.questions.map((question, index) => `
     <fieldset class="exam-question">
-      <legend><span>${questionIndex + 1}</span>${escapeHtml(question.question)}</legend>
-      <div class="exam-options">
-        ${question.options.map((option, optionIndex) => `<label><input type="radio" name="exam-${questionIndex}" value="${optionIndex}"><span>${String.fromCharCode(65 + optionIndex)}</span>${escapeHtml(option)}</label>`).join("")}
-      </div>
+      <legend><span>${index + 1}</span>${escapeHtml(question.question)}</legend>
+      <small>${escapeHtml(question.type)} · ${question.score} 分 · ${escapeHtml(question.nodeId)}</small>
+      <label class="exam-answer-label" for="exam-answer-${question.id}">你的答案</label>
+      <textarea id="exam-answer-${question.id}" data-question-id="${question.id}" rows="3" placeholder="${String(question.type).includes("选择") ? "输入选项字母，例如 A" : "输入完整作答过程"}"></textarea>
     </fieldset>
-  `).join("") + `<button type="submit" class="submit-exam-button">提交试卷</button>`;
-  form.onchange = () => {
-    examState.questions.forEach((question, index) => {
-      const selected = form.querySelector(`input[name="exam-${index}"]:checked`);
-      if (selected) examState.answers.set(question.id, Number(selected.value));
+  `).join("") + '<div class="button-row"><button id="leaveExamButton" class="ghost-button" type="button">返回列表</button><button type="submit" class="submit-exam-button">提交试卷</button></div>';
+  form.querySelectorAll("[data-question-id]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const answer = input.value.trim();
+      if (answer) examState.answers.set(Number(input.dataset.questionId), answer);
+      else examState.answers.delete(Number(input.dataset.questionId));
+      updateExamStatus();
     });
-    updateExamStatus();
-  };
+  });
+  document.getElementById("leaveExamButton").addEventListener("click", resetExam);
   form.onsubmit = submitExam;
   updateExamStatus();
 }
@@ -2527,48 +3025,47 @@ function renderExamTimer() {
 
 async function submitExam(event) {
   event.preventDefault();
-  clearInterval(examState.timer);
-  const results = examState.questions.map((question) => {
-    const selected = examState.answers.get(question.id);
-    return { question, selected, isCorrect: selected === question.answer };
-  });
-  const correct = results.filter((result) => result.isCorrect).length;
-  const score = results.length ? Math.round((correct / results.length) * 100) : 0;
-  const payload = { exam_id: examState.examId, user_id: getCurrentUserId(), answers: results.map((result) => ({ question_id: result.question.id, node_id: result.question.nodeId, answer: result.selected })) };
-  let synced = false;
-  let serverResult = null;
+  if (!examState.examId) return;
+  const submitButton = event.currentTarget?.querySelector('.submit-exam-button');
+  if (submitButton) submitButton.disabled = true;
+  document.getElementById("examSubmitStatus").textContent = "提交中";
   try {
-    const response = await postJson("/api/exam/submit", payload);
-    synced = response.ok;
-    if (response.ok) serverResult = await response.json();
+    const response = await postJson("/api/exam/submit", {
+      exam_id: examState.examId,
+      user_id: getCurrentUserId(),
+      answers: examState.questions.map((question) => ({
+        question_id: question.id,
+        answer: examState.answers.get(question.id) || "",
+      })),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "试卷提交失败"));
+    clearInterval(examState.timer);
+    renderExamSubmission(data);
   } catch (error) {
-    synced = false;
+    document.getElementById("examSubmitStatus").textContent = "提交失败";
+    const target = document.getElementById("examResult");
+    target.hidden = false;
+    target.className = "exam-result error-state";
+    target.textContent = `提交失败：${error.message}`;
+    if (submitButton) submitButton.disabled = false;
   }
-  if (!synced) results.forEach((result) => recordExamMastery(result));
-  const displayScore = serverResult?.score ?? score;
-  const displayCorrect = serverResult?.correct_count ?? correct;
-  const target = document.getElementById("examResult");
-  target.hidden = false;
-  target.innerHTML = `
-    <div class="exam-score"><span>本次得分</span><strong>${displayScore}</strong><small>${displayCorrect}/${results.length} 题正确 · ${synced ? "已同步服务器" : "本地判分"}</small></div>
-    <div class="exam-review">${results.map((result, index) => `<article class="${result.isCorrect ? "correct" : "wrong"}"><strong>${index + 1}. ${result.isCorrect ? "正确" : "错误"}</strong><p>${escapeHtml(result.question.explanation)}</p></article>`).join("")}</div>
-    <button id="restartExamButton" type="button">重新测评</button>`;
-  document.getElementById("examForm").hidden = true;
-  document.getElementById("restartExamButton").addEventListener("click", resetExam);
-  updateExamStatus();
-  renderDashboard();
 }
 
-async function recordExamMastery(result) {
-  const event = { user_id: getCurrentUserId(), node_id: result.question.nodeId, node_name: result.question.nodeName, event_type: "answer", is_correct: result.isCorrect, timestamp: new Date().toISOString() };
-  const localEvents = parseLocalLearningEvents();
-  localEvents.push(event);
-  localStorage.setItem("learning_events", JSON.stringify(localEvents.slice(-200)));
-  try {
-    await postJson("/api/learning/update-mastery", { user_id: event.user_id, node_id: event.node_id, correct: event.is_correct });
-  } catch (error) {
-    // 本地记录保留，后端接口就绪后新答题会自动同步。
-  }
+function renderExamSubmission(data) {
+  const target = document.getElementById("examResult");
+  target.hidden = false;
+  target.className = "exam-result";
+  const pending = data.status === "pending_review";
+  target.innerHTML = `
+    <div class="exam-score"><span>${pending ? "自动判分得分" : "本次得分"}</span><strong>${Number(data.total_score || 0)}</strong><small>${pending ? "主观题等待教师复核" : "判分完成并已更新学情"}</small></div>
+    <div class="exam-review">${(data.answers || []).map((answer, index) => `<article class="${answer.is_correct === false ? "wrong" : "correct"}"><strong>${index + 1}. ${answer.review_status === "pending_review" ? "待复核" : answer.is_correct ? "正确" : "错误"}</strong><p>本题得分 ${Number(answer.score || 0)}</p></article>`).join("")}</div>
+    <button id="backToExamListButton" type="button">返回考试列表</button>`;
+  document.getElementById("examForm").hidden = true;
+  document.getElementById("backToExamListButton").addEventListener("click", resetExam);
+  document.getElementById("examSubmitStatus").textContent = pending ? "待复核" : "已提交";
+  updateExamStatus();
+  renderDashboard();
 }
 
 function resetExam() {
@@ -2578,15 +3075,82 @@ function resetExam() {
   examState.answers.clear();
   examState.secondsLeft = 900;
   renderExamTimer();
-  document.getElementById("examSetup").hidden = false;
   document.getElementById("examForm").hidden = true;
   document.getElementById("examResult").hidden = true;
+  document.getElementById("studentExamList").hidden = false;
+  document.getElementById("examTitle").textContent = "我的班级考试";
+  document.getElementById("examSubmitStatus").textContent = "待选择";
   updateExamStatus();
+  loadStudentExams();
 }
 
 function updateExamStatus() {
   document.getElementById("examQuestionCount").textContent = examState.questions.length;
   document.getElementById("examAnsweredCount").textContent = examState.answers.size;
+}
+
+function syncTeacherExamClasses() {
+  const select = document.getElementById("examClassSelect");
+  const classes = classState.teacherClasses || [];
+  select.innerHTML = classes.length
+    ? classes.map((item) => `<option value="${Number(item.class_id || item.id)}">${escapeHtml(item.name)}</option>`).join("")
+    : '<option value="">请先创建班级</option>';
+  select.disabled = !classes.length;
+  document.querySelector('#generateExamForm button[type="submit"]').disabled = !classes.length;
+  document.getElementById("teacherExamClassCount").textContent = classes.length;
+}
+
+async function generateTeacherExam(event) {
+  event.preventDefault();
+  const classId = Number(document.getElementById("examClassSelect").value);
+  const title = document.getElementById("teacherExamTitle").value.trim();
+  const nodeIds = document.getElementById("teacherExamNodes").value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+  const questionCount = Number(document.getElementById("teacherExamCount").value);
+  const target = document.getElementById("teacherExamResult");
+  if (!classId || !title || !nodeIds.length) return;
+  target.className = "exam-result empty-state";
+  target.textContent = "正在从题库生成试卷...";
+  try {
+    const response = await postJson("/api/exam/generate", {
+      teacher_id: getCurrentUserId(),
+      class_id: classId,
+      title,
+      node_ids: nodeIds,
+      question_count: questionCount,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "考试生成失败"));
+    examState.latestTeacherExamId = data.exam_id;
+    target.className = "exam-result";
+    target.innerHTML = `<div class="tool-status-banner success"><div><span>试卷已发布</span><strong>${escapeHtml(data.title)}</strong></div><span>${data.questions.length} 道题 · 满分 ${Number(data.total_score)}</span></div><div class="teacher-question-list">${data.questions.map((question, index) => `<article><strong>${index + 1}. ${escapeHtml(question.content)}</strong><span>${escapeHtml(question.question_type)} · ${Number(question.score)} 分 · 答案 ${escapeHtml(question.answer || "人工复核")}</span></article>`).join("")}</div>`;
+    document.getElementById("teacherLatestExam").textContent = `#${data.exam_id}`;
+    document.getElementById("teacherLatestExamCount").textContent = data.questions.length;
+    document.getElementById("loadExamResultsButton").disabled = false;
+  } catch (error) {
+    target.className = "exam-result error-state";
+    target.textContent = `发布失败：${error.message}`;
+  }
+}
+
+async function loadTeacherExamResults() {
+  if (!examState.latestTeacherExamId) return;
+  const target = document.getElementById("teacherExamAnalytics");
+  target.className = "student-report-list empty-state";
+  target.textContent = "正在读取成绩...";
+  try {
+    const data = await fetchApiJson(`/api/exam/${examState.latestTeacherExamId}/results?requester_id=${getCurrentUserId()}`);
+    target.className = "student-report-list";
+    target.innerHTML = `<article><div><strong>提交 ${Number(data.submitted_count)} 人</strong><span>平均 ${Number(data.average_score)} · 最高 ${Number(data.highest_score)} · 最低 ${Number(data.lowest_score)}</span></div></article>${(data.students || []).map((student) => `<article><div><strong>${escapeHtml(student.name)}</strong><span>${formatDateTime(student.submitted_at)}</span></div><span class="mastery-badge ${Number(student.total_score) >= 60 ? "mastered" : "weak"}">${Number(student.total_score)} 分</span></article>`).join("")}`;
+  } catch (error) {
+    target.className = "student-report-list error-state";
+    target.textContent = `成绩读取失败：${error.message}`;
+  }
+}
+
+function formatDateTime(value) {
+  if (!value) return "时间未知";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function getModuleNameFromStatus(node) {
