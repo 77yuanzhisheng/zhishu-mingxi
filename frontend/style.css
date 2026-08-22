@@ -542,6 +542,117 @@ button:disabled {
   background: var(--primary);
 }
 
+/* 练习模式切换（选择题 / 填空题 / 证明题拍照） */
+.practice-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.practice-mode {
+  min-height: 34px;
+  padding: 0 14px;
+  color: #555;
+  border: 1px dashed var(--line);
+  background: #fafafa;
+}
+
+.practice-mode:hover,
+.practice-mode.active {
+  color: #ffffff;
+  border-color: #16a085;
+  border-style: solid;
+  background: #16a085;
+}
+
+/* 填空题输入 */
+.fill-answer-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fill-input {
+  flex: 1;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.fill-submit {
+  min-height: 38px;
+  padding: 0 16px;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary);
+}
+
+.fill-submit:disabled {
+  opacity: 0.6;
+}
+
+/* 证明题拍照上传 */
+.proof-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.proof-upload-btn {
+  display: inline-block;
+  padding: 8px 16px;
+  color: #ffffff;
+  border-radius: 8px;
+  background: #16a085;
+  cursor: pointer;
+}
+
+.proof-file-input {
+  display: none;
+}
+
+.proof-status {
+  color: #888;
+  font-size: 13px;
+}
+
+.proof-ocr-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.proof-ocr-text {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.proof-recheck,
+.proof-submit {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.proof-submit {
+  color: #ffffff;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
 .practice-list {
   display: grid;
   gap: 14px;

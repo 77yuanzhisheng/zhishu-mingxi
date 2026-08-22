@@ -17,14 +17,18 @@
     GET /api/practice/questions?module=xxx — 返回练习题目列表
 """
 
+import base64
 import json
 import logging
 import os
 import random
 import re
+import tempfile
+import time
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,8 @@ CHAPTER_MODULE = {
     "集合论": ("set_theory", "集合论", "st_01_01"),
     "关系": ("relations", "关系", "rel_01_01"),
     "图论": ("graph_theory", "图论", "gt_01_01"),
+    "初等数论": ("number_theory", "初等数论", "nt_01_01"),
+    "代数结构": ("algebraic_structure", "代数结构", "ag_01_01"),
     "数学归纳法": ("induction", "数学归纳法", "mi_01_01"),
 }
 
@@ -68,17 +74,18 @@ KP_NODE = {
     "spanning-tree": ("graph_theory", "图论", "gt_04_04"),
     "coloring": ("graph_theory", "图论", "gt_04_03"),
     "digraph": ("graph_theory", "图论", "gt_01_01"),
-    # 其他专题（数论/组合/代数）— 占位节点，学习统计独立记录
-    "gcd": ("other", "初等数论", "nt_01_01"),
-    "congruence": ("other", "初等数论", "nt_02_01"),
-    "combinatorics": ("other", "组合数学", "cm_01_01"),
-    "inclusion-exclusion": ("other", "组合数学", "cm_02_01"),
-    "gen-func": ("other", "组合数学", "cm_03_01"),
-    "recurrence": ("other", "组合数学", "cm_04_01"),
-    "polya": ("other", "组合数学", "cm_05_01"),
-    "algebra": ("other", "代数结构", "ag_01_01"),
-    "group": ("other", "代数结构", "ag_02_01"),
-    "semigroup": ("other", "代数结构", "ag_03_01"),
+    # 扩展专题（数论/组合/代数）— 独立类别，与知识图谱 6 大模块并列
+    "gcd": ("number_theory", "初等数论", "nt_01_01"),
+    "congruence": ("number_theory", "初等数论", "nt_02_01"),
+    "combinatorics": ("combinatorics", "组合数学", "cm_01_01"),
+    "inclusion-exclusion": ("combinatorics", "组合数学", "cm_02_01"),
+    "gen-func": ("combinatorics", "组合数学", "cm_03_01"),
+    "recurrence": ("combinatorics", "组合数学", "cm_04_01"),
+    "polya": ("combinatorics", "组合数学", "cm_05_01"),
+    "algebra": ("algebraic_structure", "代数结构", "ag_01_01"),
+    "group": ("algebraic_structure", "代数结构", "ag_02_01"),
+    "semigroup": ("algebraic_structure", "代数结构", "ag_03_01"),
+    "homomorphism": ("algebraic_structure", "代数结构", "ag_04_01"),
 }
 
 
@@ -222,10 +229,209 @@ def get_practice_questions(
     if module and module != "all":
         questions = [q for q in questions if q["module"] == module]
 
-    # 稳定排序：先按模块，再按原顺序
+    # 稳定排序：先按模块（与知识图谱 6 模块 + 3 扩展专题对齐），再按原顺序
     mod_order = {
         "propositional_logic": 0, "predicate_logic": 1, "set_theory": 2,
-        "induction": 3, "relations": 4, "graph_theory": 5, "other": 6,
+        "induction": 3, "relations": 4, "graph_theory": 5,
+        "number_theory": 6, "combinatorics": 7, "algebraic_structure": 8,
     }
     questions.sort(key=lambda q: (mod_order.get(q["module"], 9), q["id"]))
     return {"total": len(questions), "questions": questions}
+
+
+@router.get("/coverage")
+def get_practice_coverage() -> Dict:
+    """自测练习覆盖的知识点统计（学情面板：总知识点数 = 练习覆盖数）。
+
+    返回:
+        total_nodes: 覆盖的 node_id 总数（去重）
+        total_questions: 题目总数
+        by_module: {模块: {name, nodes, questions}}
+        node_ids: 全部 node_id 列表
+    """
+    questions = parse_quiz_bank_md() + load_teacher_fill_questions()
+    by_module: Dict[str, Dict] = {}
+    node_ids: List[str] = []
+    for q in questions:
+        mod = q["module"]
+        bucket = by_module.setdefault(mod, {"name": q["moduleName"], "nodes": set(), "questions": 0})
+        bucket["nodes"].add(q["nodeId"])
+        bucket["questions"] += 1
+        node_ids.append(q["nodeId"])
+    modules = [
+        {"module": mod, "name": b["name"], "nodes": len(b["nodes"]), "questions": b["questions"]}
+        for mod, b in by_module.items()
+    ]
+    unique_nodes = list(dict.fromkeys(node_ids))
+    return {
+        "total_nodes": len(unique_nodes),
+        "total_questions": len(questions),
+        "by_module": modules,
+        "node_ids": unique_nodes,
+    }
+
+
+# ==================== 证明题 / 填空题 / OCR 拍照识别 ====================
+
+OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"  # OCR 专用视觉模型（约 1-3s/张）
+OCR_PROMPT = (
+    "这是一张学生手写或拍摄的离散数学证明/答案照片。请逐字提取其中的全部文字与数学符号"
+    "（保留 ∀ ∃ ∈ ⊆ → ↔ ¬ ∧ ∨ ≡、分数、下标等写法），按原始顺序输出。只输出识别到的内容，不要评论。"
+)
+
+
+class OCRRequest(BaseModel):
+    image_base64: str = Field(..., description="图片 base64（不含 data: 前缀）")
+    filename: str = Field(default="photo.png", description="文件名（用于推断图片类型）")
+
+
+class GradeFillRequest(BaseModel):
+    question_id: str = Field(..., description="题目 id（如 e1_fill_3）")
+    student_answer: str = Field(..., description="学生填写的答案")
+
+
+def _load_teacher_exams() -> List[Dict]:
+    if not os.path.exists(TEACHER_QUIZ_FILE):
+        return []
+    with open(TEACHER_QUIZ_FILE, "r", encoding="utf-8") as f:
+        return json.load(f).get("exams", [])
+
+
+def _find_teacher_item(question_id: str) -> Optional[Dict]:
+    """按 id（e{exam}_{type}_{idx}）从老师题库定位题目。"""
+    parts = question_id.split("_")
+    if len(parts) != 3 or not parts[0].startswith("e"):
+        return None
+    exam_no, qtype, idx = int(parts[0][1:]), parts[1], int(parts[2])
+    for exam in _load_teacher_exams():
+        if exam.get("id") == exam_no:
+            items = exam.get(qtype, [])
+            if 1 <= idx <= len(items):
+                return items[idx - 1]
+    return None
+
+
+@router.post("/ocr")
+def ocr_image(req: OCRRequest) -> Dict:
+    """证明题拍照上传 → OCR 文字识别（PaddleOCR-VL）。
+
+    返回: {text, seconds}
+    """
+    try:
+        raw = base64.b64decode(req.image_base64)
+    except Exception:
+        return {"ok": False, "error": "图片 base64 解码失败"}
+    if len(raw) > 15 * 1024 * 1024:
+        return {"ok": False, "error": "图片过大（>15MB）"}
+
+    ext = os.path.splitext(req.filename)[1].lower().lstrip(".") or "png"
+    if ext not in ("png", "jpg", "jpeg", "webp", "bmp", "gif"):
+        ext = "png"
+    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
+        f.write(raw)
+        tmp_path = f.name
+
+    try:
+        sys_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import sys
+        sys.path.insert(0, os.path.join(sys_path, "scripts"))
+        from vision import describe
+
+        t0 = time.time()
+        text = describe(tmp_path, OCR_PROMPT, model=OCR_MODEL)
+        return {"ok": True, "text": text.strip(), "seconds": round(time.time() - t0, 1)}
+    except Exception as exc:
+        logger.warning("OCR 失败: %s", exc)
+        return {"ok": False, "error": f"OCR 识别失败: {str(exc)[:120]}"}
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+@router.get("/proof-questions")
+def get_proof_questions(limit: int = 16) -> Dict:
+    """返回证明题（老师训练题库），供「证明题拍照作答」区使用。
+
+    每题含标准答案（前端在学生提交后展示对照）。
+    """
+    questions = []
+    for exam in _load_teacher_exams():
+        for idx, item in enumerate(exam.get("proof", []), 1):
+            kp = item.get("kp", "")
+            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            questions.append({
+                "id": f"e{exam['id']}_proof_{idx}",
+                "question": item["q"],
+                "answer": item["a"],
+                "kp": kp,
+                "module": mod,
+                "moduleName": mod_name,
+                "nodeId": node_id,
+                "fig": item.get("fig"),
+            })
+    questions = questions[:limit]
+    return {"total": len(questions), "questions": questions}
+
+
+@router.get("/fill-questions")
+def get_fill_questions(limit: int = 28) -> Dict:
+    """返回填空题（老师训练题库原题，学生输入答案）。"""
+    questions = []
+    for exam in _load_teacher_exams():
+        for idx, item in enumerate(exam.get("fill", []), 1):
+            kp = item.get("kp", "")
+            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            questions.append({
+                "id": f"e{exam['id']}_fill_{idx}",
+                "question": item["q"],
+                "answer": item["a"],
+                "kp": kp,
+                "module": mod,
+                "moduleName": mod_name,
+                "nodeId": node_id,
+            })
+    questions = questions[:limit]
+    return {"total": len(questions), "questions": questions}
+
+
+@router.post("/grade-fill")
+def grade_fill(req: GradeFillRequest) -> Dict:
+    """填空题判定：大模型对照标准答案判断学生答案是否正确。"""
+    item = _find_teacher_item(req.question_id)
+    if not item:
+        return {"ok": False, "error": "题目不存在"}
+    student = req.student_answer.strip()
+    if not student:
+        return {"ok": False, "error": "答案为空"}
+
+    try:
+        from backend.chat.llm import OpenAICompatibleLLM
+        llm = OpenAICompatibleLLM()
+        prompt = (
+            "你是一名离散数学阅卷教师。请判断学生答案与标准答案是否数学上等价（允许不同写法/等价变换）。\n\n"
+            f"【题目】\n{item['q']}\n\n"
+            f"【标准答案】\n{item['a']}\n\n"
+            f"【学生答案】\n{student}\n\n"
+            '请只输出 JSON：{"correct": true或false, "comment": "一两句评语"}'
+        )
+        t0 = time.time()
+        judge = llm.generate([{"role": "user", "content": prompt}])
+        start = judge.find("{")
+        end = judge.rfind("}")
+        parsed = {}
+        if start != -1 and end != -1:
+            try:
+                parsed = json.loads(judge[start:end + 1])
+            except json.JSONDecodeError:
+                parsed = {}
+        return {
+            "ok": True,
+            "correct": bool(parsed.get("correct", False)),
+            "comment": parsed.get("comment", ""),
+            "reference": item["a"],
+            "seconds": round(time.time() - t0, 1),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"判定失败: {str(exc)[:120]}"}

@@ -75,7 +75,11 @@ const extendedToolState = { current: "formula-simplify", hasseChart: null };
 
 const practiceState = {
   filter: "all",
+  mode: "choice",
   answered: new Map(),
+  fillQuestions: [],
+  fillResults: new Map(),
+  proofQuestions: [],
 };
 
 let practiceQuestions = [];
@@ -320,6 +324,9 @@ document.getElementById("generateExamForm").addEventListener("submit", generateT
 document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
 document.querySelectorAll(".practice-filter").forEach((button) => {
   button.addEventListener("click", () => setPracticeFilter(button.dataset.practiceFilter));
+});
+document.querySelectorAll(".practice-mode").forEach((button) => {
+  button.addEventListener("click", () => setPracticeMode(button.dataset.practiceMode));
 });
 document.querySelectorAll(".graph-view-button").forEach((button) => {
   button.addEventListener("click", () => setGraphView(button.dataset.graphView));
@@ -2014,9 +2021,34 @@ function setPracticeFilter(filter) {
   renderPracticeList();
 }
 
+function setPracticeMode(mode) {
+  practiceState.mode = mode || "choice";
+  document.querySelectorAll(".practice-mode").forEach((button) => {
+    button.classList.toggle("active", button.dataset.practiceMode === practiceState.mode);
+  });
+  // 模式切换时同步加载对应题库
+  if (practiceState.mode === "fill" && practiceState.fillQuestions.length === 0) {
+    loadFillQuestions();
+    return;
+  }
+  if (practiceState.mode === "proof" && practiceState.proofQuestions.length === 0) {
+    loadProofQuestions();
+    return;
+  }
+  renderPracticeList();
+}
+
 function renderPracticeList() {
   const target = document.getElementById("practiceList");
   if (!target) {
+    return;
+  }
+  if (practiceState.mode === "fill") {
+    renderFillList(target);
+    return;
+  }
+  if (practiceState.mode === "proof") {
+    renderProofList(target);
     return;
   }
 
@@ -2075,6 +2107,256 @@ function renderPracticeQuestion(question) {
       ${resultHtml}
     </article>
   `;
+}
+
+// ==================== 填空题（学生输入答案，大模型判定） ====================
+
+async function loadFillQuestions() {
+  const target = document.getElementById("practiceList");
+  if (!target) return;
+  target.innerHTML = `<p class="muted-line">正在加载填空题…</p>`;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/fill-questions`);
+    if (!response.ok) throw new Error(`fill api ${response.status}`);
+    const data = await response.json();
+    practiceState.fillQuestions = data.questions || [];
+  } catch (error) {
+    console.warn("填空题加载失败:", error);
+    practiceState.fillQuestions = [];
+  }
+  renderPracticeList();
+}
+
+function renderFillList(target) {
+  const questions = practiceState.fillQuestions.filter((q) => (
+    practiceState.filter === "all" || q.module === practiceState.filter
+  ));
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无填空题。</p>`;
+    return;
+  }
+  target.innerHTML = questions.map((q) => {
+    const result = practiceState.fillResults.get(q.id);
+    const resultHtml = result
+      ? `<div class="practice-explanation ${result.correct ? "correct" : "wrong"}">
+          <strong>${result.correct ? "回答正确" : "回答错误"}</strong>
+          <p>${escapeHtml(result.comment || "")}</p>
+          <p class="muted-line">标准答案：${escapeHtml(result.reference || "")}</p>
+        </div>`
+      : "";
+    return `
+      <article class="practice-card">
+        <div class="practice-card-header">
+          <span>${escapeHtml(q.moduleName)}</span>
+          <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+        </div>
+        <h4>${escapeHtml(q.question)}</h4>
+        <div class="fill-answer-row">
+          <input class="fill-input" type="text" placeholder="在此输入你的答案…" data-fill-id="${escapeHtml(q.id)}" />
+          <button class="fill-submit" type="button" data-fill-submit="${escapeHtml(q.id)}">提交</button>
+        </div>
+        ${resultHtml}
+      </article>
+    `;
+  }).join("");
+  target.querySelectorAll(".fill-submit").forEach((button) => {
+    button.addEventListener("click", () => submitFillAnswer(button.dataset.fillSubmit));
+  });
+  target.querySelectorAll(".fill-input").forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        submitFillAnswer(input.dataset.fillId);
+      }
+    });
+  });
+  typesetMath(target);
+}
+
+async function submitFillAnswer(questionId) {
+  const input = document.querySelector(`.fill-input[data-fill-id="${CSS.escape(questionId)}"]`);
+  const studentAnswer = input?.value?.trim() || "";
+  if (!studentAnswer) {
+    input?.focus();
+    return;
+  }
+  const question = practiceState.fillQuestions.find((q) => q.id === questionId);
+  if (!question) return;
+  const button = document.querySelector(`.fill-submit[data-fill-submit="${CSS.escape(questionId)}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "判定中…";
+  }
+  try {
+    const response = await postJson("/api/practice/grade-fill", {
+      question_id: questionId,
+      student_answer: studentAnswer,
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "判定失败");
+    }
+    practiceState.fillResults.set(questionId, {
+      correct: Boolean(data.correct),
+      comment: data.comment || "",
+      reference: data.reference || "",
+    });
+    reportPracticeEvent(question, Boolean(data.correct), studentAnswer, "fill");
+  } catch (error) {
+    window.alert(`判定失败：${error.message}`);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "提交";
+    }
+  }
+  renderPracticeList();
+}
+
+// ==================== 证明题（拍照上传 → OCR 识别） ====================
+
+async function loadProofQuestions() {
+  const target = document.getElementById("practiceList");
+  if (!target) return;
+  target.innerHTML = `<p class="muted-line">正在加载证明题…</p>`;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/proof-questions`);
+    if (!response.ok) throw new Error(`proof api ${response.status}`);
+    const data = await response.json();
+    practiceState.proofQuestions = data.questions || [];
+  } catch (error) {
+    console.warn("证明题加载失败:", error);
+    practiceState.proofQuestions = [];
+  }
+  renderPracticeList();
+}
+
+function renderProofList(target) {
+  const questions = practiceState.proofQuestions.filter((q) => (
+    practiceState.filter === "all" || q.module === practiceState.filter
+  ));
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无证明题。</p>`;
+    return;
+  }
+  target.innerHTML = questions.map((q) => `
+    <article class="practice-card proof-card" data-proof-id="${escapeHtml(q.id)}">
+      <div class="practice-card-header">
+        <span>${escapeHtml(q.moduleName)}</span>
+        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+      </div>
+      <h4>${escapeHtml(q.question)}</h4>
+      <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
+      <div class="proof-action-row">
+        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">📷 拍照上传</label>
+        <input id="proof-file-${escapeHtml(q.id)}" class="proof-file-input" type="file"
+               accept="image/*" capture="environment"
+               data-proof-upload="${escapeHtml(q.id)}" />
+        <span class="proof-status" data-proof-status="${escapeHtml(q.id)}"></span>
+      </div>
+      <div class="proof-ocr-box" data-proof-ocr="${escapeHtml(q.id)}" hidden>
+        <strong>识别结果（可核对修正）：</strong>
+        <textarea class="proof-ocr-text" rows="6" data-proof-text="${escapeHtml(q.id)}"></textarea>
+        <div class="proof-action-row">
+          <button class="proof-recheck" type="button" data-proof-recheck="${escapeHtml(q.id)}">重新识别</button>
+          <button class="proof-submit" type="button" data-proof-submit="${escapeHtml(q.id)}">提交作答</button>
+        </div>
+        <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" hidden></div>
+      </div>
+    </article>
+  `).join("");
+  target.querySelectorAll(".proof-file-input").forEach((input) => {
+    input.addEventListener("change", () => handleProofPhoto(input.dataset.proofUpload, input.files[0]));
+  });
+  target.querySelectorAll(".proof-recheck").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById(`proof-file-${CSS.escape(button.dataset.proofRecheck)}`)?.click();
+    });
+  });
+  target.querySelectorAll(".proof-submit").forEach((button) => {
+    button.addEventListener("click", () => submitProofAnswer(button.dataset.proofSubmit));
+  });
+  typesetMath(target);
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleProofPhoto(questionId, file) {
+  if (!file) return;
+  const status = document.querySelector(`.proof-status[data-proof-status="${CSS.escape(questionId)}"]`);
+  const box = document.querySelector(`.proof-ocr-box[data-proof-ocr="${CSS.escape(questionId)}"]`);
+  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
+  if (!status || !box || !textarea) return;
+  status.textContent = "识别中…";
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await postJson("/api/practice/ocr", {
+      image_base64: base64,
+      filename: file.name || "photo.png",
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "OCR 失败");
+    }
+    textarea.value = data.text || "";
+    box.hidden = false;
+    status.textContent = `识别完成（${data.seconds || "?"}s）`;
+  } catch (error) {
+    status.textContent = "";
+    window.alert(`识别失败：${error.message}`);
+  }
+}
+
+async function submitProofAnswer(questionId) {
+  const question = practiceState.proofQuestions.find((q) => q.id === questionId);
+  if (!question) return;
+  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
+  const answerText = textarea?.value?.trim() || "";
+  if (!answerText) {
+    window.alert("请先拍照上传作答内容");
+    return;
+  }
+  const answerBox = document.querySelector(`.proof-answer[data-proof-answer="${CSS.escape(questionId)}"]`);
+  if (answerBox) {
+    answerBox.hidden = false;
+    answerBox.innerHTML = `
+      <div class="practice-explanation">
+        <strong>已提交（自动批阅引擎接入中）</strong>
+        <p class="muted-line">识别内容已保存，当前展示标准答案供对照：</p>
+        <p>${escapeHtml(question.answer)}</p>
+      </div>
+    `;
+    typesetMath(answerBox);
+  }
+  reportPracticeEvent(question, true, answerText, "proof");
+}
+
+async function reportPracticeEvent(question, isCorrect, answerText, questionType) {
+  // 统一上报做题事件（供学情统计：搜索/问答/答题全维度评估掌握度）
+  try {
+    const response = await postJson("/api/learning/events", {
+      user_id: getCurrentUserId(),
+      question_id: question.id,
+      question_type: questionType,
+      module: question.module,
+      node_id: question.nodeId,
+      is_correct: isCorrect,
+      answer_text: answerText,
+    });
+    if (!response.ok) throw new Error("events failed");
+  } catch (error) {
+    console.warn("做题事件上报失败:", error);
+  }
 }
 
 async function submitPracticeAnswer(questionId, selectedIndex) {
