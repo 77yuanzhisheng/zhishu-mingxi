@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from backend.learning.database import connection_scope, init_database
-from backend.learning.service import insert_answer_event, module_for_node, update_mastery
+from backend.learning.service import module_for_node, record_learning_result
 from backend.management.auth import (
     require_class,
     require_class_manager,
@@ -268,7 +268,7 @@ def submit_exam(exam_id: int, user_id: int, answers, database_path=None):
                     item["review_status"],
                 ),
             )
-            insert_answer_event(
+            record_learning_result(
                 connection,
                 user_id=user_id,
                 question_id=item["question_id"],
@@ -281,11 +281,6 @@ def submit_exam(exam_id: int, user_id: int, answers, database_path=None):
                 created_at=submitted_at,
                 validate_user=False,
             )
-
-    # Reuse the established mastery calculation only for deterministically graded answers.
-    for item in graded:
-        if item["is_correct"] is not None:
-            update_mastery(user_id, item["node_id"], item["is_correct"], database_path)
     return ExamSubmitResponse(
         submission_id=submission_id,
         exam_id=exam_id,

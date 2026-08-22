@@ -58,7 +58,8 @@ def test_class_create_join_students_report_and_permissions(setup_users):
     assert report.student_count == 1
     assert len(report.radar_data) == 6
     assert report.overall_accuracy == 0.5
-    assert report.weak_nodes[0].node_id == "rel_01_01"
+    # A single wrong answer is insufficient evidence for a confirmed weak node.
+    assert report.weak_nodes == []
     assert get_class_report(admin_id, class_info.class_id, database_path).student_count == 1
 
     with pytest.raises(PermissionDeniedError):
