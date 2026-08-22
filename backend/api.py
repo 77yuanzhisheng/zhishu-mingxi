@@ -150,6 +150,12 @@ app.include_router(auth_router)
 from backend.practice.router import router as practice_router
 app.include_router(practice_router)
 
+# Auditable long-answer grading engine (member 1).
+from backend.grading.router import router as grading_router
+app.include_router(grading_router)
+from backend.grading.calibration_router import router as calibration_router
+app.include_router(calibration_router)
+
 # TODO: 其他队员的模块
 # from backend.rag.router import router as rag_router
 # app.include_router(rag_router)

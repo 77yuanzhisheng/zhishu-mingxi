@@ -13,8 +13,20 @@
 from backend.kb.loader import DocumentLoader, ParsedDocument
 from backend.kb.chunker import SmartChunker, Chunk
 from backend.kb.embedder import EmbeddingService
-from backend.kb.vector_store import KnowledgeBaseStore
-from backend.kb.retriever import KnowledgeBaseRetriever
+
+
+def __getattr__(name: str):
+    """Load vector-storage dependencies only for callers that need them."""
+
+    if name == "KnowledgeBaseStore":
+        from backend.kb.vector_store import KnowledgeBaseStore
+
+        return KnowledgeBaseStore
+    if name == "KnowledgeBaseRetriever":
+        from backend.kb.retriever import KnowledgeBaseRetriever
+
+        return KnowledgeBaseRetriever
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 # router 延迟导入（需要 FastAPI 运行时依赖）
 def get_router():
     from backend.kb.router import router

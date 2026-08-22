@@ -1,0 +1,81 @@
+﻿'''Versioned prompts for the three-stage grading pipeline.'''
+
+from __future__ import annotations
+
+import json
+
+
+PROMPT_VERSION = 'grading-v1.0'
+
+RUBRIC = {
+    'conclusion_correctness': 20,
+    'key_reasoning_steps': 35,
+    'logical_rigor': 25,
+    'definition_theorem_usage': 10,
+    'expression_notation': 10,
+}
+
+
+def _context_block(context) -> str:
+    return json.dumps(
+        {
+            'question': context.question,
+            'reference_answer': context.reference_answer,
+            'knowledge_points': context.knowledge_points,
+            'grading guide': context.grading_guides,
+        },
+        ensure_ascii=False,
+    )
+
+
+def analysis_messages(context, student_answer: str) -> list[dict[str, str]]:
+    return [
+        {
+            'role': 'system',
+            'content': 'You are a rigorous discrete mathematics grading analyst. Return JSON only.',
+        },
+        {
+            'role': 'user',
+            'content': f'{_context_block(context)}\nstudent_answer: {student_answer}\nReturn {{key_steps:[string],missing_steps:[string],error_candidates:[string]}}.',
+        },
+    ]
+
+
+def scoring_messages(context, student_answer: str, analysis: dict) -> list[dict[str, str]]:
+    return [
+        {
+            'role': 'system',
+            'content': 'Grade only from evidence. Return JSON only; do not award points for unstated reasoning.',
+        },
+        {
+            'role': 'user',
+            'content': f'{_context_block(context)}\nstudent_answer: {student_answer}\nanalysis: {json.dumps(analysis, ensure_ascii=False)}\nrubric maximums: {json.dumps(RUBRIC)}\nAllowed error_types: circular_reasoning, jump_step, theorem_misuse, notation_error, conclusion_error. Return {{dimension_scores:{{all five keys}},error_types:[allowed values],evidence:[{{dimension:key,student_excerpt:string,reason:string}}],feedback:string}}.',
+        },
+    ]
+
+
+def review_messages(context, student_answer: str, scoring: dict) -> list[dict[str, str]]:
+    return [
+        {
+            'role': 'system',
+            'content': 'Act as an independent grading reviewer. Return JSON only and preserve the constrained rubric.',
+        },
+        {
+            'role': 'user',
+            'content': f'{_context_block(context)}\nstudent_answer: {student_answer}\nproposed scoring: {json.dumps(scoring, ensure_ascii=False)}\nRecheck every score against the answer and reference. Return {{approved:true,dimension_scores:{{all five keys}},error_types:[allowed values],evidence:[{{dimension:key,student_excerpt:string,reason:string}}],feedback:string,review_notes:string}}. The evidence must support the final scores and error types; use an empty list only when no concrete issue is present. Correct unsupported scores before approving.',
+        },
+    ]
+
+
+def repair_messages(stage: str, invalid_output: str, error: str) -> list[dict[str, str]]:
+    return [
+        {
+            'role': 'system',
+            'content': 'Repair the following output into valid JSON only. Do not add markdown or explanations.',
+        },
+        {
+            'role': 'user',
+            'content': f'stage: {stage}\nvalidation error: {error}\ninvalid output:\n{invalid_output}',
+        },
+    ]
+
