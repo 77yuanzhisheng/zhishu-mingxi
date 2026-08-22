@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS node_mastery (
     CHECK (correct_count <= total_count)
 );
 
+CREATE TABLE IF NOT EXISTS answer_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    question_id TEXT NOT NULL,
+    question_type TEXT NOT NULL
+        CHECK (question_type IN ('single', 'fill', 'calc', 'proof', 'exam')),
+    module TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    is_correct INTEGER CHECK (is_correct IN (0, 1) OR is_correct IS NULL),
+    duration_ms INTEGER CHECK (duration_ms >= 0 OR duration_ms IS NULL),
+    answer_text TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS exams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     class_id INTEGER NOT NULL,
@@ -181,6 +196,11 @@ CREATE INDEX IF NOT EXISTS idx_users_class_id ON users(class_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_node_mastery_user_id ON node_mastery(user_id);
+CREATE INDEX IF NOT EXISTS idx_answer_events_user_id ON answer_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_answer_events_node_id ON answer_events(node_id);
+CREATE INDEX IF NOT EXISTS idx_answer_events_created_at ON answer_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_answer_events_user_created_at
+    ON answer_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_exams_class_id ON exams(class_id);
 CREATE INDEX IF NOT EXISTS idx_exam_questions_exam_id ON exam_questions(exam_id);
 CREATE INDEX IF NOT EXISTS idx_exam_submissions_exam_id ON exam_submissions(exam_id);
