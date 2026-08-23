@@ -564,14 +564,61 @@ async def get_knowledge_graph():
     import copy
     kg = copy.deepcopy(KG_DATA)
 
-    # 后处理：给所有 items 节点自动生成 mastery_levels
-    for module in kg["modules"]:
-        for child in module.get("children", []):
+    edges = kg.get("edges", [])
+    dependencies_by_target: dict[str, list[str]] = {}
+    for edge in edges:
+        source = edge.get("source") or edge.get("from")
+        target = edge.get("target") or edge.get("to")
+        if source and target:
+            dependencies_by_target.setdefault(target, []).append(source)
+
+    # 后处理：补齐章节层级、依赖和节点统计，并生成 mastery_levels。
+    total_chapters = 0
+    total_items = 0
+    for module_index, module in enumerate(kg["modules"], 1):
+        module_id = module.get("node_id") or module.get("id")
+        module["node_id"] = module_id
+        module["type"] = "module"
+        module["chapter"] = f"第{module_index}章"
+        module["depends_on"] = dependencies_by_target.get(module_id, [])
+        module_item_count = 0
+        for child_index, child in enumerate(module.get("children", []), 1):
+            total_chapters += 1
+            child["type"] = "chapter"
+            child["chapter"] = f"{module_index}.{child_index}"
+            child["chapter_title"] = f"{module_index}.{child_index} {child.get('name', '')}".strip()
+            child["parent_node_id"] = module_id
+            child["item_count"] = len(child.get("items", []))
+            module_item_count += child["item_count"]
             for item in child.get("items", []):
+                item["chapter"] = child["chapter"]
+                item["parent_node_id"] = child.get("node_id")
+                item.setdefault("name", item.get("text", "").split("：", 1)[0])
                 item.setdefault("mastery_levels", _generate_mastery_levels(
                     item.get("type", "definition"),
                     item.get("text", "")
                 ))
+        module["chapter_count"] = len(module.get("children", []))
+        module["item_count"] = module_item_count
+        total_items += module_item_count
+
+    kg["dependencies"] = [
+        {
+            "source": edge.get("source") or edge.get("from"),
+            "target": edge.get("target") or edge.get("to"),
+            "label": edge.get("label", "前置依赖"),
+            "type": "prerequisite",
+        }
+        for edge in edges
+        if (edge.get("source") or edge.get("from"))
+        and (edge.get("target") or edge.get("to"))
+    ]
+    kg["stats"] = {
+        "module_count": len(kg["modules"]),
+        "chapter_count": total_chapters,
+        "knowledge_point_count": total_items,
+        "dependency_count": len(kg["dependencies"]),
+    }
 
     return kg
 
