@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=30">
+  <link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -79,17 +79,9 @@
           <span>问答</span>
           <strong>知识库 RAG</strong>
         </button>
-        <button class="nav-item" data-tab="truth">
-          <span>工具</span>
-          <strong>真值表生成</strong>
-        </button>
-        <button class="nav-item" data-tab="relation">
-          <span>工具</span>
-          <strong>关系矩阵判断</strong>
-        </button>
         <button class="nav-item" data-tab="tools">
           <span>工具</span>
-          <strong>算法工具箱</strong>
+          <strong>离散数学工具中心</strong>
         </button>
         <button class="nav-item" data-tab="graph">
           <span>图谱</span>
@@ -98,6 +90,10 @@
         <button class="nav-item" data-tab="practice">
           <span>练习</span>
           <strong>自测练习</strong>
+        </button>
+        <button class="nav-item" data-tab="grading">
+          <span>批阅</span>
+          <strong>大题智能批阅</strong>
         </button>
         <button class="nav-item" data-tab="learning">
           <span>分析</span>
@@ -129,32 +125,12 @@
           <h2 id="pageTitle">个人学习仪表盘</h2>
         </div>
         <div class="top-actions">
-          <button class="ghost-button" id="checkStatusButton">检测服务</button>
-          <a class="docs-link" id="docsLink" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">API 文档</a>
           <div class="account-menu">
             <div><strong id="currentUserName">未登录</strong><span id="currentUserRole">--</span></div>
             <button class="ghost-button" id="logoutButton" type="button">退出</button>
           </div>
         </div>
       </header>
-
-      <section class="learning-overview" aria-label="学习概览">
-        <article>
-          <span>01</span>
-          <strong>概念理解</strong>
-          <p>通过 RAG 问答查看定义、定理与教材引用。</p>
-        </article>
-        <article>
-          <span>02</span>
-          <strong>算法验证</strong>
-          <p>用真值表和关系矩阵验证离散数学结论。</p>
-        </article>
-        <article>
-          <span>03</span>
-          <strong>结果解释</strong>
-          <p>输出不只给答案，也提示满足条件与关系类型。</p>
-        </article>
-      </section>
 
       <section id="dashboard" class="panel active">
         <div class="dashboard-header">
@@ -230,7 +206,14 @@
         </div>
       </section>
 
-      <section id="truth" class="panel">
+      <section id="tools" class="panel">
+        <div class="unified-tool-switch" role="tablist" aria-label="工具类型">
+          <button class="unified-tool-tab active" type="button" data-unified-tool="truth">真值表</button>
+          <button class="unified-tool-tab" type="button" data-unified-tool="relation">关系矩阵</button>
+          <button class="unified-tool-tab" type="button" data-unified-tool="extended">算法工具</button>
+        </div>
+
+      <section id="truth" class="unified-tool-view active">
         <div class="tool-grid">
           <section class="work-panel">
             <div class="section-title">
@@ -274,7 +257,7 @@
         </div>
       </section>
 
-      <section id="relation" class="panel">
+      <section id="relation" class="unified-tool-view">
         <div class="tool-grid">
           <section class="work-panel">
             <div class="section-title">
@@ -315,7 +298,7 @@
         </div>
       </section>
 
-      <section id="tools" class="panel">
+      <section id="extendedTools" class="unified-tool-view">
         <div class="extended-tools-layout">
           <aside class="tool-selector" aria-label="算法工具">
             <button class="extended-tool-button active" type="button" data-tool-name="formula-simplify">命题公式化简</button>
@@ -336,6 +319,7 @@
             <div id="extendedToolResult" class="tool-response empty-state">填写参数后运行工具。</div>
           </section>
         </div>
+      </section>
       </section>
 
       <section id="graph" class="panel">
@@ -393,6 +377,10 @@
               <p id="graphDetailTasks">拖动画布可观察节点关系，滚轮可缩放。再次点击已展开节点可以收起。</p>
             </div>
             <div class="study-card">
+              <h4>模块依赖</h4>
+              <div id="graphDependencies" class="dependency-list">正在读取依赖关系。</div>
+            </div>
+            <div class="study-card">
               <div class="detail-card-title"><h4>推荐题目</h4><span id="graphMasteryBadge" class="mastery-badge unlearned">未学</span></div>
               <button id="loadGraphRecommendationsButton" class="recommend-refresh-button" type="button">获取推荐题目</button>
               <div id="graphRecommendedQuestions" class="recommended-question-list" aria-live="polite">选择知识点后获取个性化题目。</div>
@@ -409,7 +397,7 @@
                 <p class="eyebrow">Learning Analytics</p>
                 <h3>学情分析面板</h3>
               </div>
-              <span class="tag">GET /api/learning/report</span>
+              <span class="tag">GET /api/learning/ability-profile</span>
             </div>
 
             <div class="learning-toolbar">
@@ -419,6 +407,10 @@
             </div>
 
             <div class="learning-summary-grid">
+              <article>
+                <span>综合能力</span>
+                <strong id="abilityOverallScore">0</strong>
+              </article>
               <article>
                 <span>已掌握</span>
                 <strong id="masteredCount">0</strong>
@@ -457,6 +449,17 @@
               <p id="currentLearningNode">rel_02 · 关系性质</p>
             </div>
           </aside>
+
+          <section class="work-panel learning-history-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">Practice Timeline</p>
+                <h3>做题历史时间线</h3>
+              </div>
+              <span class="tag">GET /api/learning/events</span>
+            </div>
+            <div id="learningTimeline" class="learning-timeline empty-state">暂无做题记录。</div>
+          </section>
         </div>
       </section>
 
@@ -508,6 +511,61 @@
               <h4>下一步</h4>
               <p>答完题后进入“学情面板”，点击刷新学情查看掌握度变化。</p>
             </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="grading" class="panel">
+        <div class="grading-layout">
+          <section class="work-panel">
+            <div class="section-title">
+              <div>
+                <p class="eyebrow">AI Grading Studio</p>
+                <h3>证明与计算题智能批阅</h3>
+              </div>
+              <span class="tag">POST /api/grading/grade</span>
+            </div>
+
+            <div class="grading-question-toolbar">
+              <label for="gradingQuestionType">题目类型</label>
+              <select id="gradingQuestionType">
+                <option value="proof">证明题</option>
+                <option value="calc">计算题</option>
+              </select>
+              <label for="gradingQuestionSelect">结构化题库</label>
+              <select id="gradingQuestionSelect"><option value="">正在读取题目...</option></select>
+              <button id="reloadGradingQuestionsButton" class="ghost-button" type="button">刷新题库</button>
+            </div>
+
+            <form id="gradingForm" class="grading-form">
+              <label for="gradingQuestion">题目</label>
+              <textarea id="gradingQuestion" rows="4" required placeholder="选择题库题目，或在此输入需要批阅的大题"></textarea>
+              <div class="grading-meta-grid">
+                <label>知识点<input id="gradingKp" value="prop-logic" required></label>
+                <label>所属模块<input id="gradingModule" value="命题逻辑" required></label>
+                <label>满分<input id="gradingMaxScore" type="number" min="1" max="100" value="10" required></label>
+              </div>
+              <label for="gradingStudentAnswer">我的解答</label>
+              <textarea id="gradingStudentAnswer" rows="10" required placeholder="请写出完整推导过程，批阅引擎将检查结论、步骤、逻辑、定理使用和符号规范"></textarea>
+              <textarea id="gradingReference" hidden></textarea>
+              <button id="submitGradingButton" type="submit">提交智能批阅</button>
+            </form>
+          </section>
+
+          <aside class="insight-panel grading-result-panel">
+            <div class="grading-score-head">
+              <div><span>批阅得分</span><strong id="gradingScore">--</strong></div>
+              <span id="gradingStatusBadge" class="mastery-badge unlearned">待提交</span>
+            </div>
+            <div id="gradingDimensions" class="grading-dimensions empty-state">提交后展示五维评分。</div>
+            <section class="grading-feedback">
+              <h4>教师式评语</h4>
+              <p id="gradingComment">等待批阅。</p>
+            </section>
+            <section class="grading-feedback">
+              <h4>错误类型</h4>
+              <div id="gradingErrorTypes" class="error-type-list"><span>暂无</span></div>
+            </section>
           </aside>
         </div>
       </section>
@@ -636,6 +694,6 @@
     };
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
-  <script defer src="app.js?v=31"></script>
+  <script defer src="app.js?v=35"></script>
 </body>
 </html>

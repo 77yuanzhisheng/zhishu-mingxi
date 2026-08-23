@@ -20,10 +20,9 @@ function resolveApiBaseUrl() {
 const tabRoutes = {
   dashboard: "/",
   chat: "/chat",
-  truth: "/truth-table",
-  relation: "/relation",
   graph: "/knowledge-graph",
   practice: "/practice",
+  grading: "/grading",
   learning: "/learning",
   classes: "/classes",
   exam: "/exam",
@@ -33,11 +32,10 @@ const tabRoutes = {
 const titles = {
   dashboard: "个人学习仪表盘",
   chat: "知识库 RAG 问答",
-  truth: "真值表生成",
-  relation: "关系矩阵性质判断",
-  tools: "离散数学算法工具箱",
+  tools: "离散数学工具中心",
   graph: "离散数学知识图谱",
   practice: "自测练习",
+  grading: "大题智能批阅",
   learning: "学情分析",
   classes: "班级管理",
   exam: "在线考试",
@@ -55,8 +53,6 @@ const graphState = {
   masteryByNode: new Map(),
   recommendedPath: [],
   selectedNode: null,
-  weakPulse: false,
-  pulseTimer: null,
 };
 
 const learningState = {
@@ -67,15 +63,22 @@ const learningState = {
 };
 
 const dashboardState = { chart: null };
+const gradingState = { questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false };
 const chatState = { sessionId: null };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
+const unifiedToolState = { current: "truth" };
 
 const practiceState = {
   filter: "all",
   mode: "choice",
+  questionIndex: {
+    choice: 0,
+    fill: 0,
+    proof: 0,
+  },
   answered: new Map(),
   fillQuestions: [],
   fillResults: new Map(),
@@ -302,7 +305,6 @@ document.getElementById("questionInput").addEventListener("keydown", (event) => 
 
 document.getElementById("truthButton").addEventListener("click", generateTruthTable);
 document.getElementById("relationButton").addEventListener("click", analyzeRelation);
-document.getElementById("checkStatusButton").addEventListener("click", checkStatus);
 document.getElementById("matrixInput").addEventListener("input", updateMatrixPreview);
 
 document.getElementById("loadOrderSample").addEventListener("click", () => loadMatrixSample("order"));
@@ -311,6 +313,10 @@ document.getElementById("refreshGraphButton").addEventListener("click", () => lo
 document.getElementById("resetGraphButton").addEventListener("click", resetKnowledgeGraph);
 document.getElementById("loadGraphRecommendationsButton").addEventListener("click", loadSelectedGraphRecommendations);
 document.getElementById("refreshLearningButton").addEventListener("click", loadLearningReport);
+document.getElementById("reloadGradingQuestionsButton").addEventListener("click", loadGradingQuestions);
+document.getElementById("gradingQuestionType").addEventListener("change", loadGradingQuestions);
+document.getElementById("gradingQuestionSelect").addEventListener("change", selectGradingQuestion);
+document.getElementById("gradingForm").addEventListener("submit", submitForGrading);
 document.getElementById("continueLearningButton").addEventListener("click", continueLearning);
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
@@ -334,12 +340,16 @@ document.querySelectorAll(".graph-view-button").forEach((button) => {
 document.querySelectorAll(".extended-tool-button").forEach((button) => {
   button.addEventListener("click", () => selectExtendedTool(button.dataset.toolName));
 });
+document.querySelectorAll(".unified-tool-tab").forEach((button) => {
+  button.addEventListener("click", () => selectUnifiedTool(button.dataset.unifiedTool));
+});
 document.getElementById("runExtendedToolButton").addEventListener("click", runExtendedTool);
 
 updateMatrixPreview();
 loadPracticeQuestions();
 renderDashboard();
 selectExtendedTool(extendedToolState.current);
+selectUnifiedTool(unifiedToolState.current);
 switchTab(getTabFromLocation(), false);
 bootstrapApp();
 
@@ -390,7 +400,6 @@ function applyAuthenticatedUser() {
   document.getElementById("currentUserName").textContent = user.name;
   document.getElementById("currentUserRole").textContent = formatRole(user.role);
   document.getElementById("learningUserInput").value = `${user.name} · ID ${user.user_id}`;
-  document.getElementById("docsLink").href = `${API_BASE_URL}/docs`;
   classState.role = ["teacher", "admin"].includes(user.role) ? "teacher" : "student";
   updateRoleInterface();
 }
@@ -485,6 +494,22 @@ function readApiError(data, fallback) {
   return fallback;
 }
 
+function selectUnifiedTool(toolName) {
+  const selected = ["truth", "relation", "extended"].includes(toolName) ? toolName : "truth";
+  unifiedToolState.current = selected;
+  document.querySelectorAll(".unified-tool-tab").forEach((button) => {
+    const active = button.dataset.unifiedTool === selected;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".unified-tool-view").forEach((view) => {
+    const viewName = view.id === "extendedTools" ? "extended" : view.id;
+    view.classList.toggle("active", viewName === selected);
+  });
+  if (selected === "relation") updateMatrixPreview();
+  if (selected === "extended") setTimeout(() => extendedToolState.hasseChart?.resize(), 0);
+}
+
 function switchTab(tabName, updateHistory = true) {
   if (!titles[tabName]) tabName = "dashboard";
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
@@ -513,12 +538,22 @@ function switchTab(tabName, updateHistory = true) {
   if (tabName === "practice") {
     renderPracticeList();
   }
+  if (tabName === "tools") selectUnifiedTool(unifiedToolState.current);
+  if (tabName === "grading") loadGradingQuestions();
   if (tabName === "classes") loadClassWorkspace();
   if (tabName === "exam") loadExamWorkspace();
 }
 
 function getTabFromLocation() {
   const path = window.location.pathname.replace(/\/$/, "") || "/";
+  if (path === "/truth-table") {
+    selectUnifiedTool("truth");
+    return "tools";
+  }
+  if (path === "/relation") {
+    selectUnifiedTool("relation");
+    return "tools";
+  }
   return Object.entries(tabRoutes).find(([, route]) => route === path)?.[0] || "dashboard";
 }
 
@@ -687,10 +722,10 @@ async function generateTruthTable() {
   resultBox.textContent = "正在生成真值表...";
 
   try {
-    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/truth-table`, {
+    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ expression }),
+      body: JSON.stringify({ tool: "truth-table", params: { expression } }),
     });
     const data = await response.json();
 
@@ -698,7 +733,7 @@ async function generateTruthTable() {
       throw new Error(data.detail || "生成真值表失败");
     }
 
-    renderTruthTable(data);
+    renderTruthTable(data.result);
   } catch (error) {
     showError(resultBox, `${error.message}。请确认当前后端 ${API_BASE_URL} 正在运行。`);
   }
@@ -711,10 +746,10 @@ async function analyzeRelation() {
     const matrix = readMatrixInput();
     resultBox.textContent = "正在判断关系性质...";
 
-    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/relation-properties`, {
+    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matrix }),
+      body: JSON.stringify({ tool: "relation-properties", params: { matrix } }),
     });
     const data = await response.json();
 
@@ -722,7 +757,7 @@ async function analyzeRelation() {
       throw new Error(data.detail || "判断关系性质失败");
     }
 
-    renderRelationProperties(data, matrix.length);
+    renderRelationProperties(data.result, matrix.length);
   } catch (error) {
     showError(resultBox, error.message);
   }
@@ -740,7 +775,7 @@ function selectExtendedTool(toolName) {
     button.classList.toggle("active", button.dataset.toolName === toolName);
   });
   document.getElementById("extendedToolTitle").textContent = config.title;
-  document.getElementById("extendedToolEndpoint").textContent = `POST /tools/${toolName}`;
+  document.getElementById("extendedToolEndpoint").textContent = `统一工具 · ${config.title}`;
   const form = document.getElementById("extendedToolForm");
   form.innerHTML = config.fields.map(renderExtendedToolField).join("");
   bindExtendedToolFieldRules(config, form);
@@ -811,10 +846,10 @@ async function runExtendedTool() {
         params[field.name] = control.value.trim();
       }
     });
-    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/${toolName}`, {
+    const response = await fetch(`${TOOLS_API_BASE_URL}/tools/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ params }),
+      body: JSON.stringify({ tool: toolName, params }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || `工具执行失败（${response.status}）`);
@@ -1292,6 +1327,7 @@ async function loadKnowledgeGraph(forceReload = false) {
 
     graphState.modules = normalizeKnowledgeGraph(data);
     graphState.dependencies = normalizeKnowledgeDependencies(data, graphState.modules);
+    renderGraphDependencies();
     graphState.expandedModules.clear();
     graphState.expandedConcepts.clear();
     graphState.loaded = true;
@@ -1332,6 +1368,8 @@ function normalizeKnowledgeGraph(raw) {
       nodeId: moduleNodeId,
       name: moduleName,
       type: "module",
+      chapter: module.chapter || `第${moduleIndex + 1}章`,
+      itemCount: Number(module.item_count || 0),
       description: module.description || module.summary || module.content || "",
       searchQuery: module.search_query || module.query || moduleName,
       children: children.map((child, childIndex) => {
@@ -1339,6 +1377,7 @@ function normalizeKnowledgeGraph(raw) {
         const childId = `${moduleId}-concept-${childNodeId}`;
         const items = child.items || child.children || [];
         const childName = child.name || child.title || child.label || `子概念${childIndex + 1}`;
+        const chapter = child.chapter || `${moduleIndex + 1}.${childIndex + 1}`;
 
         return {
           id: childId,
@@ -1347,6 +1386,9 @@ function normalizeKnowledgeGraph(raw) {
           parentNodeId: moduleNodeId,
           name: childName,
           type: "concept",
+          chapter,
+          chapterTitle: child.chapter_title || `${chapter} ${childName}`,
+          itemCount: Number(child.item_count || items.length),
           description: child.description || child.summary || child.content || "",
           searchQuery: child.search_query || child.query || `${moduleName} ${childName}`,
           masteryLevels: child.mastery_levels || {},
@@ -1426,6 +1468,7 @@ function normalizeKnowledgeItem(item, itemIndex, parentId, parentNodeId, parentN
     name,
     type,
     description,
+    chapter: item.chapter || "",
     searchQuery: item.search_query || item.query || `${parentName} ${name}`,
     masteryLevels: item.mastery_levels || {},
   };
@@ -1438,11 +1481,6 @@ function renderKnowledgeGraph() {
     graphState.chart = echarts.init(container);
     graphState.chart.on("click", handleGraphClick);
     window.addEventListener("resize", () => graphState.chart?.resize());
-    graphState.pulseTimer = window.setInterval(() => {
-      if (!graphState.masteryByNode.size || !document.getElementById("graph").classList.contains("active")) return;
-      graphState.weakPulse = !graphState.weakPulse;
-      renderKnowledgeGraph();
-    }, 1200);
   }
 
   const option = graphState.view === "force"
@@ -1492,7 +1530,7 @@ function buildForceGraphOption() {
           position: "inside",
           color: "#ffffff",
           fontWeight: 700,
-          formatter: (params) => truncateText(params.data.name, 10),
+          formatter: (params) => truncateText(params.data.name, Math.max(8, Math.floor(Number(params.data.symbolSize || 34) / 4))),
         },
         edgeSymbol: ["none", "arrow"],
         edgeSymbolSize: 8,
@@ -1579,7 +1617,7 @@ function buildMindMapNode(module, moduleIndex) {
     id: module.id,
     name: `${moduleIndex + 1}. ${module.name}`,
     rawType: module.type,
-    symbolSize: [112, 38],
+    symbolSize: calculateMindMapNodeSize(`${moduleIndex + 1}. ${module.name}`, 112, 38),
     itemStyle: getGraphNodeStyle(module),
     collapsed: !graphState.expandedModules.has(module.id),
     children: module.children.map((concept) => buildMindMapConceptNode(concept)),
@@ -1590,9 +1628,9 @@ function buildMindMapConceptNode(concept) {
   graphState.nodeIndex.set(concept.id, concept);
   return {
     id: concept.id,
-    name: concept.name,
+    name: concept.chapterTitle || concept.name,
     rawType: concept.type,
-    symbolSize: [116, 34],
+    symbolSize: calculateMindMapNodeSize(concept.chapterTitle || concept.name, 116, 34),
     itemStyle: getGraphNodeStyle(concept),
     collapsed: !graphState.expandedConcepts.has(concept.id),
     children: concept.items.map((item) => {
@@ -1602,7 +1640,7 @@ function buildMindMapConceptNode(concept) {
         id: item.id,
         name: item.name,
         rawType: item.type,
-        symbolSize: [138, 30],
+        symbolSize: calculateMindMapNodeSize(item.name, 138, 30),
         itemStyle: getGraphNodeStyle(item),
       };
     }),
@@ -1653,7 +1691,7 @@ function pushGraphNode(nodes, rawNode, category, symbolSize) {
     rawType: rawNode.type,
     searchQuery: rawNode.searchQuery,
     category,
-    symbolSize,
+    symbolSize: calculateForceNodeSize(rawNode, symbolSize),
     value: rawNode.description || "",
     itemStyle: getGraphNodeStyle(rawNode),
   };
@@ -1671,10 +1709,43 @@ function buildGraphLink(source, target, label) {
     lineStyle: highlighted ? { color: "#157f6f", width: 4, opacity: 1 } : undefined,
     symbolSize: highlighted ? 12 : 8,
     label: {
-      show: false,
+      show: true,
       formatter: label,
     },
   };
+}
+
+function calculateForceNodeSize(node, baseSize) {
+  const textLength = Array.from(String(node.name || "")).length;
+  const childCount = node.type === "module"
+    ? node.children?.length || 0
+    : node.type === "concept" ? node.items?.length || 0 : 0;
+  return Math.max(baseSize, Math.min(baseSize + 30, baseSize + textLength * 1.15 + childCount * 1.8));
+}
+
+function calculateMindMapNodeSize(name, baseWidth, height) {
+  const textLength = Array.from(String(name || "")).length;
+  return [Math.max(baseWidth, Math.min(210, 32 + textLength * 12)), height];
+}
+
+function renderGraphDependencies() {
+  const target = document.getElementById("graphDependencies");
+  if (!target) return;
+  const moduleNames = new Map(graphState.modules.map((module) => [module.id, module.name]));
+  if (!graphState.dependencies.length) {
+    target.className = "dependency-list empty-state";
+    target.textContent = "后端未返回模块依赖关系。";
+    return;
+  }
+  target.className = "dependency-list";
+  target.innerHTML = graphState.dependencies.map((dependency) => `
+    <div>
+      <strong>${escapeHtml(moduleNames.get(dependency.source) || dependency.source.replace(/^module-/, ""))}</strong>
+      <span>→</span>
+      <strong>${escapeHtml(moduleNames.get(dependency.target) || dependency.target.replace(/^module-/, ""))}</strong>
+      <small>${escapeHtml(dependency.label)}</small>
+    </div>
+  `).join("");
 }
 
 function buildDependencyLink(dependency) {
@@ -1778,7 +1849,8 @@ function showGraphNodeDetail(node) {
 
   const nodeId = node.nodeId || node.id || "无";
   const searchQuery = node.searchQuery || node.name || "无";
-  document.getElementById("graphDetailPrereq").textContent = `类型：${getTypeLabel(node.type || node.level)} · node_id：${nodeId}`;
+  const chapterText = node.chapter ? `章节：${node.chapter} · ` : "";
+  document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)} · node_id：${nodeId}`;
   document.getElementById("graphDetailConcepts").innerHTML = buildNodeSummaryHtml(node, searchQuery);
 
   if (node.type === "module") {
@@ -2015,6 +2087,7 @@ function getCurrentUserId() {
 
 function setPracticeFilter(filter) {
   practiceState.filter = filter || "all";
+  practiceState.questionIndex[practiceState.mode] = 0;
   document.querySelectorAll(".practice-filter").forEach((button) => {
     button.classList.toggle("active", button.dataset.practiceFilter === practiceState.filter);
   });
@@ -2023,6 +2096,7 @@ function setPracticeFilter(filter) {
 
 function setPracticeMode(mode) {
   practiceState.mode = mode || "choice";
+  practiceState.questionIndex[practiceState.mode] = 0;
   document.querySelectorAll(".practice-mode").forEach((button) => {
     button.classList.toggle("active", button.dataset.practiceMode === practiceState.mode);
   });
@@ -2056,7 +2130,13 @@ function renderPracticeList() {
     practiceState.filter === "all" || question.module === practiceState.filter
   ));
 
-  target.innerHTML = questions.map((question) => renderPracticeQuestion(question)).join("");
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无选择题。</p>`;
+    updatePracticeScore();
+    return;
+  }
+  const question = getCurrentPracticeQuestion(questions);
+  renderPracticePage(target, questions, renderPracticeQuestion(question));
   target.querySelectorAll(".practice-option").forEach((button) => {
     button.addEventListener("click", () => submitPracticeAnswer(
       button.dataset.questionId,
@@ -2065,6 +2145,36 @@ function renderPracticeList() {
   });
   typesetMath(target);
   updatePracticeScore();
+}
+
+function getCurrentPracticeQuestion(questions) {
+  const mode = practiceState.mode;
+  const lastIndex = Math.max(0, questions.length - 1);
+  const currentIndex = Math.min(Math.max(0, practiceState.questionIndex[mode] || 0), lastIndex);
+  practiceState.questionIndex[mode] = currentIndex;
+  return questions[currentIndex];
+}
+
+function renderPracticePage(target, questions, questionHtml) {
+  const mode = practiceState.mode;
+  const currentIndex = practiceState.questionIndex[mode] || 0;
+  target.innerHTML = `
+    <div class="practice-pager" aria-label="题目切换">
+      <button type="button" data-practice-nav="-1" ${currentIndex === 0 ? "disabled" : ""}>上一题</button>
+      <strong>第 ${currentIndex + 1} / ${questions.length} 题</strong>
+      <button type="button" data-practice-nav="1" ${currentIndex >= questions.length - 1 ? "disabled" : ""}>下一题</button>
+    </div>
+    <div class="practice-viewport">${questionHtml}</div>
+  `;
+  target.querySelectorAll("[data-practice-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      practiceState.questionIndex[mode] = Math.min(
+        questions.length - 1,
+        Math.max(0, currentIndex + Number(button.dataset.practiceNav)),
+      );
+      renderPracticeList();
+    });
+  });
 }
 
 function renderPracticeQuestion(question) {
@@ -2135,30 +2245,29 @@ function renderFillList(target) {
     target.innerHTML = `<p class="empty-state">该类别暂无填空题。</p>`;
     return;
   }
-  target.innerHTML = questions.map((q) => {
-    const result = practiceState.fillResults.get(q.id);
-    const resultHtml = result
-      ? `<div class="practice-explanation ${result.correct ? "correct" : "wrong"}">
-          <strong>${result.correct ? "回答正确" : "回答错误"}</strong>
-          <p>${escapeHtml(result.comment || "")}</p>
-          <p class="muted-line">标准答案：${escapeHtml(result.reference || "")}</p>
-        </div>`
-      : "";
-    return `
-      <article class="practice-card">
-        <div class="practice-card-header">
-          <span>${escapeHtml(q.moduleName)}</span>
-          <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
-        </div>
-        <h4>${escapeHtml(q.question)}</h4>
-        <div class="fill-answer-row">
-          <input class="fill-input" type="text" placeholder="在此输入你的答案…" data-fill-id="${escapeHtml(q.id)}" />
-          <button class="fill-submit" type="button" data-fill-submit="${escapeHtml(q.id)}">提交</button>
-        </div>
-        ${resultHtml}
-      </article>
-    `;
-  }).join("");
+  const q = getCurrentPracticeQuestion(questions);
+  const result = practiceState.fillResults.get(q.id);
+  const resultHtml = result
+    ? `<div class="practice-explanation ${result.correct ? "correct" : "wrong"}">
+        <strong>${result.correct ? "回答正确" : "回答错误"}</strong>
+        <p>${escapeHtml(result.comment || "")}</p>
+        <p class="muted-line">标准答案：${escapeHtml(result.reference || "")}</p>
+      </div>`
+    : "";
+  renderPracticePage(target, questions, `
+    <article class="practice-card">
+      <div class="practice-card-header">
+        <span>${escapeHtml(q.moduleName)}</span>
+        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+      </div>
+      <h4>${escapeHtml(q.question)}</h4>
+      <div class="fill-answer-row">
+        <input class="fill-input" type="text" placeholder="在此输入你的答案…" data-fill-id="${escapeHtml(q.id)}" />
+        <button class="fill-submit" type="button" data-fill-submit="${escapeHtml(q.id)}">提交</button>
+      </div>
+      ${resultHtml}
+    </article>
+  `);
   target.querySelectorAll(".fill-submit").forEach((button) => {
     button.addEventListener("click", () => submitFillAnswer(button.dataset.fillSubmit));
   });
@@ -2238,7 +2347,8 @@ function renderProofList(target) {
     target.innerHTML = `<p class="empty-state">该类别暂无证明题。</p>`;
     return;
   }
-  target.innerHTML = questions.map((q) => `
+  const q = getCurrentPracticeQuestion(questions);
+  renderPracticePage(target, questions, `
     <article class="practice-card proof-card" data-proof-id="${escapeHtml(q.id)}">
       <div class="practice-card-header">
         <span>${escapeHtml(q.moduleName)}</span>
@@ -2247,7 +2357,7 @@ function renderProofList(target) {
       <h4>${escapeHtml(q.question)}</h4>
       <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
       <div class="proof-action-row">
-        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">📷 拍照上传</label>
+        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">拍照上传</label>
         <input id="proof-file-${escapeHtml(q.id)}" class="proof-file-input" type="file"
                accept="image/*" capture="environment"
                data-proof-upload="${escapeHtml(q.id)}" />
@@ -2263,7 +2373,7 @@ function renderProofList(target) {
         <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" hidden></div>
       </div>
     </article>
-  `).join("");
+  `);
   target.querySelectorAll(".proof-file-input").forEach((input) => {
     input.addEventListener("change", () => handleProofPhoto(input.dataset.proofUpload, input.files[0]));
   });
@@ -2426,22 +2536,35 @@ async function loadLearningReport(options = {}) {
   }
 
   try {
-    const response = await fetchLearningReport(userId);
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || "学情报告请求失败");
-    }
+    const [reportResponse, profileResponse] = await Promise.all([
+      fetchLearningReport(userId),
+      authenticatedFetch(`/api/learning/ability-profile?user_id=${encodeURIComponent(userId)}`),
+    ]);
+    const [data, profile] = await Promise.all([
+      reportResponse.json().catch(() => ({})),
+      profileResponse.json().catch(() => ({})),
+    ]);
+    if (!reportResponse.ok) throw new Error(readApiError(data, "学情报告请求失败"));
+    if (!profileResponse.ok) throw new Error(readApiError(profile, "能力画像请求失败"));
 
-    const report = normalizeLearningReport(data);
+    const report = normalizeLearningReport({
+      ...data,
+      ability_profile: profile,
+      module_scores: profile.radar_data,
+      weak_nodes: profile.weak_nodes,
+    });
     renderLearningReport(report);
-    await loadRecommendedLearningPath(report);
+    await Promise.all([
+      loadRecommendedLearningPath(report),
+      loadLearningTimeline(userId),
+    ]);
   } catch (error) {
-    const report = buildLocalLearningReport();
-    renderLearningReport(report);
-    await loadRecommendedLearningPath(report);
-    if (!options.silent) {
-      chartBox.insertAdjacentHTML("beforeend", `<p class="data-source-note">学情 API 尚未接入，当前使用本地练习记录。</p>`);
-    }
+    if (options.silent) return;
+    learningState.report = null;
+    chartBox.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    weakBox.innerHTML = `<p class="error">无法读取真实能力画像。</p>`;
+    pathBox.innerHTML = `<p class="error">路径接口暂不可用。</p>`;
+    document.getElementById("learningTimeline").innerHTML = `<p class="error">做题历史读取失败。</p>`;
   }
 }
 
@@ -2536,6 +2659,10 @@ function renderLearningReport(report) {
   learningState.report = report;
   graphState.masteryByNode = new Map(allNodes.map((node) => [node.node_id, node]));
 
+  const overallScore = Number(report.ability_profile?.overall_score ?? 0);
+  document.getElementById("abilityOverallScore").textContent = Number.isFinite(overallScore)
+    ? overallScore.toFixed(1)
+    : "0";
   document.getElementById("masteredCount").textContent = mastered.length;
   document.getElementById("weakCount").textContent = weak.length;
   document.getElementById("unlearnedCount").textContent = unlearned.length;
@@ -3153,6 +3280,193 @@ function formatDateTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+async function loadGradingQuestions() {
+  const type = document.getElementById("gradingQuestionType").value;
+  const select = document.getElementById("gradingQuestionSelect");
+  select.innerHTML = '<option value="">正在读取结构化题库...</option>';
+  try {
+    const data = await fetchApiJson(`/api/kb/structured-questions?type=${encodeURIComponent(type)}&limit=50`);
+    gradingState.questions = Array.isArray(data.questions) ? data.questions : [];
+    select.innerHTML = gradingState.questions.length
+      ? gradingState.questions.map((question, index) => `<option value="${index}">${escapeHtml(question.question).slice(0, 72)}</option>`).join("")
+      : '<option value="">该类型暂无结构化题目</option>';
+    gradingState.loaded = true;
+    if (gradingState.questions.length) {
+      select.value = "0";
+      selectGradingQuestion();
+    }
+  } catch (error) {
+    gradingState.questions = [];
+    select.innerHTML = `<option value="">题库读取失败：${escapeHtml(error.message)}</option>`;
+  }
+}
+
+function selectGradingQuestion() {
+  const index = Number(document.getElementById("gradingQuestionSelect").value);
+  const question = gradingState.questions[index];
+  if (!question) return;
+  gradingState.selectedQuestion = question;
+  gradingState.startedAt = Date.now();
+  document.getElementById("gradingQuestion").value = question.question || "";
+  document.getElementById("gradingReference").value = question.answer || "";
+  document.getElementById("gradingKp").value = question.kp || "general";
+  document.getElementById("gradingModule").value = getGradingModule(question.kp);
+  document.getElementById("gradingStudentAnswer").value = "";
+  resetGradingResult();
+}
+
+function getGradingModule(kp = "") {
+  const value = String(kp);
+  if (/graph|connect|hamilton|tree|color|digraph/.test(value)) return "图论";
+  if (/set|function|cardinality|ie-/.test(value)) return "集合论";
+  if (/relation/.test(value)) return "关系";
+  if (/pred/.test(value)) return "谓词逻辑";
+  if (/gcd|congruence/.test(value)) return "初等数论";
+  if (/combin|inclusion|gen-func|recurrence|polya/.test(value)) return "组合数学";
+  if (/algebra|group|semigroup/.test(value)) return "代数结构";
+  return "命题逻辑";
+}
+
+function resetGradingResult() {
+  document.getElementById("gradingScore").textContent = "--";
+  const badge = document.getElementById("gradingStatusBadge");
+  badge.className = "mastery-badge unlearned";
+  badge.textContent = "待提交";
+  document.getElementById("gradingDimensions").className = "grading-dimensions empty-state";
+  document.getElementById("gradingDimensions").textContent = "提交后展示五维评分。";
+  document.getElementById("gradingComment").textContent = "等待批阅。";
+  document.getElementById("gradingErrorTypes").innerHTML = "<span>暂无</span>";
+}
+
+async function submitForGrading(event) {
+  event.preventDefault();
+  const button = document.getElementById("submitGradingButton");
+  const payload = {
+    question: document.getElementById("gradingQuestion").value.trim(),
+    student_answer: document.getElementById("gradingStudentAnswer").value.trim(),
+    reference_answer: document.getElementById("gradingReference").value.trim(),
+    kp: document.getElementById("gradingKp").value.trim(),
+    module: document.getElementById("gradingModule").value.trim(),
+    max_score: Number(document.getElementById("gradingMaxScore").value),
+  };
+  if (!payload.question || !payload.student_answer) return;
+
+  button.disabled = true;
+  button.textContent = "正在按五个维度批阅...";
+  const badge = document.getElementById("gradingStatusBadge");
+  badge.className = "mastery-badge learning";
+  badge.textContent = "批阅中";
+  try {
+    const response = await postJson("/api/grading/grade", payload);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error("批阅引擎尚未合入当前后端，请队员1提供 POST /api/grading/grade");
+      }
+      throw new Error(readApiError(data, `批阅请求失败（${response.status}）`));
+    }
+    renderGradingResult(data);
+    await recordGradingEvent(data, payload);
+  } catch (error) {
+    badge.className = "mastery-badge weak";
+    badge.textContent = "批阅失败";
+    document.getElementById("gradingDimensions").className = "grading-dimensions error-state";
+    document.getElementById("gradingDimensions").textContent = error.message;
+    document.getElementById("gradingComment").textContent = "未生成评分结果，请确认批阅接口与模型服务状态。";
+  } finally {
+    button.disabled = false;
+    button.textContent = "提交智能批阅";
+  }
+}
+
+function renderGradingResult(data) {
+  const score = Number(data.score || 0);
+  const maxScore = Number(data.max_score || document.getElementById("gradingMaxScore").value || 10);
+  const ratio = maxScore ? score / maxScore : 0;
+  document.getElementById("gradingScore").textContent = `${score}/${maxScore}`;
+  const badge = document.getElementById("gradingStatusBadge");
+  badge.className = `mastery-badge ${ratio >= 0.85 ? "mastered" : ratio >= 0.6 ? "learning" : "weak"}`;
+  badge.textContent = ratio >= 0.85 ? "优秀" : ratio >= 0.6 ? "达标" : "需订正";
+
+  const dimensions = Array.isArray(data.dimensions) ? data.dimensions : [];
+  const target = document.getElementById("gradingDimensions");
+  target.className = "grading-dimensions";
+  target.innerHTML = dimensions.length ? dimensions.map((dimension) => {
+    const dimensionScore = Number(dimension.score || 0);
+    const dimensionMax = Number(dimension.max_score || maxScore * Number(dimension.weight || 0) || maxScore);
+    const percent = Math.max(0, Math.min(100, Math.round((dimensionScore / dimensionMax) * 100)));
+    return `<article><div><strong>${escapeHtml(dimension.name || "评分维度")}</strong><span>${dimensionScore}/${Number(dimensionMax.toFixed(2))}</span></div><div class="dimension-track"><span style="width:${percent}%"></span></div></article>`;
+  }).join("") : '<p class="empty-state">接口未返回五维评分明细。</p>';
+  document.getElementById("gradingComment").textContent = data.comment || "批阅完成，暂无补充评语。";
+  const errors = Array.isArray(data.error_types) ? data.error_types : [];
+  document.getElementById("gradingErrorTypes").innerHTML = errors.length
+    ? errors.map((item) => `<span>${escapeHtml(item)}</span>`).join("")
+    : "<span>未发现典型错误</span>";
+}
+
+async function recordGradingEvent(result, payload) {
+  const selected = gradingState.selectedQuestion;
+  const questionType = document.getElementById("gradingQuestionType").value;
+  const maxScore = Number(result.max_score || payload.max_score || 10);
+  const eventPayload = {
+    user_id: getCurrentUserId(),
+    question_id: selected?.id || `manual-${Date.now()}`,
+    question_type: questionType === "calc" ? "calc" : "proof",
+    module: payload.module,
+    node_id: `grading_${payload.kp}`.slice(0, 100),
+    is_correct: maxScore ? Number(result.score || 0) / maxScore >= 0.6 : null,
+    duration_ms: Math.max(0, Date.now() - gradingState.startedAt),
+    answer_text: payload.student_answer,
+  };
+  try {
+    const response = await postJson("/api/learning/events", eventPayload);
+    if (!response.ok) console.warn("批阅事件记录失败：", response.status);
+  } catch (error) {
+    console.warn("批阅事件记录失败：", error);
+  }
+}
+
+async function loadLearningTimeline(userId) {
+  const target = document.getElementById("learningTimeline");
+  target.className = "learning-timeline empty-state";
+  target.textContent = "正在读取做题历史...";
+  try {
+    const data = await fetchApiJson(`/api/learning/events?user_id=${encodeURIComponent(userId)}&limit=30`);
+    renderLearningTimeline(data.events || []);
+  } catch (error) {
+    target.className = "learning-timeline error-state";
+    target.textContent = `做题历史读取失败：${error.message}`;
+  }
+}
+
+function renderLearningTimeline(events) {
+  const target = document.getElementById("learningTimeline");
+  if (!events.length) {
+    target.className = "learning-timeline empty-state";
+    target.textContent = "暂无做题记录。完成自测、考试或大题批阅后，这里会按时间展示真实事件。";
+    return;
+  }
+  const typeNames = { single: "选择题", fill: "填空题", calc: "计算题", proof: "证明题", exam: "考试" };
+  target.className = "learning-timeline";
+  target.innerHTML = events.map((event) => {
+    const resultClass = event.is_correct === true ? "correct" : event.is_correct === false ? "wrong" : "pending";
+    const resultText = event.is_correct === true ? "正确" : event.is_correct === false ? "需巩固" : "待批阅";
+    const duration = Number.isFinite(Number(event.duration_ms))
+      ? `${Math.max(1, Math.round(Number(event.duration_ms) / 1000))} 秒`
+      : "未记录耗时";
+    return `
+      <article class="timeline-event ${resultClass}">
+        <time>${escapeHtml(formatDateTime(event.created_at))}</time>
+        <div>
+          <strong>${escapeHtml(typeNames[event.question_type] || event.question_type)} · ${escapeHtml(event.module)}</strong>
+          <span>${escapeHtml(event.node_id)} · ${escapeHtml(duration)}</span>
+        </div>
+        <span class="timeline-result">${resultText}</span>
+      </article>
+    `;
+  }).join("");
+}
+
 function getModuleNameFromStatus(node) {
   const name = String(node.name || "未分类");
   return name.split(">").map((part) => part.trim()).filter(Boolean)[0] || "未分类";
@@ -3186,31 +3500,54 @@ function renderRecommendedPath(path, nodeNameMap) {
     const name = typeof pathItem === "string"
       ? nodeNameMap.get(nodeId) || nodeId
       : pathItem.node_name || pathItem.name || nodeNameMap.get(nodeId) || nodeId;
+    const action = typeof pathItem === "string" ? "学习" : pathItem.action || "练习";
+    const questions = typeof pathItem === "string"
+      ? []
+      : pathItem.recommended_questions || pathItem.questions || [];
     return `
-      <button class="path-node" type="button" data-node-id="${escapeHtml(nodeId)}" data-node-name="${escapeHtml(name)}">
-        <span>${String(index + 1).padStart(2, "0")}</span>
-        <strong>${escapeHtml(shortenNodeName(name))}</strong>
-      </button>
+      <article class="path-step" data-action="${escapeHtml(action)}">
+        <div class="path-step-head">
+          <span class="path-step-number">${String(pathItem.step || index + 1).padStart(2, "0")}</span>
+          <div><strong>${escapeHtml(shortenNodeName(name))}</strong><small>${escapeHtml(nodeId)}</small></div>
+          <span class="path-action">${escapeHtml(action)}</span>
+        </div>
+        ${pathItem.reason ? `<p>${escapeHtml(pathItem.reason)}</p>` : ""}
+        <div class="path-question-list">
+          ${questions.map((question, questionIndex) => `<button type="button" class="path-question" data-path-index="${index}" data-question-index="${questionIndex}"><span>${escapeHtml(question.stage || `难度 ${question.difficulty || "-"}`)}</span>${escapeHtml(question.content || question.question || "推荐练习")}</button>`).join("")}
+        </div>
+        <button class="path-learn-button" type="button" data-node-id="${escapeHtml(nodeId)}" data-node-name="${escapeHtml(name)}">进入学习</button>
+      </article>
     `;
   }).join("");
   bindLearningNodeButtons(target);
+  target.querySelectorAll(".path-question").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = path[Number(button.dataset.pathIndex)];
+      const questions = item?.recommended_questions || item?.questions || [];
+      const question = questions[Number(button.dataset.questionIndex)];
+      if (!question) return;
+      learningState.currentNodeId = question.node_id || item.node_id;
+      learningState.currentNodeName = item.name || item.node_name || findNodeName(learningState.currentNodeId);
+      switchTab("chat");
+      document.getElementById("questionInput").value = `请引导我完成这道题：${question.content || question.question}`;
+    });
+  });
 }
 
 async function loadRecommendedLearningPath(report) {
   const weakNodes = report.weak.map((node) => node.node_id).filter(Boolean);
   const levels = Object.fromEntries(report.weak.map((node) => [node.node_id, node.level ?? 1]));
-  if (!weakNodes.length) {
-    graphState.recommendedPath = [];
-    return;
-  }
   try {
-    const response = await fetch(`${KB_API_BASE_URL}/kb/learning-path`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ weak_nodes: weakNodes, levels }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "学习路径推荐失败");
+    let response = await authenticatedFetch(`/api/learning/path?user_id=${encodeURIComponent(getCurrentUserId())}`);
+    if (response.status === 404 && weakNodes.length) {
+      response = await fetch(`${KB_API_BASE_URL}/kb/learning-path`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weak_nodes: weakNodes, levels }),
+      });
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "学习路径推荐失败"));
     const path = data.path || data.recommended_path || [];
     graphState.recommendedPath = path.map((item) => typeof item === "string" ? item : item.node_id).filter(Boolean);
     renderRecommendedPath(path, new Map(report.weak.map((node) => [node.node_id, node.name])));
@@ -3218,8 +3555,8 @@ async function loadRecommendedLearningPath(report) {
     renderDashboard(report);
     if (graphState.loaded) renderKnowledgeGraph();
   } catch (error) {
-    graphState.recommendedPath = weakNodes;
-    renderRecommendedPath(weakNodes, new Map(report.weak.map((node) => [node.node_id, node.name])));
+    graphState.recommendedPath = [];
+    document.getElementById("recommendedPath").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -3388,7 +3725,7 @@ function getTypeLabel(type) {
   const labels = {
     overview: "总览",
     module: "模块",
-    concept: "子概念",
+    concept: "章节",
     definition: "定义",
     theorem: "定理",
     example: "例题",
@@ -3422,8 +3759,8 @@ function getGraphNodeStyle(node) {
   return {
     color: colors[status],
     borderColor: status === "weak" ? "#8e211c" : "#ffffff",
-    borderWidth: status === "weak" ? (graphState.weakPulse ? 5 : 2) : 1,
-    shadowBlur: status === "weak" ? (graphState.weakPulse ? 24 : 10) : 4,
+    borderWidth: status === "weak" ? 3 : 1,
+    shadowBlur: status === "weak" ? 12 : 4,
     shadowColor: status === "weak" ? "rgba(196,61,53,.48)" : "rgba(24,50,76,.12)",
   };
 }

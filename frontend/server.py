@@ -17,6 +17,7 @@ FRONTEND_ROUTES = {
     "/relation",
     "/knowledge-graph",
     "/practice",
+    "/grading",
     "/learning",
     "/classes",
     "/exam",

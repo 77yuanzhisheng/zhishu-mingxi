@@ -427,7 +427,7 @@ button:disabled {
 
 .learning-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -502,6 +502,303 @@ button:disabled {
 .learning-node-button span,
 .path-node span {
   color: var(--muted);
+  font-size: 13px;
+}
+
+.learning-history-panel {
+  grid-column: 1 / -1;
+}
+
+.learning-timeline {
+  position: relative;
+  display: grid;
+  gap: 0;
+}
+
+.timeline-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  min-height: 74px;
+  padding: 14px 12px 14px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.timeline-event:last-child {
+  border-bottom: 0;
+}
+
+.timeline-event::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  width: 10px;
+  height: 10px;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: #8495a5;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.timeline-event.correct::before { background: #2f8f67; }
+.timeline-event.wrong::before { background: #c84d3d; }
+.timeline-event.pending::before { background: #d39a16; }
+
+.timeline-event time,
+.timeline-event span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.timeline-event div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.timeline-event strong,
+.timeline-event span {
+  overflow-wrap: anywhere;
+}
+
+.timeline-result {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7fafc;
+}
+
+.path-step {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #5a88a8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.path-step[data-action="复习"] { border-left-color: #d39a16; }
+.path-step[data-action="练习"] { border-left-color: #26729e; }
+.path-step[data-action="挑战"] { border-left-color: #2f8f67; }
+
+.path-step-head {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.path-step-head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.path-step-head small,
+.path-step p {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.path-step p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.path-step-number {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--primary);
+  border-radius: 50%;
+  background: #e7f1f8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.path-action {
+  padding: 4px 7px;
+  color: var(--primary);
+  border-radius: 6px;
+  background: #edf5fb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.path-question-list {
+  display: grid;
+  gap: 7px;
+}
+
+.path-question,
+.path-learn-button {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  text-align: left;
+  border-radius: 6px;
+}
+
+.path-question {
+  color: var(--text);
+  border: 1px solid var(--line);
+  background: #f8fbfd;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.path-question:hover {
+  color: var(--text);
+  background: #edf5fb;
+}
+
+.path-question span {
+  margin-right: 7px;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.path-learn-button {
+  color: var(--primary);
+  text-align: center;
+  border: 1px solid #9ec6de;
+  background: #ffffff;
+}
+
+.grading-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 18px;
+}
+
+.grading-question-toolbar {
+  display: grid;
+  grid-template-columns: auto 130px auto minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.grading-question-toolbar label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.grading-form {
+  display: grid;
+  gap: 12px;
+}
+
+.grading-form textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.65;
+}
+
+.grading-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grading-meta-grid label {
+  display: grid;
+  gap: 7px;
+}
+
+.grading-result-panel {
+  align-self: start;
+}
+
+.grading-score-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.grading-score-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.grading-score-head span {
+  color: var(--muted);
+}
+
+.grading-score-head strong {
+  color: var(--primary);
+  font-size: 32px;
+}
+
+.grading-dimensions {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.grading-dimensions article,
+.grading-dimensions article div:first-child {
+  display: grid;
+  gap: 7px;
+}
+
+.grading-dimensions article div:first-child {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.grading-dimensions article span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dimension-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #e6edf2;
+}
+
+.dimension-track span {
+  display: block;
+  height: 100%;
+  background: #2f8f83;
+}
+
+.grading-feedback {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.grading-feedback h4 {
+  margin: 0 0 9px;
+}
+
+.grading-feedback p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.error-type-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.error-type-list span {
+  padding: 6px 8px;
+  color: #9f352a;
+  border: 1px solid #f2c7bd;
+  border-radius: 6px;
+  background: #fff7f5;
   font-size: 13px;
 }
 
@@ -658,6 +955,43 @@ button:disabled {
   gap: 14px;
 }
 
+.practice-pager {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) 104px;
+  gap: 12px;
+  align-items: center;
+}
+
+.practice-pager strong {
+  color: var(--muted);
+  text-align: center;
+}
+
+.practice-pager button {
+  min-height: 40px;
+  color: var(--primary);
+  border: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.practice-pager button:disabled {
+  color: #9aa8b5;
+  cursor: not-allowed;
+  background: #f2f5f7;
+}
+
+.practice-viewport {
+  height: 520px;
+  padding-right: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.practice-viewport .practice-card {
+  min-height: 100%;
+  align-content: start;
+}
+
 .practice-card {
   display: grid;
   gap: 14px;
@@ -665,6 +999,41 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+}
+
+.dependency-list {
+  display: grid;
+  max-height: 220px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.dependency-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #d5e2eb;
+  border-radius: 7px;
+  background: #f6fafc;
+}
+
+.dependency-list strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.dependency-list span {
+  color: #d97706;
+  font-weight: 800;
+}
+
+.dependency-list small {
+  grid-column: 1 / -1;
+  color: var(--muted);
 }
 
 .practice-card.correct {
@@ -861,6 +1230,40 @@ button:hover,
 }
 
 .panel.active {
+  display: block;
+}
+
+.unified-tool-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eaf0f4;
+}
+
+.unified-tool-tab {
+  min-height: 44px;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.unified-tool-tab:hover,
+.unified-tool-tab.active {
+  color: #ffffff;
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.unified-tool-view {
+  display: none;
+}
+
+.unified-tool-view.active {
   display: block;
 }
 
@@ -1899,6 +2302,7 @@ th {
   .dashboard-grid,
   .class-layout,
   .exam-layout,
+  .grading-layout,
   .extended-tools-layout,
   .extended-tool-form {
     grid-template-columns: 1fr;
@@ -1965,12 +2369,32 @@ th {
 
   .learning-toolbar,
   .learning-summary-grid,
+  .grading-question-toolbar,
+  .grading-meta-grid,
   .practice-options,
   .inline-form,
   .exam-module-grid,
   .exam-options,
   .teacher-exam-form {
     grid-template-columns: 1fr;
+  }
+
+  .practice-pager {
+    grid-template-columns: 88px minmax(0, 1fr) 88px;
+    gap: 8px;
+  }
+
+  .practice-viewport {
+    height: 460px;
+  }
+
+  .timeline-event {
+    grid-template-columns: 1fr auto;
+    gap: 6px 12px;
+  }
+
+  .timeline-event time {
+    grid-column: 1 / -1;
   }
 
   .teacher-exam-form button {
