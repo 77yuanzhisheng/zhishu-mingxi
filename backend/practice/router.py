@@ -435,3 +435,109 @@ def grade_fill(req: GradeFillRequest) -> Dict:
         }
     except Exception as exc:
         return {"ok": False, "error": f"判定失败: {str(exc)[:120]}"}
+
+
+class GradeProofRequest(BaseModel):
+    question_id: str = Field(..., description="证明题 id（如 e1_proof_1）")
+    student_answer: str = Field(..., description="学生证明文本（OCR 识别结果）")
+    max_score: float = Field(default=10.0, description="满分（默认 10 分）")
+
+
+GRADE_PROOF_PROMPT = (
+    "你是一名严谨的离散数学阅卷教师。请按 5 个维度给学生的证明/解答评分，满分 {max_score} 分：\n"
+    "- 结论正确性（权重 20%）\n"
+    "- 关键推理步骤（权重 35%）\n"
+    "- 逻辑严密性（权重 25%）\n"
+    "- 定义/定理使用准确性（权重 10%）\n"
+    "- 表达与符号规范（权重 10%）\n\n"
+    "{guide_block}"
+    "【题目】\n{q}\n\n"
+    "【标准答案】\n{a}\n\n"
+    "【学生答案】\n{s}\n\n"
+    '请只输出一个 JSON 对象（不要其他文字）：\n'
+    '{{"total": 0到{max_score}的分数, '
+    '"dimensions": {{"结论正确性": 分数, "关键推理步骤": 分数, "逻辑严密性": 分数, '
+    '"定义/定理使用准确性": 分数, "表达与符号规范": 分数}}, '
+    '"error_types": ["循环论证"或"跳步"或"错用定理"或"符号错误"或"结论错误"等，没有则[]], '
+    '"comment": "2-4 句评语，指出得分点和失分点"}}'
+)
+
+
+def _score_to_dimensions(total: float, max_score: float) -> Dict:
+    """把 5 维具体分（由 LLM 给出，按 max_score 归一化）。"""
+    return {
+        "结论正确性": total * 0.20,
+        "关键推理步骤": total * 0.35,
+        "逻辑严密性": total * 0.25,
+        "定义/定理使用准确性": total * 0.10,
+        "表达与符号规范": total * 0.10,
+    }
+
+
+@router.post("/grade-proof")
+def grade_proof(req: GradeProofRequest) -> Dict:
+    """证明题自动批阅：大模型按 5 维对照标准答案 + 知识点评分要点评分。
+
+    返回: {ok, score, max_score, dimensions, error_types, comment, reference, seconds}
+    """
+    item = _find_teacher_item(req.question_id)
+    if not item:
+        return {"ok": False, "error": "题目不存在"}
+    student = req.student_answer.strip()
+    if not student:
+        return {"ok": False, "error": "答案为空"}
+    max_score = max(1.0, float(req.max_score))
+
+    # 评分要点（从知识库 grading-guide 取该知识点的判定点/常见错误）
+    guide_block = ""
+    try:
+        from backend.kb.structured import GRADING_GUIDE
+        guide = GRADING_GUIDE.get(item.get("kp", ""))
+        if guide:
+            guide_block = (
+                f"【本知识点评分要点：{guide['name']}】\n"
+                f"- 评分重点：{guide['focus']}\n"
+                f"- 关键判定点：{'; '.join(guide['checks'])}\n"
+                f"- 常见错误（命中则扣分）：{'; '.join(guide['common_errors'])}\n\n"
+            )
+    except Exception as exc:
+        logger.warning("评分要点加载失败: %s", exc)
+
+    try:
+        from backend.chat.llm import OpenAICompatibleLLM
+        llm = OpenAICompatibleLLM()
+        prompt = GRADE_PROOF_PROMPT.format(
+            max_score=max_score, guide_block=guide_block,
+            q=item["q"], a=item["a"], s=student,
+        )
+        t0 = time.time()
+        judge = llm.generate([{"role": "user", "content": prompt}])
+        start = judge.find("{")
+        end = judge.rfind("}")
+        parsed = {}
+        if start != -1 and end != -1:
+            try:
+                parsed = json.loads(judge[start:end + 1])
+            except json.JSONDecodeError:
+                parsed = {}
+
+        raw_total = parsed.get("total")
+        try:
+            score = float(raw_total)
+        except (TypeError, ValueError):
+            score = 0.0
+        score = max(0.0, min(score, max_score))
+
+        dims = parsed.get("dimensions") or _score_to_dimensions(score, max_score)
+        return {
+            "ok": True,
+            "score": round(score, 1),
+            "max_score": max_score,
+            "dimensions": dims,
+            "error_types": parsed.get("error_types", []),
+            "comment": parsed.get("comment", ""),
+            "reference": item["a"],
+            "seconds": round(time.time() - t0, 1),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"批阅失败: {str(exc)[:120]}"}
