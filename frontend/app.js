@@ -2329,58 +2329,10 @@ async function submitProofAnswer(questionId) {
   const answerBox = document.querySelector(`.proof-answer[data-proof-answer="${CSS.escape(questionId)}"]`);
   if (answerBox) {
     answerBox.hidden = false;
-    answerBox.innerHTML = `<p class="muted-line">AI 批阅中…</p>`;
-  }
-  // 大模型自动批阅（5 维评分）
-  try {
-    const response = await postJson("/api/practice/grade-proof", {
-      question_id: questionId,
-      student_answer: answerText,
-      max_score: 10,
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || data.detail || "批阅失败");
-    }
-    if (answerBox) {
-      answerBox.hidden = false;
-      const dims = data.dimensions || {};
-      const dimRows = Object.entries(dims)
-        .map(([name, score]) => {
-          const num = Number(score) || 0;
-          return `<li><span>${escapeHtml(name)}</span><strong>${num.toFixed(1)}</strong></li>`;
-        })
-        .join("");
-      const errors = Array.isArray(data.error_types) && data.error_types.length
-        ? `<p class="muted-line">识别的错误：${data.error_types.map(escapeHtml).join("、")}</p>`
-        : "";
-      answerBox.innerHTML = `
-        <div class="grading-result">
-          <div class="grading-score">
-            <span>AI 批阅得分</span>
-            <strong>${Number(data.score).toFixed(1)}<small>/ ${Number(data.max_score).toFixed(0)}</small></strong>
-          </div>
-          <ul class="grading-dims">${dimRows}</ul>
-          <p>${escapeHtml(data.comment || "")}</p>
-          ${errors}
-          <details>
-            <summary>查看标准答案</summary>
-            <p>${escapeHtml(data.reference || question.answer)}</p>
-          </details>
-        </div>
-      `;
-      typesetMath(answerBox);
-    }
-    reportPracticeEvent(question, Number(data.score) >= 6, answerText, "proof");
-    return;
-  } catch (error) {
-    window.alert(`批阅失败：${error.message}`);
-  }
-  if (answerBox) {
-    answerBox.hidden = false;
     answerBox.innerHTML = `
       <div class="practice-explanation">
-        <strong>已提交（批阅服务暂不可用，展示标准答案对照）</strong>
+        <strong>已提交（自动批阅引擎接入中）</strong>
+        <p class="muted-line">识别内容已保存，当前展示标准答案供对照：</p>
         <p>${escapeHtml(question.answer)}</p>
       </div>
     `;
