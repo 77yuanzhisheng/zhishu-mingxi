@@ -221,6 +221,23 @@ CREATE TABLE IF NOT EXISTS grading_results (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS learning_path_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    path_id TEXT NOT NULL UNIQUE,
+    version INTEGER NOT NULL,
+    strategy TEXT NOT NULL,
+    data_quality TEXT NOT NULL CHECK (json_valid(data_quality)),
+    diagnosis TEXT NOT NULL CHECK (json_valid(diagnosis)),
+    stages TEXT NOT NULL CHECK (json_valid(stages)),
+    ai_notes TEXT NOT NULL CHECK (json_valid(ai_notes)),
+    source_summary TEXT NOT NULL CHECK (json_valid(source_summary)),
+    status TEXT NOT NULL,
+    fallback_reason TEXT,
+    generated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, version)
+);
 CREATE INDEX IF NOT EXISTS idx_users_class_id ON users(class_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
@@ -241,6 +258,8 @@ CREATE INDEX IF NOT EXISTS idx_grading_results_question_id
     ON grading_results(question_id);
 CREATE INDEX IF NOT EXISTS idx_grading_results_created_at
     ON grading_results(created_at);
+CREATE INDEX IF NOT EXISTS idx_learning_path_snapshots_user_version
+    ON learning_path_snapshots(user_id, version);
 """
 
 
