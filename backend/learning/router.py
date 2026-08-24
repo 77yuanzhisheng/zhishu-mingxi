@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
+from backend.learning.path_router import router as path_router
 from backend.learning.models import (
     AbilityProfile,
     AnswerEvent,
@@ -24,7 +25,8 @@ from backend.learning.service import (
 )
 
 
-router = APIRouter(prefix="/api/learning", tags=["学情分析"])
+router = APIRouter(prefix="/api/learning", tags=["learning analytics"])
+router.include_router(path_router)
 
 
 @router.post(
@@ -44,7 +46,7 @@ def create_answer_event_endpoint(request: AnswerEventCreate) -> AnswerEvent:
 @router.get(
     "/events",
     response_model=AnswerEventsResponse,
-    summary="获取用户做题历史时间线",
+    summary="Get answer-event history",
 )
 def answer_events_endpoint(
     user_id: int = Query(..., gt=0),
@@ -77,7 +79,7 @@ def answer_events_endpoint(
     summary="获取结合问答与做题证据的六模块能力画像",
 )
 def ability_profile_endpoint(
-    user_id: int = Query(..., gt=0, description="用户 ID"),
+    user_id: int = Query(..., gt=0, description="User ID"),
 ) -> AbilityProfile:
     try:
         return get_ability_profile(user_id)
@@ -88,7 +90,7 @@ def ability_profile_endpoint(
 @router.post(
     "/update-mastery",
     response_model=MasteryUpdateResponse,
-    summary="记录答题结果并更新知识点掌握度",
+    summary="Record one mastery update",
 )
 def update_mastery_endpoint(request: MasteryUpdateRequest) -> MasteryUpdateResponse:
     try:
@@ -103,7 +105,7 @@ def update_mastery_endpoint(request: MasteryUpdateRequest) -> MasteryUpdateRespo
     summary="获取结合问答与做题证据的用户学情报告",
 )
 def learning_report_endpoint(
-    user_id: int = Query(..., gt=0, description="用户 ID"),
+    user_id: int = Query(..., gt=0, description="User ID"),
 ) -> LearningReport:
     try:
         return get_learning_report(user_id)
