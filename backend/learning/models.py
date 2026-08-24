@@ -79,15 +79,50 @@ class RadarModule(BaseModel):
     practiced_nodes: int = Field(ge=0)
 
 
+NodeLearningStatus = Literal["未评估", "理解中", "薄弱", "掌握"]
+
+
+class NodeLearningEvidence(BaseModel):
+    answered_questions: int = Field(ge=0)
+    graded_answers: int = Field(ge=0)
+    correct_answers: int = Field(ge=0)
+    pending_review: int = Field(ge=0)
+    chat_interactions: int = Field(ge=0)
+    repeated_chat_interactions: int = Field(ge=0)
+
+
+class NodeLearningInsight(BaseModel):
+    node_id: str
+    module: str
+    status: NodeLearningStatus
+    mastery_level: int = Field(ge=0, le=4)
+    question_count: int = Field(ge=0)
+    graded_question_count: int = Field(ge=0)
+    correct_count: int = Field(ge=0)
+    pending_review_count: int = Field(ge=0)
+    accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    chat_count: int = Field(ge=0)
+    repeated_chat_count: int = Field(ge=0)
+    last_chat_at: datetime | None = None
+    last_practice_at: datetime | None = None
+    last_interaction_at: datetime | None = None
+    evidence: NodeLearningEvidence
+
+
 class LearningReport(BaseModel):
     user_id: int
     node_mastery: list[MasteryDetail]
     weak_nodes: list[str]
     radar_data: list[RadarModule]
     summary: dict[str, int | float]
+    node_insights: list[NodeLearningInsight] = Field(default_factory=list)
+    understanding_nodes: list[str] = Field(default_factory=list)
+    mastered_nodes: list[str] = Field(default_factory=list)
+    recent_chat_nodes: list[str] = Field(default_factory=list)
 
 
 AnswerQuestionType = Literal["single", "fill", "calc", "proof", "exam"]
+AbilityLevel = Literal["未评估", "优秀", "良好", "及格", "薄弱"]
 
 
 class AnswerEventCreate(BaseModel):
@@ -146,9 +181,12 @@ class AnswerEventsResponse(BaseModel):
 class AbilityModule(BaseModel):
     module: str
     score: float = Field(ge=0, le=100)
+    level: AbilityLevel
     mastery_ratio: float = Field(ge=0, le=1)
     accuracy: float = Field(ge=0, le=1)
     practice_score: float = Field(ge=0, le=1)
+    question_count: int = Field(default=0, ge=0)
+    chat_count: int = Field(default=0, ge=0)
 
 
 class AbilityRadarItem(BaseModel):
@@ -175,9 +213,14 @@ class AbilityTrendItem(BaseModel):
 class AbilityProfile(BaseModel):
     user_id: int
     overall_score: float = Field(ge=0, le=100)
-    level: Literal["优秀", "良好", "及格", "薄弱"]
+    level: AbilityLevel
     modules: list[AbilityModule]
     radar_data: list[AbilityRadarItem]
     weak_nodes: list[AbilityWeakNode]
     trend: list[AbilityTrendItem]
     calculation_note: str
+    node_insights: list[NodeLearningInsight] = Field(default_factory=list)
+    understanding_nodes: list[str] = Field(default_factory=list)
+    mastered_nodes: list[str] = Field(default_factory=list)
+    recent_chat_nodes: list[str] = Field(default_factory=list)
+    chat_interaction_count: int = Field(default=0, ge=0)

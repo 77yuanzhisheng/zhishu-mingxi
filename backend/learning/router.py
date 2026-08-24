@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/learning", tags=["学情分析"])
 @router.post(
     "/events",
     response_model=AnswerEvent,
-    summary="记录一条做题事件（不自动更新掌握度）",
+    summary="记录做题结果，并在已判定时更新掌握度",
 )
 def create_answer_event_endpoint(request: AnswerEventCreate) -> AnswerEvent:
     try:
@@ -74,7 +74,7 @@ def answer_events_endpoint(
 @router.get(
     "/ability-profile",
     response_model=AbilityProfile,
-    summary="获取用户六模块能力画像",
+    summary="获取结合问答与做题证据的六模块能力画像",
 )
 def ability_profile_endpoint(
     user_id: int = Query(..., gt=0, description="用户 ID"),
@@ -100,7 +100,7 @@ def update_mastery_endpoint(request: MasteryUpdateRequest) -> MasteryUpdateRespo
 @router.get(
     "/report",
     response_model=LearningReport,
-    summary="获取用户学情报告",
+    summary="获取结合问答与做题证据的用户学情报告",
 )
 def learning_report_endpoint(
     user_id: int = Query(..., gt=0, description="用户 ID"),

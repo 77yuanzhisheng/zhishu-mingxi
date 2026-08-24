@@ -17,7 +17,12 @@ from backend.chat.router import get_chat_service, router as chat_router
 from backend.chat.service import ChatService
 from backend.learning.database import connection_scope
 from backend.learning.router import router as learning_router
-from backend.learning.service import create_user
+from backend.learning.service import (
+    create_answer_event,
+    create_user,
+    get_ability_profile,
+    get_learning_report,
+)
 
 
 class RecordingLLM(LLMClient):
@@ -201,3 +206,140 @@ def test_chat_router_and_existing_learning_api_work_together(tmp_path, monkeypat
             "SELECT node_ids FROM messages ORDER BY id LIMIT 1"
         ).fetchone()
     assert json.loads(stored["node_ids"]) == ["st_01_01"]
+
+
+def test_explicit_chat_nodes_feed_learning_once_per_user_turn(tmp_path):
+    database_path = tmp_path / "chat-learning.db"
+    user_id = create_user("问答学情学生", database_path=database_path)
+    service, _ = build_service(database_path)
+
+    first = service.chat(
+        ChatRequest(
+            user_id=user_id,
+            message="德摩根律为什么成立？",
+            node_id="pl_02_02",
+            node_ids=["pl_02_02", " pl_02_02 "],
+        )
+    )
+    report = get_learning_report(user_id, database_path)
+    insight = next(item for item in report.node_insights if item.node_id == "pl_02_02")
+
+    assert first.node_ids == ["pl_02_02"]
+    assert insight.chat_count == 1  # assistant message and duplicate IDs do not count
+    assert insight.repeated_chat_count == 0
+    assert insight.question_count == 0
+    assert insight.status == "理解中"
+    assert report.recent_chat_nodes == ["pl_02_02"]
+    with connection_scope(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM node_mastery").fetchone()[0] == 0
+
+    service.chat(
+        ChatRequest(
+            user_id=user_id,
+            session_id=first.session_id,
+            message="我还是没懂，再解释一次",
+            node_id="pl_02_02",
+        )
+    )
+    refreshed = get_learning_report(user_id, database_path)
+    insight = next(item for item in refreshed.node_insights if item.node_id == "pl_02_02")
+    assert insight.chat_count == 2
+    assert insight.repeated_chat_count == 1
+    assert insight.status == "理解中"
+
+
+def test_fused_node_statuses_keep_answers_as_mastery_evidence(tmp_path):
+    database_path = tmp_path / "fused-status.db"
+    user_id = create_user("融合学情学生", database_path=database_path)
+    service, _ = build_service(database_path)
+
+    session_id = None
+    for node_id, rounds in [
+        ("pl_01_01", 1),
+        ("pl_02_02", 1),
+        ("st_01_01", 1),
+        ("rel_01_01", 8),
+    ]:
+        for round_number in range(rounds):
+            response = service.chat(
+                ChatRequest(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=f"询问 {node_id} 第 {round_number + 1} 次",
+                    node_id=node_id,
+                )
+            )
+            session_id = response.session_id
+
+    # One graded result is not enough for a final weak/mastered classification.
+    create_answer_event(
+        user_id=user_id,
+        question_id="insufficient-1",
+        question_type="single",
+        module="命题逻辑",
+        node_id="pl_01_01",
+        is_correct=True,
+        duration_ms=100,
+        answer_text="A",
+        database_path=database_path,
+    )
+    for index in range(3):
+        for node_id, correct in [
+            ("pl_02_02", False),
+            ("st_01_01", True),
+            ("rel_01_01", False),
+        ]:
+            create_answer_event(
+                user_id=user_id,
+                question_id=f"{node_id}-{index}",
+                question_type="single",
+                module="测试传入模块",
+                node_id=node_id,
+                is_correct=correct,
+                duration_ms=100,
+                answer_text="A",
+                database_path=database_path,
+            )
+    create_answer_event(
+        user_id=user_id,
+        question_id="pending-1",
+        question_type="proof",
+        module="图论",
+        node_id="gt_01_01",
+        is_correct=None,
+        duration_ms=100,
+        answer_text="待批阅",
+        database_path=database_path,
+    )
+
+    profile = get_ability_profile(user_id, database_path)
+    insights = {item.node_id: item for item in profile.node_insights}
+
+    assert insights["pl_01_01"].status == "理解中"
+    assert insights["pl_02_02"].status == "薄弱"
+    assert insights["st_01_01"].status == "掌握"
+    assert insights["rel_01_01"].chat_count == 8
+    assert insights["rel_01_01"].status == "薄弱"
+    assert insights["gt_01_01"].status == "理解中"
+    assert insights["gt_01_01"].graded_question_count == 0
+    assert insights["gt_01_01"].pending_review_count == 1
+    assert profile.weak_nodes[0].node_id in {"pl_02_02", "rel_01_01"}
+    assert set(profile.mastered_nodes) == {"st_01_01"}
+
+
+def test_zero_evidence_mastery_row_is_unassessed(tmp_path):
+    database_path = tmp_path / "unassessed-node.db"
+    user_id = create_user("未评估学生", database_path=database_path)
+    with connection_scope(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO node_mastery (
+                user_id, node_id, level, correct_count, total_count, last_practice_time
+            ) VALUES (?, ?, 0, 0, 0, NULL)
+            """,
+            (user_id, "fl_01_01"),
+        )
+
+    report = get_learning_report(user_id, database_path)
+    assert report.node_insights[0].status == "未评估"
+    assert report.weak_nodes == []
