@@ -221,6 +221,44 @@ print(6)
 class ExtendedApiTests(unittest.TestCase):
     client = TestClient(app)
 
+    def test_unified_catalog_contains_all_tools(self):
+        response = self.client.get("/tools")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total"], 9)
+        self.assertEqual(
+            {item["name"] for item in data["tools"]},
+            {
+                "truth-table",
+                "relation-properties",
+                "formula-simplify",
+                "normal-forms",
+                "set-operation",
+                "hasse-diagram",
+                "dijkstra",
+                "bipartite",
+                "code-generate",
+            },
+        )
+
+    def test_unified_runner_dispatches_to_selected_tool(self):
+        response = self.client.post(
+            "/tools/run",
+            json={"tool": "truth-table", "params": {"expression": "p -> q"}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["result"]["rows"]), 4)
+
+    def test_unified_runner_rejects_unknown_tool(self):
+        response = self.client.post(
+            "/tools/run",
+            json={"tool": "not-a-tool", "params": {}},
+        )
+
+        self.assertEqual(response.status_code, 404)
+
     def test_common_request_and_response_shape(self):
         response = self.client.post(
             "/tools/formula-simplify",
