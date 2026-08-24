@@ -32,3 +32,6 @@ scripts/*.pid
 
 # 文档输出
 *.docx
+
+# Local calibration checks and their SQLite databases
+.grading-*/

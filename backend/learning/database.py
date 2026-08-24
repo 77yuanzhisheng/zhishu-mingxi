@@ -192,6 +192,35 @@ CREATE TABLE IF NOT EXISTS share_requests (
     CHECK (requester_id != target_user_id)
 );
 
+CREATE TABLE IF NOT EXISTS grading_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id TEXT,
+    question_type TEXT NOT NULL DEFAULT 'direct',
+    question TEXT NOT NULL,
+    student_answer TEXT NOT NULL,
+    reference_answer TEXT NOT NULL,
+    knowledge_points TEXT NOT NULL CHECK (json_valid(knowledge_points)),
+    grading_guides TEXT NOT NULL CHECK (json_valid(grading_guides)),
+    dimension_scores TEXT NOT NULL CHECK (json_valid(dimension_scores)),
+    total_score REAL NOT NULL CHECK (total_score BETWEEN 0 AND 100),
+    error_types TEXT NOT NULL CHECK (json_valid(error_types)),
+    evidence TEXT NOT NULL CHECK (json_valid(evidence)),
+    feedback TEXT NOT NULL,
+    analysis_json TEXT NOT NULL CHECK (json_valid(analysis_json)),
+    scoring_json TEXT NOT NULL CHECK (json_valid(scoring_json)),
+    review_json TEXT NOT NULL CHECK (json_valid(review_json)),
+    prompt_version TEXT NOT NULL,
+    llm_provider TEXT NOT NULL,
+    llm_model TEXT NOT NULL,
+    latency_ms INTEGER NOT NULL CHECK (latency_ms >= 0),
+    analysis_attempts INTEGER NOT NULL CHECK (analysis_attempts BETWEEN 1 AND 2),
+    scoring_attempts INTEGER NOT NULL CHECK (scoring_attempts BETWEEN 1 AND 2),
+    review_attempts INTEGER NOT NULL CHECK (review_attempts BETWEEN 1 AND 2),
+    needs_manual_review INTEGER NOT NULL DEFAULT 0 CHECK (needs_manual_review IN (0, 1)),
+    review_reasons TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(review_reasons)),
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_class_id ON users(class_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
@@ -208,6 +237,10 @@ CREATE INDEX IF NOT EXISTS idx_exam_answers_submission_id ON exam_answers(submis
 CREATE INDEX IF NOT EXISTS idx_share_requests_target ON share_requests(target_user_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_share_requests_unique_pending
     ON share_requests(requester_id, target_user_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_grading_results_question_id
+    ON grading_results(question_id);
+CREATE INDEX IF NOT EXISTS idx_grading_results_created_at
+    ON grading_results(created_at);
 """
 
 
@@ -229,9 +262,19 @@ def _migrate_users_auth_columns(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_grading_result_columns(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(grading_results)").fetchall()}
+    if "question_type" not in columns:
+        connection.execute("ALTER TABLE grading_results ADD COLUMN question_type TEXT NOT NULL DEFAULT 'direct'")
+    if "needs_manual_review" not in columns:
+        connection.execute("ALTER TABLE grading_results ADD COLUMN needs_manual_review INTEGER NOT NULL DEFAULT 0")
+    if "review_reasons" not in columns:
+        connection.execute("ALTER TABLE grading_results ADD COLUMN review_reasons TEXT NOT NULL DEFAULT '[]'")
+
 def init_database(database_path: str | Path | None = None) -> None:
     """Create tables and apply additive migrations without rebuilding existing data."""
 
     with connection_scope(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
         _migrate_users_auth_columns(connection)
+        _migrate_grading_result_columns(connection)
