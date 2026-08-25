@@ -200,6 +200,13 @@ def test_management_http_routes_and_permission_status(tmp_path, monkeypatch):
     app.include_router(management_router)
     client = TestClient(app)
 
+    ensured = client.post(
+        "/api/user/ensure",
+        json={"user_id": 99, "name": "前端演示用户", "role": "student"},
+    )
+    assert ensured.status_code == 200
+    assert ensured.json()["id"] == 99
+
     created = client.post(
         "/api/class/create", json={"teacher_id": teacher_id, "name": "HTTP班级"}
     )
@@ -223,6 +230,7 @@ def test_management_http_routes_and_permission_status(tmp_path, monkeypatch):
 
     paths = app.openapi()["paths"]
     assert {
+        "/api/user/ensure",
         "/api/class/create",
         "/api/class/join",
         "/api/class/{class_id}/students",

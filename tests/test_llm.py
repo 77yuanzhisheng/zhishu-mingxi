@@ -49,3 +49,74 @@ def test_env_file_overrides_stale_process_key_and_builds_bearer_header(
     assert "key_exists=True" in caplog.text
     assert "key_length=23" in caplog.text
     assert "key_prefix=sk-cur" in caplog.text
+
+
+def test_transient_timeout_is_retried(tmp_path, monkeypatch):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "OPENAI_BASE_URL=https://example.test/v1\n"
+        "OPENAI_CHAT_MODEL=test-model\n"
+        "OPENAI_API_KEY=test-key\n"
+        "LLM_MAX_RETRIES=2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    attempts = 0
+
+    def fake_post(url, *, headers, json, timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadTimeout("temporary timeout", request=httpx.Request("POST", url))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "重试成功"}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr("backend.chat.llm.time.sleep", lambda _: None)
+    llm = OpenAICompatibleLLM()
+
+    assert llm.generate([{"role": "user", "content": "你好"}]) == "重试成功"
+    assert attempts == 2
+
+
+def test_stream_parses_openai_sse_deltas(tmp_path, monkeypatch):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "OPENAI_BASE_URL=https://example.test/v1\n"
+        "OPENAI_CHAT_MODEL=test-model\n"
+        "OPENAI_API_KEY=test-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    class FakeStreamResponse:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"逐"}}]}'
+            yield 'data: {"choices":[{"delta":{"content":"字"}}]}'
+            yield "data: [DONE]"
+
+    def fake_stream(method, url, *, headers, json, timeout):
+        captured.update(method=method, url=url, payload=json)
+        return FakeStreamResponse()
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    llm = OpenAICompatibleLLM()
+
+    assert list(llm.stream([{"role": "user", "content": "你好"}])) == ["逐", "字"]
+    assert captured["method"] == "POST"
+    assert captured["payload"]["stream"] is True
