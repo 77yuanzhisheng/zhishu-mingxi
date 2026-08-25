@@ -2506,6 +2506,8 @@ async function submitPracticeAnswer(questionId, selectedIndex) {
     });
     localStorage.setItem("learning_events", JSON.stringify(localEvents.slice(-100)));
   }
+  // 同步写入学情事件（填空题/批阅题已上报，选择题补齐：供 path/report/时间线使用）
+  reportPracticeEvent(question, isCorrect, "", "single");
 }
 
 function updatePracticeScore() {
