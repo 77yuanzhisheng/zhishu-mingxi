@@ -6,6 +6,7 @@ from backend.chat.context import prepare_context
 from backend.chat.llm import LLMClient, OpenAICompatibleLLM
 from backend.chat.models import ChatRequest, ChatResponse, ContextStatus
 from backend.chat.rag import RAGAdapter
+from backend.chat.reasoning import build_reasoning_enhancements, evaluate_answer
 from backend.chat.repository import ChatRepository
 
 
@@ -54,15 +55,17 @@ class ChatService:
         )
         prepared = prepare_context(self.repository, session_id)
         references, rag_status = self.rag.search(request.message.strip())
-        llm_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        renh = build_reasoning_enhancements(request.message.strip(), SYSTEM_PROMPT)
+        llm_messages = [{"role": "system", "content": renh.system_prompt}]
         if references:
             knowledge = "\n\n".join(
                 f"[资料{i}] {reference.content[:400]}"
                 for i, reference in enumerate(references, 1)
             )
-            llm_messages.append(
-                {"role": "system", "content": f"可参考的知识库材料：\n{knowledge}"}
-            )
+            knowledge_note = f"可参考的知识库材料：\n{knowledge}"
+            if renh.check_note:
+                knowledge_note += f"\n\n{renh.check_note}"
+            llm_messages.append({"role": "system", "content": knowledge_note})
         llm_messages.extend(prepared.messages)
         answer = self.llm.generate(llm_messages)
         self.repository.add_message(session_id, "assistant", answer, request.node_ids)
@@ -73,6 +76,7 @@ class ChatService:
             references=references,
             node_ids=request.node_ids,
             topic_switch_hint=topic_switch_hint,
+            reasoning=evaluate_answer(answer, request.message.strip(), renh),
             context=ContextStatus(
                 history_messages_used=len(prepared.messages),
                 total_rounds=prepared.total_rounds,

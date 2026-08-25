@@ -1,99 +1,151 @@
+"""符号推理增强测试：题型识别 / 证明计划 / 程序侧符号校验注入。
+
+对应演示「名定理·程序侧符号校验」环节：证明类问题必须在多轮对话链路中
+注入教材式结构提示与符号校验证据（原队员1分支 build_chat_payload 方案，
+现以 backend.chat.reasoning 纯函数层接入 multi-turn service）。
+"""
+
+from __future__ import annotations
+
 import importlib
 
+import pytest
 
-chat_router = importlib.import_module("backend.chat.router")
+from backend.chat.llm import LLMClient
+from backend.chat.models import ChatReference, ChatRequest
+from backend.chat.rag import RAGAdapter
+from backend.chat.reasoning import build_reasoning_enhancements, build_check_note
+from backend.chat.repository import ChatRepository
+from backend.chat.service import ChatService
+from backend.learning.service import create_user
 
+reasoning = importlib.import_module("backend.chat.reasoning")
 
-PROOF_QUESTION = "\u8bc1\u660e\u547d\u9898\u903b\u8f91\u4e2d\u7684\u5fb7\u6469\u6839\u5f8b\uff1a\u00ac(P\u2227Q) \u21d4 \u00acP\u2228\u00acQ"
-GENERAL_QUESTION = "\u4ec0\u4e48\u662f\u96c6\u5408\uff1f"
+PROOF_QUESTION = "证明命题逻辑中的德摩根律：¬(P∧Q) ⇔ ¬P∨¬Q"
+GENERAL_QUESTION = "什么是集合？什么是子集关系？"
+SET_IDENTITY_QUESTION = "证明集合恒等式：(A∪B)^c = A^c∩B^c"
+QUANTIFIER_QUESTION = "证明量词否定律：¬∀xP(x) ⇔ ∃x¬P(x)"
 
-
-def test_build_messages_enables_symbolic_reasoning_for_proof():
-    contexts = [
-        {
-            "content": "\u5fb7\u6469\u6839\u5f8b\u53ef\u4ee5\u901a\u8fc7\u771f\u503c\u8868\u8bc1\u660e\u3002",
-            "metadata": {"source_document": "\u547d\u9898\u903b\u8f91.md", "chapter": "\u547d\u9898\u903b\u8f91", "page_start": 1},
-            "score": 0.9,
-        }
-    ]
-
-    payload = chat_router.build_chat_payload(PROOF_QUESTION, contexts)
-
-    assert payload.reasoning_enabled is True
-    assert payload.symbolic_check.checked is True
-    assert "\u5df2\u77e5" in payload.messages[0]["content"]
-    assert "\u63a8\u5bfc" in payload.messages[0]["content"]
-    assert "\u7a0b\u5e8f\u4fa7\u7b26\u53f7\u6821\u9a8c\u7ed3\u679c" in payload.messages[1]["content"]
-    assert "T" in payload.symbolic_check.evidence
+BASE_SYSTEM_PROMPT = "你是离散数学助教。"
 
 
-def test_build_messages_keeps_general_question_unforced():
-    payload = chat_router.build_chat_payload(GENERAL_QUESTION, [])
+class RecordingLLM(LLMClient):
+    def __init__(self):
+        self.calls: list[list[dict[str, str]]] = []
 
-    assert payload.reasoning_enabled is False
-    assert payload.symbolic_check.checked is False
-    assert "\u5df2\u77e5" not in payload.messages[0]["content"]
-    assert "\u8bc1\u6bd5" not in payload.messages[0]["content"]
+    def ensure_available(self) -> None:
+        return None
+
+    def generate(self, messages: list[dict[str, str]]) -> str:
+        self.calls.append(messages)
+        return (
+            "已知：目标：证明德摩根律。\n"
+            "分析：采用真值表法。\n"
+            "推导：步骤1：列出P、Q的真值组合；依据：真值表定义。\n"
+            "自检：每一行均已核对。\n"
+            "结论：¬(P∧Q) ⇔ ¬P∨¬Q 成立。\n"
+            "证毕"
+        )
 
 
-def test_chat_endpoint_returns_reasoning_metadata():
-    async def fake_search_knowledge(question, top_k, min_score):
+class FakeRAG(RAGAdapter):
+    def __init__(self, with_references: bool = True):
+        self.with_references = with_references
+
+    def search(self, query: str):
+        if not self.with_references:
+            return [], "no_results"
         return [
-            {
-                "content": "\u5fb7\u6469\u6839\u5f8b\uff1a\u00ac(P\u2227Q) \u21d4 \u00acP\u2228\u00acQ\u3002",
-                "metadata": {"source_document": "\u547d\u9898\u903b\u8f91.md", "chapter": "\u547d\u9898\u903b\u8f91", "page_start": 1},
-                "score": 0.88,
-            }
-        ]
+            ChatReference(
+                content="德摩根律：¬(P∧Q) ⇔ ¬P∨¬Q，可通过真值表证明。",
+                score=0.9,
+                metadata={"source_document": "命题逻辑.md", "chapter": "命题逻辑", "page_start": 1},
+            )
+        ], "ok"
 
-    async def fake_call_llm(messages, max_tokens):
-        assert "\u7a0b\u5e8f\u4fa7\u7b26\u53f7\u6821\u9a8c\u7ed3\u679c" in messages[1]["content"]
-        return """### 1. \u5df2\u77e5
-\u76ee\u6807\uff1a\u8bc1\u660e \u00ac(P\u2227Q) \u21d4 \u00acP\u2228\u00acQ\u3002
-### 2. \u5206\u6790
-\u4f7f\u7528\u771f\u503c\u8868\u6cd5\u3002
-### 3. \u63a8\u5bfc
-\u6b65\u9aa41\uff1a\u5217\u51fa P,Q \u7684\u771f\u503c\u7ec4\u5408\uff1b\u4f9d\u636e\uff1a\u771f\u503c\u8868\u5b9a\u4e49\u3002
-\u6b65\u9aa42\uff1a\u6bd4\u8f83\u4e24\u4fa7\u771f\u503c\u76f8\u540c\uff1b\u4f9d\u636e\uff1a\u7b49\u4ef7\u547d\u9898\u5b9a\u4e49\u3002
-### 4. \u81ea\u68c0
-\u6bcf\u4e00\u884c\u5747\u4e00\u81f4\u3002
-### 5. \u7ed3\u8bba
-\u00ac(P\u2227Q) \u21d4 \u00acP\u2228\u00acQ \u6210\u7acb\u3002
-### 6. \u8bc1\u6bd5"""
 
-    original_search = chat_router.search_knowledge
-    original_call = chat_router.call_llm
-    chat_router.search_knowledge = fake_search_knowledge
-    chat_router.call_llm = fake_call_llm
-    try:
-        import anyio
+def test_reasoning_enhancements_for_proof():
+    """证明题：启用推理、符号校验命中、教材式结构注入。"""
+    r = build_reasoning_enhancements(PROOF_QUESTION, BASE_SYSTEM_PROMPT)
 
-        response = anyio.run(chat_router.chat, chat_router.ChatRequest(message=PROOF_QUESTION))
-    finally:
-        chat_router.search_knowledge = original_search
-        chat_router.call_llm = original_call
+    assert r.enabled is True
+    assert r.question_type == "proof"
+    assert r.symbolic_check["checked"] is True
+    assert "已知" in r.system_prompt
+    assert "推导" in r.system_prompt
+    assert "程序侧符号校验结果" in r.check_note
+    assert "T" in r.symbolic_check["evidence"]
 
-    assert response.answer.endswith("\u8bc1\u6bd5")
+
+def test_reasoning_enhancements_keeps_general_question_unforced():
+    """概念题：不强加推理结构与符号校验。"""
+    r = build_reasoning_enhancements(GENERAL_QUESTION, BASE_SYSTEM_PROMPT)
+
+    assert r.enabled is False
+    assert r.symbolic_check["checked"] is False
+    assert r.check_note == ""
+    assert "已知" not in r.system_prompt
+    assert "证毕" not in r.system_prompt
+
+
+def test_reasoning_enhancements_injects_proof_plan():
+    """集合恒等式：证明计划选择元素归属法。"""
+    r = build_reasoning_enhancements(SET_IDENTITY_QUESTION, BASE_SYSTEM_PROMPT)
+
+    assert r.proof_plan["enabled"] is True
+    assert r.proof_plan["method"] == "element_chasing"
+
+
+def test_reasoning_enhancements_injects_quantifier_proof_plan():
+    """量词否定律：证明计划选择量词变换法，证据含 quantifier negation。"""
+    r = build_reasoning_enhancements(QUANTIFIER_QUESTION, BASE_SYSTEM_PROMPT)
+
+    assert r.proof_plan["enabled"] is True
+    assert r.proof_plan["method"] == "quantifier_transformation"
+    assert "quantifier negation" in r.check_note
+
+
+def test_check_note_builder():
+    """build_check_note 独立可用。"""
+    note = build_check_note(PROOF_QUESTION)
+    assert note.startswith("程序侧符号校验结果：")
+    assert build_check_note(GENERAL_QUESTION) == ""
+
+
+def test_chat_service_injects_check_note_and_returns_reasoning(tmp_path):
+    """多轮对话链路：知识库材料消息附带符号校验结果，响应带 reasoning 元数据。"""
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("学生甲", database_path=database_path)
+    llm = RecordingLLM()
+    service = ChatService(
+        repository=ChatRepository(database_path),
+        llm=llm,
+        rag=FakeRAG(),
+    )
+    response = service.chat(ChatRequest(user_id=user_id, message=PROOF_QUESTION))
+
+    # 知识库 system 消息（第2条）附带符号校验结果
+    knowledge_msg = next(m for m in llm.calls[0] if "可参考的知识库材料" in m["content"])
+    assert "程序侧符号校验结果" in knowledge_msg["content"]
+
+    assert response.reasoning is not None
     assert response.reasoning["enabled"] is True
+    assert response.reasoning["question_type"] == "proof"
     assert response.reasoning["symbolic_check"]["checked"] is True
-    assert response.reasoning["evaluation"]["passed"] is True
     assert response.reasoning["proof_plan"]["enabled"] is True
-    assert response.sources[0]["source_document"] == "\u547d\u9898\u903b\u8f91.md"
+    assert response.reasoning["evaluation"] is not None
+    assert response.reasoning["evaluation"]["passed"] is True
 
 
+def test_chat_service_general_question_has_no_reasoning(tmp_path):
+    """概念题：reasoning 为空，不增加评估负担。"""
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("学生乙", database_path=database_path)
+    service = ChatService(
+        repository=ChatRepository(database_path),
+        llm=RecordingLLM(),
+        rag=FakeRAG(),
+    )
+    response = service.chat(ChatRequest(user_id=user_id, message=GENERAL_QUESTION))
 
-def test_chat_payload_injects_proof_plan():
-    payload = chat_router.build_chat_payload("\u8bc1\u660e\u96c6\u5408\u6052\u7b49\u5f0f\uff1a(A\u222aB)^c = A^c\u2229B^c", [])
-
-    assert payload.proof_plan.enabled is True
-    assert payload.proof_plan.method == "element_chasing"
-    assert "\u7b26\u53f7\u8bc1\u660e\u8ba1\u5212" in payload.messages[1]["content"]
-    assert "element_chasing" in payload.messages[1]["content"]
-
-def test_chat_payload_injects_quantifier_proof_plan():
-    payload = chat_router.build_chat_payload("证明量词否定律：¬∀xP(x) ⇔ ∃x¬P(x)", [])
-
-    assert payload.proof_plan.enabled is True
-    assert payload.proof_plan.method == "quantifier_transformation"
-    assert "量词" in payload.messages[1]["content"]
-    assert "quantifier negation" in payload.messages[1]["content"]
+    assert response.reasoning is None

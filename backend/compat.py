@@ -98,6 +98,7 @@ def chat_stream(request: StreamChatRequest):
                 "references": references,
                 "node_ids": result.node_ids,
                 "topic_switch_hint": result.topic_switch_hint,
+                "reasoning": result.reasoning,
             }, ensure_ascii=False) + "\n"
 
         except (ChatUserNotFoundError, ChatSessionNotFoundError, ChatSessionAccessError, LLMUnavailableError) as exc:

@@ -59,4 +59,5 @@ class ChatResponse(BaseModel):
     references: list[ChatReference] = Field(default_factory=list)
     node_ids: list[str] = Field(default_factory=list)
     topic_switch_hint: str | None = None
+    reasoning: dict[str, Any] | None = Field(default=None, description="符号推理元数据：题型/符号校验/证明计划/结构化评估")
     context: ContextStatus
