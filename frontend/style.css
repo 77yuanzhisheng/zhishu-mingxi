@@ -892,14 +892,16 @@ button:disabled {
 }
 
 /* 证明题拍照上传 */
-.proof-action-row {
+.proof-action-row,
+.calc-action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
 
-.proof-upload-btn {
+.proof-upload-btn,
+.calc-upload-btn {
   display: inline-block;
   padding: 8px 16px;
   color: #ffffff;
@@ -908,16 +910,19 @@ button:disabled {
   cursor: pointer;
 }
 
-.proof-file-input {
+.proof-file-input,
+.calc-file-input {
   display: none;
 }
 
-.proof-status {
+.proof-status,
+.calc-status {
   color: #888;
   font-size: 13px;
 }
 
-.proof-ocr-box {
+.proof-ocr-box,
+.calc-ocr-box {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -926,7 +931,8 @@ button:disabled {
   background: #fafafa;
 }
 
-.proof-ocr-text {
+.proof-ocr-text,
+.calc-ocr-text {
   width: 100%;
   padding: 10px;
   border: 1px solid var(--line);
@@ -936,7 +942,8 @@ button:disabled {
 }
 
 .proof-recheck,
-.proof-submit {
+.proof-submit,
+.calc-submit {
   min-height: 34px;
   padding: 0 14px;
   border-radius: 8px;
@@ -944,7 +951,8 @@ button:disabled {
   background: #ffffff;
 }
 
-.proof-submit {
+.proof-submit,
+.calc-submit {
   color: #ffffff;
   border-color: var(--primary);
   background: var(--primary);
@@ -985,7 +993,8 @@ button:disabled {
 .proof-review-warning ul { margin: 6px 0 0 18px; padding: 0; }
 .proof-grading-loading { padding: 12px; color: var(--primary); }
 .proof-reference { border-top: 1px solid var(--line); padding-top: 8px; }
-.proof-submit:disabled { cursor: wait; opacity: .65; }
+.proof-submit:disabled,
+.calc-submit:disabled { cursor: wait; opacity: .65; }
 .practice-list {
   display: grid;
   gap: 14px;

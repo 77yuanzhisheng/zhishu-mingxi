@@ -78,6 +78,7 @@ const practiceState = {
     choice: 0,
     fill: 0,
     proof: 0,
+    calc: 0,
   },
   answered: new Map(),
   fillQuestions: [],
@@ -88,6 +89,12 @@ const practiceState = {
   proofTexts: new Map(),
   proofStartedAt: new Map(),
   proofSubmitting: new Set(),
+  calcQuestions: [],
+  calcResults: new Map(),
+  calcErrors: new Map(),
+  calcTexts: new Map(),
+  calcStartedAt: new Map(),
+  calcSubmitting: new Set(),
 };
 
 let practiceQuestions = [];
@@ -2110,6 +2117,10 @@ function setPracticeMode(mode) {
     loadFillQuestions();
     return;
   }
+  if (practiceState.mode === "calc" && practiceState.calcQuestions.length === 0) {
+    loadCalcQuestions();
+    return;
+  }
   if (practiceState.mode === "proof" && practiceState.proofQuestions.length === 0) {
     loadProofQuestions();
     return;
@@ -2124,6 +2135,10 @@ function renderPracticeList() {
   }
   if (practiceState.mode === "fill") {
     renderFillList(target);
+    return;
+  }
+  if (practiceState.mode === "calc") {
+    renderCalcList(target);
     return;
   }
   if (practiceState.mode === "proof") {
@@ -2328,6 +2343,119 @@ async function submitFillAnswer(questionId) {
 
 // ==================== 证明题（拍照上传 → OCR 识别） ====================
 
+async function loadCalcQuestions() {
+  const target = document.getElementById("practiceList");
+  if (!target) return;
+  target.innerHTML = `<p class="muted-line">正在加载计算题…</p>`;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/calc-questions`);
+    if (!response.ok) throw new Error(`calc api ${response.status}`);
+    const data = await response.json();
+    practiceState.calcQuestions = data.questions || [];
+  } catch (error) {
+    console.warn("计算题加载失败:", error);
+    practiceState.calcQuestions = [];
+  }
+  renderPracticeList();
+}
+
+function renderCalcList(target) {
+  const questions = practiceState.calcQuestions.filter((q) => (
+    practiceState.filter === "all" || q.module === practiceState.filter
+  ));
+  if (!questions.length) {
+    target.innerHTML = `<p class="empty-state">该类别暂无计算题。</p>`;
+    return;
+  }
+  const q = getCurrentPracticeQuestion(questions);
+  const result = practiceState.calcResults.get(q.id);
+  const error = practiceState.calcErrors.get(q.id);
+  const text = practiceState.calcTexts.get(q.id) || "";
+  renderPracticePage(target, questions, `
+    <article class="practice-card calc-card" data-calc-id="${escapeHtml(q.id)}">
+      <div class="practice-card-header">
+        <span>${escapeHtml(q.moduleName)}</span>
+        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+      </div>
+      <h4>${escapeHtml(q.question)}</h4>
+      ${q.fig ? `<img class="practice-figure" src="${escapeHtml(q.fig)}" alt="题目图示" />` : ""}
+      <p class="muted-line">请在纸上完成计算过程，拍照上传后核对识别文本，也可直接修改文本再提交。</p>
+      <div class="calc-action-row">
+        <label class="calc-upload-btn" for="calc-file-${escapeHtml(q.id)}">拍照上传</label>
+        <input id="calc-file-${escapeHtml(q.id)}" class="calc-file-input" type="file" accept="image/*" capture="environment" data-calc-upload="${escapeHtml(q.id)}" />
+        <span class="calc-status" data-calc-status="${escapeHtml(q.id)}"></span>
+      </div>
+      <div class="calc-ocr-box" data-calc-ocr="${escapeHtml(q.id)}" ${result || text || error ? "" : "hidden"}>
+        <strong>识别结果（可核对修正）：</strong>
+        <textarea class="calc-ocr-text" rows="6" data-calc-text="${escapeHtml(q.id)}">${escapeHtml(text)}</textarea>
+        <div class="calc-action-row">
+          <button class="calc-recheck" type="button" data-calc-recheck="${escapeHtml(q.id)}">重新识别</button>
+          <button class="calc-submit" type="button" data-calc-submit="${escapeHtml(q.id)}" ${practiceState.calcSubmitting.has(q.id) ? "disabled" : ""}>${practiceState.calcSubmitting.has(q.id) ? "正在智能批阅..." : "提交作答"}</button>
+        </div>
+        <div class="calc-answer" ${result || error ? "" : "hidden"}>${result ? renderProofGradingResultMarkup(result, q) : `<div class="proof-grading-error">${escapeHtml(error || "批阅失败")}<button type="button" class="calc-retry" data-calc-submit="${escapeHtml(q.id)}">重试批阅</button></div>`}</div>
+      </div>
+    </article>
+  `);
+  target.querySelectorAll(".calc-file-input").forEach((input) => input.addEventListener("change", () => handleCalcPhoto(input.dataset.calcUpload, input.files[0])));
+  target.querySelectorAll(".calc-recheck").forEach((button) => button.addEventListener("click", () => document.getElementById(`calc-file-${CSS.escape(button.dataset.calcRecheck)}`)?.click()));
+  target.querySelectorAll(".calc-submit, .calc-retry").forEach((button) => button.addEventListener("click", () => submitCalcAnswer(button.dataset.calcSubmit)));
+  typesetMath(target);
+}
+
+async function handleCalcPhoto(questionId, file) {
+  if (!file) return;
+  const status = document.querySelector(`.calc-status[data-calc-status="${CSS.escape(questionId)}"]`);
+  const box = document.querySelector(`.calc-ocr-box[data-calc-ocr="${CSS.escape(questionId)}"]`);
+  const textarea = document.querySelector(`.calc-ocr-text[data-calc-text="${CSS.escape(questionId)}"]`);
+  if (!status || !box || !textarea) return;
+  status.textContent = "识别中…";
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await postJson("/api/practice/ocr", { image_base64: base64, filename: file.name || "photo.png" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || data.detail || "OCR 失败");
+    textarea.value = data.text || "";
+    practiceState.calcTexts.set(questionId, textarea.value);
+    practiceState.calcStartedAt.set(questionId, Date.now());
+    box.hidden = false;
+    status.textContent = `识别完成（${data.seconds || "?"}s）`;
+  } catch (error) {
+    status.textContent = "";
+    window.alert(`识别失败：${error.message}`);
+  }
+}
+
+async function submitCalcAnswer(questionId) {
+  const question = practiceState.calcQuestions.find((q) => q.id === questionId);
+  if (!question || practiceState.calcSubmitting.has(questionId)) return;
+  const textarea = document.querySelector(`.calc-ocr-text[data-calc-text="${CSS.escape(questionId)}"]`);
+  const answerText = textarea?.value?.trim() || "";
+  if (!answerText) { window.alert("请先拍照上传作答内容"); return; }
+  practiceState.calcTexts.set(questionId, answerText);
+  const startedAt = practiceState.calcStartedAt.get(questionId) || Date.now();
+  practiceState.calcStartedAt.set(questionId, startedAt);
+  practiceState.calcSubmitting.add(questionId);
+  practiceState.calcErrors.delete(questionId);
+  try {
+    const response = await postJson("/api/grading/grade", {
+      question: question.question,
+      student_answer: answerText,
+      reference_answer: question.answer,
+      kp: question.kp || null,
+      knowledge_points: question.kp ? [question.kp] : [],
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || result.error || "批阅失败");
+    practiceState.calcResults.set(questionId, result);
+    await reportPracticeEvent(question, proofResultIsCorrect(result), answerText, "calc", Date.now() - startedAt);
+  } catch (error) {
+    practiceState.calcResults.delete(questionId);
+    practiceState.calcErrors.set(questionId, error.message || "请稍后重试");
+  } finally {
+    practiceState.calcSubmitting.delete(questionId);
+    renderPracticeList();
+  }
+}
 async function loadProofQuestions() {
   const target = document.getElementById("practiceList");
   if (!target) return;
