@@ -83,6 +83,11 @@ const practiceState = {
   fillQuestions: [],
   fillResults: new Map(),
   proofQuestions: [],
+  proofResults: new Map(),
+  proofErrors: new Map(),
+  proofTexts: new Map(),
+  proofStartedAt: new Map(),
+  proofSubmitting: new Set(),
 };
 
 let practiceQuestions = [];
@@ -2363,14 +2368,14 @@ function renderProofList(target) {
                data-proof-upload="${escapeHtml(q.id)}" />
         <span class="proof-status" data-proof-status="${escapeHtml(q.id)}"></span>
       </div>
-      <div class="proof-ocr-box" data-proof-ocr="${escapeHtml(q.id)}" hidden>
+      <div class="proof-ocr-box" data-proof-ocr="${escapeHtml(q.id)}" ${practiceState.proofResults.has(q.id) || practiceState.proofTexts.has(q.id) ? "" : "hidden"}>
         <strong>识别结果（可核对修正）：</strong>
-        <textarea class="proof-ocr-text" rows="6" data-proof-text="${escapeHtml(q.id)}"></textarea>
+        <textarea class="proof-ocr-text" rows="6" data-proof-text="${escapeHtml(q.id)}">${escapeHtml(practiceState.proofTexts.get(q.id) || "")}</textarea>
         <div class="proof-action-row">
           <button class="proof-recheck" type="button" data-proof-recheck="${escapeHtml(q.id)}">重新识别</button>
-          <button class="proof-submit" type="button" data-proof-submit="${escapeHtml(q.id)}">提交作答</button>
+          <button class="proof-submit" type="button" data-proof-submit="${escapeHtml(q.id)}" ${practiceState.proofSubmitting.has(q.id) ? "disabled" : ""}>${practiceState.proofSubmitting.has(q.id) ? "正在智能批阅..." : "提交作答"}</button>
         </div>
-        <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" hidden></div>
+        <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" ${practiceState.proofResults.has(q.id) || practiceState.proofErrors.has(q.id) ? "" : "hidden"}>${practiceState.proofResults.has(q.id) ? renderProofGradingResultMarkup(practiceState.proofResults.get(q.id), q) : practiceState.proofErrors.has(q.id) ? `<div class="proof-grading-error">${escapeHtml(practiceState.proofErrors.get(q.id))}<button type="button" class="proof-retry" data-proof-submit="${escapeHtml(q.id)}">重试批阅</button></div>` : ""}</div>
       </div>
     </article>
   `);
@@ -2382,7 +2387,7 @@ function renderProofList(target) {
       document.getElementById(`proof-file-${CSS.escape(button.dataset.proofRecheck)}`)?.click();
     });
   });
-  target.querySelectorAll(".proof-submit").forEach((button) => {
+  target.querySelectorAll(".proof-submit, .proof-retry").forEach((button) => {
     button.addEventListener("click", () => submitProofAnswer(button.dataset.proofSubmit));
   });
   typesetMath(target);
@@ -2419,6 +2424,7 @@ async function handleProofPhoto(questionId, file) {
       throw new Error(data.error || data.detail || "OCR 失败");
     }
     textarea.value = data.text || "";
+    practiceState.proofTexts.set(questionId, textarea.value);
     box.hidden = false;
     status.textContent = `识别完成（${data.seconds || "?"}s）`;
   } catch (error) {
@@ -2427,31 +2433,66 @@ async function handleProofPhoto(questionId, file) {
   }
 }
 
-async function submitProofAnswer(questionId) {
-  const question = practiceState.proofQuestions.find((q) => q.id === questionId);
-  if (!question) return;
-  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
-  const answerText = textarea?.value?.trim() || "";
-  if (!answerText) {
-    window.alert("请先拍照上传作答内容");
-    return;
-  }
-  const answerBox = document.querySelector(`.proof-answer[data-proof-answer="${CSS.escape(questionId)}"]`);
-  if (answerBox) {
-    answerBox.hidden = false;
-    answerBox.innerHTML = `
-      <div class="practice-explanation">
-        <strong>已提交（自动批阅引擎接入中）</strong>
-        <p class="muted-line">识别内容已保存，当前展示标准答案供对照：</p>
-        <p>${escapeHtml(question.answer)}</p>
-      </div>
-    `;
-    typesetMath(answerBox);
-  }
-  reportPracticeEvent(question, true, answerText, "proof");
+function proofResultIsCorrect(result) {
+  return result && !result.needs_manual_review ? Number(result.total_score) >= 60 : null;
 }
 
-async function reportPracticeEvent(question, isCorrect, answerText, questionType) {
+function renderProofGradingResultMarkup(result, question) {
+  const dimensions = [
+    ["conclusion_correctness", "结论正确性", 20],
+    ["key_reasoning_steps", "关键推理步骤", 35],
+    ["logical_rigor", "逻辑严密性", 25],
+    ["definition_theorem_usage", "定义和定理使用", 10],
+    ["expression_notation", "表达与符号规范", 10],
+  ];
+  const dimensionHtml = dimensions.map(([key, label, max]) => {
+    const score = Number(result.dimension_scores?.[key] ?? 0);
+    const percent = Math.max(0, Math.min(100, score / max * 100));
+    return `<div class="proof-dimension"><div><span>${label}</span><strong>${score.toFixed(1)} / ${max}</strong></div><div class="proof-dimension-track"><span style="width:${percent}%"></span></div></div>`;
+  }).join("");
+  const errors = Array.isArray(result.error_types) && result.error_types.length
+    ? result.error_types.map((item) => `<span class="proof-error-tag">${escapeHtml(item)}</span>`).join("")
+    : '<span class="muted-line">未识别到结构性错误</span>';
+  const evidence = Array.isArray(result.evidence) && result.evidence.length
+    ? result.evidence.map((item) => `<div class="proof-evidence-item"><strong>${escapeHtml(item.dimension || "评分依据")}</strong><p>“${escapeHtml(item.student_excerpt || "") }”</p><span>${escapeHtml(item.reason || "")}</span></div>`).join("")
+    : '<p class="muted-line">暂无详细评分依据。</p>';
+  const review = result.needs_manual_review
+    ? `<div class="proof-review-warning"><strong>建议人工复核</strong><ul>${(result.review_reasons || ["该答案需要进一步确认"]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>`
+    : "";
+  return `<div class="proof-grading-result"><div class="proof-score-head"><span>自动批阅结果</span><strong>${Number(result.total_score || 0).toFixed(1)}<small> / 100</small></strong></div><div class="proof-dimensions">${dimensionHtml}</div><div class="proof-feedback"><strong>批阅反馈</strong><p>${escapeHtml(result.feedback || "暂无反馈")}</p></div><div class="proof-errors"><strong>错误类型</strong><div>${errors}</div></div><div class="proof-evidence-list"><strong>评分依据</strong>${evidence}</div>${review}<details class="proof-reference"><summary>查看参考答案</summary><p>${escapeHtml(question.answer || "暂无参考答案")}</p></details></div>`;
+}
+
+async function submitProofAnswer(questionId) {
+  const question = practiceState.proofQuestions.find((q) => q.id === questionId);
+  if (!question || practiceState.proofSubmitting.has(questionId)) return;
+  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
+  const answerText = textarea?.value?.trim() || "";
+  if (!answerText) { window.alert("请先拍照上传作答内容"); return; }
+  practiceState.proofTexts.set(questionId, answerText);
+  const startedAt = practiceState.proofStartedAt.get(questionId) || Date.now();
+  practiceState.proofStartedAt.set(questionId, startedAt);
+  practiceState.proofSubmitting.add(questionId);
+  try {
+    const response = await postJson("/api/grading/grade", {
+      question: question.question,
+      student_answer: answerText,
+      reference_answer: question.answer,
+      kp: question.kp || null,
+      knowledge_points: question.kp ? [question.kp] : [],
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || result.error || "批阅失败");
+    practiceState.proofResults.set(questionId, result);
+    await reportPracticeEvent(question, proofResultIsCorrect(result), answerText, "proof", Date.now() - startedAt);
+  } catch (error) {
+    practiceState.proofResults.delete(questionId);
+    practiceState.proofErrors.set(questionId, error.message || "请稍后重试");
+  } finally {
+    practiceState.proofSubmitting.delete(questionId);
+    renderPracticeList();
+  }
+}
+async function reportPracticeEvent(question, isCorrect, answerText, questionType, durationMs = null) {
   // 统一上报做题事件（供学情统计：搜索/问答/答题全维度评估掌握度）
   try {
     const response = await postJson("/api/learning/events", {
@@ -2461,6 +2502,7 @@ async function reportPracticeEvent(question, isCorrect, answerText, questionType
       module: question.module,
       node_id: question.nodeId,
       is_correct: isCorrect,
+      duration_ms: durationMs,
       answer_text: answerText,
     });
     if (!response.ok) throw new Error("events failed");
