@@ -35,3 +35,6 @@ scripts/*.pid
 
 # Local calibration checks and their SQLite databases
 .grading-*/
+
+# Local Git worktrees used for isolated feature development
+.worktrees/
