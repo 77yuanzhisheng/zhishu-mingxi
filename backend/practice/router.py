@@ -375,6 +375,28 @@ def get_proof_questions(limit: int = 16) -> Dict:
     return {"total": len(questions), "questions": questions}
 
 
+@router.get("/calc-questions")
+def get_calc_questions(limit: int = 16) -> Dict:
+    """返回计算题，供自测中的拍照作答和自动批阅使用。"""
+    questions = []
+    for exam in _load_teacher_exams():
+        for idx, item in enumerate(exam.get("calc", []), 1):
+            kp = item.get("kp", "")
+            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            questions.append({
+                "id": f"e{exam['id']}_calc_{idx}",
+                "question": item["q"],
+                "answer": item["a"],
+                "kp": kp,
+                "module": mod,
+                "moduleName": mod_name,
+                "nodeId": node_id,
+                "fig": item.get("fig"),
+            })
+    questions = questions[:limit]
+    return {"total": len(questions), "questions": questions}
+
+
 @router.get("/fill-questions")
 def get_fill_questions(limit: int = 28) -> Dict:
     """返回填空题（老师训练题库原题，学生输入答案）。"""
