@@ -1475,8 +1475,9 @@ function resolveModuleNodeId(value, moduleIds, moduleNameToId) {
 function normalizeKnowledgeItem(item, itemIndex, parentId, parentNodeId, parentName) {
   const type = item.type || "item";
   const itemNodeId = item.node_id || item.id || item.key || `${parentNodeId}_${itemIndex + 1}`;
-  const name = item.name || item.title || item.label || item.text || item.content || `条目${itemIndex + 1}`;
-  const description = item.description || item.summary || item.content || item.text || "";
+  const text = item.text || "";
+  const name = item.name || item.title || item.label || text || item.content || `条目${itemIndex + 1}`;
+  const description = item.description || item.summary || item.content || text || "";
 
   return {
     id: `${parentId}-item-${itemNodeId}`,
@@ -1485,6 +1486,7 @@ function normalizeKnowledgeItem(item, itemIndex, parentId, parentNodeId, parentN
     parentNodeId,
     name,
     type,
+    text,
     description,
     chapter: item.chapter || "",
     searchQuery: item.search_query || item.query || `${parentName} ${name}`,
@@ -1968,6 +1970,12 @@ async function loadGraphNodeKnowledge(node) {
     return;
   }
 
+  // 强定义优先：节点自带的 text 字段就是权威定义，直接渲染，不走相似度检索。
+  const strongDefinition = (node.text || "").trim();
+  if (strongDefinition) {
+    target.innerHTML = renderStrongDefinition(node, strongDefinition);
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -1986,7 +1994,8 @@ async function loadGraphNodeKnowledge(node) {
     }
 
     const results = Array.isArray(data.results) ? data.results : [];
-    target.innerHTML = renderKnowledgeSearchResults(results);
+    // search 结果作为补充资料追加在强定义之后，不覆盖。
+    target.insertAdjacentHTML("beforeend", renderKnowledgeSearchResults(results));
     typesetMath(target);
   } catch (error) {
     clearTimeout(timeoutId);
@@ -2021,6 +2030,16 @@ function renderKnowledgeSearchResults(results) {
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function renderStrongDefinition(node, text) {
+  const typeLabel = getTypeLabel(node.type || "item");
+  return `
+    <article class="knowledge-result-item strong-definition">
+      <div class="node-meta">强定义 · ${escapeHtml(typeLabel)} · ${escapeHtml(node.nodeId || node.id || "")}</div>
+      <div class="knowledge-result-content">${formatAnswerHtml(text)}</div>
+    </article>
   `;
 }
 

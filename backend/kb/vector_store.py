@@ -163,11 +163,26 @@ class KnowledgeBaseStore:
         metas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(ids)
         distances = results["distances"][0]
 
+        # 排除元数据/题库/老师训练题等非教材类文档：这些是索引/题面 dump，不是教学讲义。
+        # 强定义节点走 node.text 渲染，补充资料只应来自真正教材。
+        excluded_source_keywords = (
+            "题库节点映射",
+            "题库",
+            "老师训练",
+            "训练题库",
+            "选择题题库",
+            "概念题库",
+            "证明题库",
+        )
+
         for i in range(len(ids)):
             score = 1.0 - distances[i]
             if score < min_score:
                 continue
             meta = metas[i] or {}
+            src = meta.get("source_document", "") or ""
+            if any(keyword in src for keyword in excluded_source_keywords):
+                continue
             output.append({
                 "chunk_id": ids[i],
                 "content": docs[i] or "",
