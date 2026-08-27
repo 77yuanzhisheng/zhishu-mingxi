@@ -1965,10 +1965,8 @@ function showGraphNodeDetail(node) {
   document.getElementById("graphDetailTitle").textContent = node.name || "知识图谱";
   if (node.level === "overview") {
     document.getElementById("graphDetailPrereq").textContent = "默认展示 6 大模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。";
-    document.getElementById("graphDetailConcepts").innerHTML = `<p>${formatAnswerHtml(node.description || "请选择一个节点查看详情。")}</p>`;
     document.getElementById("graphDetailLinks").textContent = "点击节点后，前端会使用该节点的 search_query 调用 /kb/search 获取教材内容。";
     document.getElementById("graphDetailTasks").textContent = "点击节点后，前端会把 node_id 作为 view 事件传给学情分析接口。";
-    typesetMath(document.getElementById("graphDetailConcepts"));
     return;
   }
 
@@ -1976,12 +1974,9 @@ function showGraphNodeDetail(node) {
   const searchQuery = node.searchQuery || node.name || "无";
   const chapterText = node.chapter ? `章节：${node.chapter} · ` : "";
   document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)}`;
-  document.getElementById("graphDetailConcepts").innerHTML = buildNodeSummaryHtml(node, searchQuery);
   // 知识库内容区显示加载占位，由 loadGraphNodeKnowledge 异步填充（强定义 + 相似度补充）。
   document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
   renderGraphNodeLearning(node);
-
-  typesetMath(document.getElementById("graphDetailConcepts"));
 }
 
 async function loadGraphNodeKnowledge(node) {
