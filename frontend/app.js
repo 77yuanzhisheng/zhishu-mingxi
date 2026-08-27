@@ -1355,6 +1355,9 @@ async function loadKnowledgeGraph(forceReload = false) {
       graphState.chart.dispose();
       graphState.chart = null;
     }
+    // 节点颜色由 masteryByNode 决定（getNodeMastery）。先 await 拉一次学情，再渲染，
+    // 否则图谱节点颜色永远 unlearned 灰。
+    await refreshGraphMastery();
     renderKnowledgeGraph();
     showGraphNodeDetail({
       name: "知识图谱",
@@ -2866,6 +2869,35 @@ async function fetchLearningReport(userId) {
     lastResponse = response;
   }
   return lastResponse;
+}
+
+// 轻量拉取当前用户 mastery 并写入 graphState.masteryByNode，不重渲染学情面板。
+// 知识图谱节点颜色（getGraphNodeStyle -> getNodeMastery）依赖这个 Map。
+// loadLearningReport 会在学情页调用，graph 页没有入口，所以单独抽一个。
+async function refreshGraphMastery() {
+  const userId = getCurrentUserId();
+  if (!userId) return;
+  try {
+    const response = await fetchLearningReport(userId);
+    if (!response || !response.ok) return;
+    const data = await response.json();
+    const records = Array.isArray(data.node_mastery) ? data.node_mastery : [];
+    records.forEach((record) => {
+      if (!record || !record.node_id) return;
+      const level = Number(record.level ?? record.mastery_level ?? 0);
+      const existing = graphState.masteryByNode.get(record.node_id) || {};
+      graphState.masteryByNode.set(record.node_id, {
+        ...existing,
+        node_id: record.node_id,
+        level,
+        correct_count: Number(record.correct_count ?? existing.correct_count ?? 0),
+        total_count: Number(record.total_count ?? existing.total_count ?? 0),
+        module: record.module || existing.module || "",
+      });
+    });
+  } catch (error) {
+    // 静默失败：图谱照常渲染，只是颜色都按 unlearned
+  }
 }
 
 function normalizeLearningReport(raw) {
