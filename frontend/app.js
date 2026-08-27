@@ -3699,6 +3699,7 @@ async function submitForGrading(event) {
     student_answer: document.getElementById("gradingStudentAnswer").value.trim(),
     reference_answer: document.getElementById("gradingReference").value.trim(),
     kp: document.getElementById("gradingKp").value.trim(),
+    knowledge_points: [document.getElementById("gradingKp").value.trim()].filter(Boolean),
     module: document.getElementById("gradingModule").value.trim(),
     max_score: Number(document.getElementById("gradingMaxScore").value),
   };
