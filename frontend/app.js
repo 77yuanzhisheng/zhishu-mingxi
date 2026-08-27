@@ -1395,9 +1395,10 @@ function normalizeKnowledgeGraph(raw) {
         ...normalizeKnowledgeItem(item, itemIndex, childId, childNodeId, childName),
       }));
 
-      // concept 节点的"强定义"：聚合所有子条目的 text（按类型/标题分块）。
-      // 这样点击"2.1 谓词与量词"也能看到强定义，而不只是相似度检索。
-      const childText = normalizedItems
+      // concept 节点的"强定义"：优先用后端 description（已补全的权威文字），
+      // 缺 description 时才回退到 items 聚合，确保每个节点都有强定义可显示。
+      const childDescription = (child.description || "").trim();
+      const childText = childDescription || normalizedItems
         .map((item) => `[${item.type || "条目"}] ${item.text || ""}`.trim())
         .filter((line) => line.replace(/\[[^\]]+\]\s*/, "").length > 0)
         .join("\n");
@@ -1420,8 +1421,9 @@ function normalizeKnowledgeGraph(raw) {
       };
     });
 
-    // module 节点的"强定义"：聚合所有子概念 + 子条目，按概念分组。
-    const moduleText = normalizedChildren
+    // module 节点的"强定义"：优先用后端 description，缺时回退到子概念聚合。
+    const moduleDescription = (module.description || "").trim();
+    const moduleText = moduleDescription || normalizedChildren
       .map((concept) => {
         const conceptLines = [
           `【${concept.name}】`,
