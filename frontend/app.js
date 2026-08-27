@@ -2051,10 +2051,8 @@ function renderKnowledgeSearchResults(results) {
 }
 
 function renderStrongDefinition(node, text) {
-  const typeLabel = getTypeLabel(node.type || "item");
   return `
     <article class="knowledge-result-item strong-definition">
-      <div class="node-meta">强定义 · ${escapeHtml(typeLabel)} · ${escapeHtml(node.nodeId || node.id || "")}</div>
       <div class="knowledge-result-content">${formatAnswerHtml(text)}</div>
     </article>
   `;
