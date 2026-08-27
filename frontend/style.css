@@ -935,6 +935,30 @@ button:disabled {
   display: none;
 }
 
+.grading-photo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.grading-photo-button {
+  display: inline-block;
+  padding: 8px 14px;
+  color: #ffffff;
+  border: 1px solid #16a085;
+  border-radius: 6px;
+  background: #16a085;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.grading-ocr-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .proof-status,
 .calc-status {
   color: #888;

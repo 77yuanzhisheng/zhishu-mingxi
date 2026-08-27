@@ -509,6 +509,12 @@
                 <label for="gradingStudentAnswer">我的解答</label>
                 <textarea id="gradingStudentAnswer" rows="10" required placeholder="请写出完整推导过程，批阅引擎将检查结论、步骤、逻辑、定理使用和符号规范"></textarea>
                 <textarea id="gradingReference" hidden></textarea>
+                <div class="grading-photo-row">
+                  <label class="grading-photo-button" for="gradingPhotoInput">拍照识别</label>
+                  <input id="gradingPhotoInput" class="proof-file-input" type="file" accept="image/*" capture="environment">
+                  <button id="gradingRecheckButton" class="ghost-button" type="button" disabled>重新识别</button>
+                  <span id="gradingOcrStatus" class="grading-ocr-status"></span>
+                </div>
                 <button id="submitGradingButton" type="submit">提交智能批阅</button>
               </form>
             </div>

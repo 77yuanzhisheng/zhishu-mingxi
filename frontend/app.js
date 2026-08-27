@@ -61,7 +61,7 @@ const learningState = {
 };
 
 const dashboardState = { chart: null };
-const gradingState = { questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false };
+const gradingState = { questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false, ocrFile: null, submitting: false };
 const chatState = { sessionId: null };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
@@ -97,6 +97,34 @@ const practiceState = {
 };
 
 let practiceQuestions = [];
+
+// 节点名称兜底字典：当后端 /api/learning/* 报告里没返回 node_name 时，
+// 用这里的静态映射补全显示。键是 node_id，值是中文名称。
+// 来源：knowledge-graph 端点硬编码的概念名称（队员4 整理）。
+const NODE_NAME_FALLBACKS = {
+  pl_01_01: "命题",
+  pl_01_02: "联结词",
+  pl_02_02: "德摩根律",
+  fl_01_02: "全称量词",
+  st_01_03: "幂集",
+  rel_02_01: "自反性",
+  rel_03_01: "等价关系",
+  mi_01: "数学归纳法",
+  gt_03_01: "握手定理",
+};
+
+// 模块名兜底字典：按 node_id 前缀（pl/fl/st/...）给出模块中文名。
+const NODE_MODULE_FALLBACKS = {
+  pl: "命题逻辑知识点",
+  fl: "谓词逻辑知识点",
+  st: "集合论知识点",
+  mi: "数学归纳法知识点",
+  rel: "关系知识点",
+  gt: "图论知识点",
+  nt: "初等数论知识点",
+  cm: "组合数学知识点",
+  ag: "代数结构知识点",
+};
 const FALLBACK_PRACTICE_QUESTIONS = [
   {
     id: "q_pl_01",
@@ -328,6 +356,12 @@ document.getElementById("reloadGradingQuestionsButton").addEventListener("click"
 document.getElementById("gradingQuestionType").addEventListener("change", loadGradingQuestions);
 document.getElementById("gradingQuestionSelect").addEventListener("change", selectGradingQuestion);
 document.getElementById("gradingForm").addEventListener("submit", submitForGrading);
+document.getElementById("gradingPhotoInput").addEventListener("change", (event) => {
+  handleGradingPhoto(event.target.files?.[0]);
+});
+document.getElementById("gradingRecheckButton").addEventListener("click", () => {
+  if (gradingState.ocrFile) handleGradingPhoto(gradingState.ocrFile);
+});
 document.getElementById("continueLearningButton").addEventListener("click", continueLearning);
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
@@ -3631,6 +3665,32 @@ function resetGradingResult() {
   document.getElementById("gradingDimensions").textContent = "提交后展示五维评分。";
   document.getElementById("gradingComment").textContent = "等待批阅。";
   document.getElementById("gradingErrorTypes").innerHTML = "<span>暂无</span>";
+}
+
+async function handleGradingPhoto(file) {
+  if (!file || !gradingState.selectedQuestion) return;
+  const status = document.getElementById("gradingOcrStatus");
+  const recheck = document.getElementById("gradingRecheckButton");
+  gradingState.ocrFile = file;
+  if (status) status.textContent = "正在识别图片...";
+  if (recheck) recheck.disabled = true;
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await postJson("/api/practice/ocr", {
+      image_base64: base64,
+      filename: file.name || "photo.png",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "OCR 识别失败");
+    }
+    document.getElementById("gradingStudentAnswer").value = data.text || "";
+    if (status) status.textContent = `识别完成${data.seconds ? `（${data.seconds} 秒）` : ""}，可修改后提交`;
+  } catch (error) {
+    if (status) status.textContent = `识别失败：${error.message}`;
+  } finally {
+    if (recheck) recheck.disabled = false;
+  }
 }
 
 async function submitForGrading(event) {
