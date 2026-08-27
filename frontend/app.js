@@ -1981,49 +1981,14 @@ function showGraphNodeDetail(node) {
 
 async function loadGraphNodeKnowledge(node) {
   const target = document.getElementById("graphDetailLinks");
-  const query = node.searchQuery || node.name;
-  const nodeId = node.nodeId || node.id || "";
-  if (!query || node.level === "overview") {
+  if (!node || node.level === "overview") {
     return;
   }
 
-  // 强定义优先：节点自带的 text 字段就是权威定义，直接渲染，不走相似度检索。
+  // 只渲染节点的强定义（节点自带的 text/description 字段），不再追加相似度检索结果。
   const strongDefinition = (node.text || "").trim();
   if (strongDefinition) {
     target.innerHTML = renderStrongDefinition(node, strongDefinition);
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`, {
-      signal: controller.signal,
-    });
-    const data = await response.json();
-    clearTimeout(timeoutId);
-    // 竞态保护：期间用户切到了别的节点，丢弃过期结果。
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) {
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(data.detail || "知识库检索失败");
-    }
-
-    const results = Array.isArray(data.results) ? data.results : [];
-    // search 结果作为补充资料追加在强定义之后，不覆盖。
-    target.insertAdjacentHTML("beforeend", renderKnowledgeSearchResults(results));
-    typesetMath(target);
-  } catch (error) {
-    clearTimeout(timeoutId);
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) {
-      return;
-    }
-    const message = error.name === "AbortError"
-      ? `知识库检索超时（15s）。请确认当前后端 ${API_BASE_URL} 的 /kb/search 可用。`
-      : error.message;
-    target.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
   }
 }
 
