@@ -64,9 +64,12 @@ class EvidenceItem(BaseModel):
     @field_validator('dimension')
     @classmethod
     def dimension_must_be_rubric_dimension(cls, value: str) -> str:
-        if value not in DIMENSION_LIMITS:
-            raise ValueError('unknown rubric dimension')
-        return value
+        # 允许 ERROR_TYPES（如 jump_step / theorem_misuse）也作为合法 dimension：
+        # LLM 偶尔会把错误类型写到 dimension 字段而不是 error_types 字段，
+        # 这里宽容接受，避免重试整次批阅（重试也会同样失败）。
+        if value in DIMENSION_LIMITS or value in ERROR_TYPES:
+            return value
+        raise ValueError(f'unknown rubric dimension: {value}')
 
 
 class GradingAttempts(BaseModel):
