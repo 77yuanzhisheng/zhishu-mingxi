@@ -61,7 +61,14 @@ const learningState = {
 };
 
 const dashboardState = { chart: null };
-const gradingState = { questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false };
+const gradingState = {
+  questions: [],
+  selectedQuestion: null,
+  startedAt: Date.now(),
+  loaded: false,
+  ocrFile: null,
+  submitting: false,
+};
 const chatState = { sessionId: null };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
@@ -69,31 +76,41 @@ const examState = { examId: null, available: [], questions: [], answers: new Map
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
 
+const NODE_NAME_FALLBACKS = {
+  pl_01_01: "命题",
+  pl_01_02: "联结词",
+  pl_02_02: "德摩根律",
+  fl_01_02: "全称量词",
+  st_01_03: "幂集",
+  rel_02_01: "自反性",
+  rel_03_01: "等价关系",
+  mi_01: "数学归纳法",
+  gt_03_01: "握手定理",
+};
+
+const NODE_MODULE_FALLBACKS = {
+  pl: "命题逻辑知识点",
+  fl: "谓词逻辑知识点",
+  st: "集合论知识点",
+  mi: "数学归纳法知识点",
+  rel: "关系知识点",
+  gt: "图论知识点",
+  nt: "初等数论知识点",
+  cm: "组合数学知识点",
+  ag: "代数结构知识点",
+};
+
 const practiceState = {
   filter: "all",
   mode: "choice",
   questionIndex: {
     choice: 0,
     fill: 0,
-    proof: 0,
-    calc: 0,
     grading: 0,
   },
   answered: new Map(),
   fillQuestions: [],
   fillResults: new Map(),
-  proofQuestions: [],
-  proofResults: new Map(),
-  proofErrors: new Map(),
-  proofTexts: new Map(),
-  proofStartedAt: new Map(),
-  proofSubmitting: new Set(),
-  calcQuestions: [],
-  calcResults: new Map(),
-  calcErrors: new Map(),
-  calcTexts: new Map(),
-  calcStartedAt: new Map(),
-  calcSubmitting: new Set(),
 };
 
 let practiceQuestions = [];
@@ -328,6 +345,12 @@ document.getElementById("reloadGradingQuestionsButton").addEventListener("click"
 document.getElementById("gradingQuestionType").addEventListener("change", loadGradingQuestions);
 document.getElementById("gradingQuestionSelect").addEventListener("change", selectGradingQuestion);
 document.getElementById("gradingForm").addEventListener("submit", submitForGrading);
+document.getElementById("gradingPhotoInput").addEventListener("change", (event) => {
+  handleGradingPhoto(event.target.files?.[0]);
+});
+document.getElementById("gradingRecheckButton").addEventListener("click", () => {
+  if (gradingState.ocrFile) handleGradingPhoto(gradingState.ocrFile);
+});
 document.getElementById("continueLearningButton").addEventListener("click", continueLearning);
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
@@ -1356,11 +1379,6 @@ async function loadKnowledgeGraph(forceReload = false) {
       graphState.chart = null;
     }
     renderKnowledgeGraph();
-    showGraphNodeDetail({
-      name: "知识图谱",
-      level: "overview",
-      description: `已加载 ${graphState.modules.length} 个课程模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。`,
-    });
   } catch (error) {
     clearTimeout(timeoutId);
     const message = error.name === "AbortError"
@@ -1827,7 +1845,7 @@ function renderGraphDependencies() {
   const moduleNames = new Map(graphState.modules.map((module) => [module.id, module.name]));
   if (!graphState.dependencies.length) {
     target.className = "dependency-list empty-state";
-    target.textContent = "后端未返回模块依赖关系。";
+    target.textContent = "暂无依赖关系。";
     return;
   }
   target.className = "dependency-list";
@@ -1877,11 +1895,6 @@ function handleGraphClick(params) {
   }
 
   if (params.data?.id === "course-root") {
-    showGraphNodeDetail({
-      name: "离散数学",
-      level: "overview",
-      description: "课程知识按命题逻辑、谓词逻辑、集合论、数学归纳法、关系和图论的顺序组织。",
-    });
     return;
   }
 
@@ -1904,10 +1917,7 @@ function handleGraphClick(params) {
 
   graphState.selectedNode = node;
   setCurrentLearningNode(node);
-  showGraphNodeDetail(node);
-  loadGraphNodeKnowledge(node);
   loadRecommendedQuestions(node);
-  recordLearningEvent(node);
 }
 
 function setGraphView(view) {
@@ -1921,230 +1931,8 @@ function setGraphView(view) {
     button.setAttribute("aria-pressed", String(active));
   });
 
-  const hint = document.getElementById("graphViewHint");
-  hint.textContent = view === "tree"
-    ? "思维导图按课程顺序展示层级；点击模块或子概念可继续展开。"
-    : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
   document.querySelector(".graph-legend .dependency").hidden = view !== "force";
   renderKnowledgeGraph();
-}
-
-function showGraphNodeDetail(node) {
-  document.getElementById("graphDetailTitle").textContent = node.name || "知识图谱";
-  if (node.level === "overview") {
-    document.getElementById("graphDetailPrereq").textContent = "默认展示 6 大模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。";
-    document.getElementById("graphDetailConcepts").innerHTML = `<p>${formatAnswerHtml(node.description || "请选择一个节点查看详情。")}</p>`;
-    document.getElementById("graphDetailLinks").textContent = "点击节点后，前端会使用该节点的 search_query 调用 /kb/search 获取教材内容。";
-    document.getElementById("graphDetailTasks").textContent = "点击节点后，前端会把 node_id 作为 view 事件传给学情分析接口。";
-    typesetMath(document.getElementById("graphDetailConcepts"));
-    return;
-  }
-
-  const nodeId = node.nodeId || node.id || "无";
-  const searchQuery = node.searchQuery || node.name || "无";
-  const chapterText = node.chapter ? `章节：${node.chapter} · ` : "";
-  document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)} · node_id：${nodeId}`;
-  document.getElementById("graphDetailConcepts").innerHTML = buildNodeSummaryHtml(node, searchQuery);
-
-  if (node.type === "module") {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  } else if (node.type === "concept") {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  } else {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  }
-
-  typesetMath(document.getElementById("graphDetailConcepts"));
-}
-
-async function loadGraphNodeKnowledge(node) {
-  const target = document.getElementById("graphDetailLinks");
-  const query = node.searchQuery || node.name;
-  const nodeId = node.nodeId || node.id || "";
-  if (!query || node.level === "overview") {
-    return;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(`${KB_API_BASE_URL}/kb/search?q=${encodeURIComponent(query)}&top_k=3`, {
-      signal: controller.signal,
-    });
-    const data = await response.json();
-    clearTimeout(timeoutId);
-    // 竞态保护：期间用户切到了别的节点，丢弃过期结果。
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) {
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(data.detail || "知识库检索失败");
-    }
-
-    const results = Array.isArray(data.results) ? data.results : [];
-    target.innerHTML = renderKnowledgeSearchResults(results);
-    typesetMath(target);
-  } catch (error) {
-    clearTimeout(timeoutId);
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) {
-      return;
-    }
-    const message = error.name === "AbortError"
-      ? `知识库检索超时（15s）。请确认当前后端 ${API_BASE_URL} 的 /kb/search 可用。`
-      : error.message;
-    target.innerHTML = `<p class="error">${escapeHtml(message)}</p>`;
-  }
-}
-
-function renderKnowledgeSearchResults(results) {
-  if (!results.length) {
-    return `<p class="muted-line">未检索到对应资料。可以让队员二检查该节点的 search_query 或知识库索引。</p>`;
-  }
-
-  return `
-    <div class="knowledge-results">
-      ${results.map((result, index) => {
-        const metadata = result.metadata || {};
-        const source = formatKnowledgeSource(metadata);
-        const score = typeof result.score === "number" ? ` · 相似度 ${result.score.toFixed(3)}` : "";
-        return `
-          <article class="knowledge-result-item">
-            <div class="node-meta">资料 ${index + 1}${score}</div>
-            <div class="knowledge-result-content">${formatAnswerHtml(result.content || result.text || "暂无内容")}</div>
-            <div class="source-line">${escapeHtml(source)}</div>
-          </article>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function formatKnowledgeSource(metadata) {
-  // 只显示来源文档名，不显示章节/页码。
-  return metadata.source || metadata.file_name || metadata.filename || "";
-}
-
-function buildNodeSummaryHtml(node, searchQuery) {
-  const countText = node.type === "module"
-    ? `包含 ${node.children?.length || 0} 个子概念`
-    : node.type === "concept"
-      ? `包含 ${node.items?.length || 0} 条知识条目`
-      : `父节点：${node.parentNodeId || node.parentId || "无"}`;
-  const description = node.description || "暂无节点简介，右侧将从知识库检索对应教材内容。";
-
-  return `
-    <div class="node-summary">
-      <p>${formatAnswerHtml(description)}</p>
-      <div class="node-meta">search_query：${escapeHtml(searchQuery)}</div>
-      <div class="node-meta">${escapeHtml(countText)}</div>
-    </div>
-  `;
-}
-
-const LEARNING_LEVEL_NAMES = ["未学", "了解", "理解", "掌握", "熟练"];
-
-// 加载前的占位提示（真实学情到达后替换）
-function buildTrackingHtml(node) {
-  return `<p class="muted-line">正在加载学情数据...</p>`;
-}
-
-// 先渲染本地浏览统计，再异步加载后端真实学情（答题掌握度）替换。
-function renderGraphNodeLearning(node) {
-  const target = document.getElementById("graphDetailTasks");
-  if (!target) return;
-  target.innerHTML = buildTrackingHtml(node);
-  loadGraphNodeLearning(node);
-}
-
-async function loadGraphNodeLearning(node) {
-  const target = document.getElementById("graphDetailTasks");
-  const nodeId = node.nodeId || node.id || "";
-  if (!nodeId || node.level === "overview") return;
-  const userId = getCurrentUserId();
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(`${API_BASE_URL}/api/learning/report?user_id=${encodeURIComponent(userId)}`, {
-      signal: controller.signal,
-    });
-    const data = await response.json();
-    clearTimeout(timeoutId);
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
-    if (!response.ok) throw new Error(data.detail || "学情获取失败");
-
-    const mastery = (data.node_mastery || []).find((record) => record.node_id === nodeId) || null;
-    target.innerHTML = renderNodeLearningHtml(node, mastery);
-  } catch (error) {
-    clearTimeout(timeoutId);
-    const current = graphState.selectedNode;
-    if (!current || (current.nodeId || current.id || "") !== nodeId) return;
-    const message = error.name === "AbortError"
-      ? "学情加载超时（10s）。"
-      : "学情接口暂不可用，请确认后端服务已启动。";
-    target.innerHTML = `<p class="muted-line">${message}</p>`;
-  }
-}
-
-function renderNodeLearningHtml(node, mastery) {
-  if (!mastery) {
-    return `
-      <div class="tracking-box">
-        <p class="muted-line">该节点暂无练习记录。在「自测练习」完成答题后，这里会显示真实掌握度。</p>
-      </div>
-    `;
-  }
-
-  const level = Number(mastery.level ?? 0);
-  const levelName = LEARNING_LEVEL_NAMES[level] || "未知";
-  const correct = Number(mastery.correct_count ?? 0);
-  const total = Number(mastery.total_count ?? 0);
-  const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
-  const weak = level > 0 && level <= 2;
-  const lastTime = mastery.last_practice_time
-    ? new Date(mastery.last_practice_time).toLocaleString("zh-CN")
-    : "暂无";
-
-  return `
-    <div class="tracking-box">
-      <div class="mastery-badge ${weak ? "weak" : ""}">掌握等级 ${level} · ${levelName}${weak ? "（薄弱）" : ""}</div>
-      <div class="progress-track"><span style="display:block;width:${level / 4 * 100}%;background:#22c55e;height:8px;border-radius:4px;"></span></div>
-      <ul class="mastery-stats">
-        <li>答题：${correct} / ${total}</li>
-        <li>准确率：${accuracy}%</li>
-        <li>最近练习：${lastTime}</li>
-      </ul>
-    </div>
-  `;
-}
-
-function recordLearningEvent(node) {
-  if (!node || node.level === "overview") {
-    return;
-  }
-
-  const payload = {
-    user_id: getCurrentUserId(),
-    node_id: node.nodeId || node.id,
-    event_type: "view",
-  };
-
-  const localEvents = parseLocalLearningEvents();
-  localEvents.push({
-    ...payload,
-    node_name: node.name,
-    search_query: node.searchQuery || node.name,
-    timestamp: new Date().toISOString(),
-  });
-  localStorage.setItem("learning_events", JSON.stringify(localEvents.slice(-100)));
-
-  // 当前学情接口只定义答题掌握度更新，浏览行为先保存在本地活动记录中。
 }
 
 function parseLocalLearningEvents() {
@@ -2162,15 +1950,6 @@ function setCurrentLearningNode(node) {
   }
   learningState.currentNodeId = node.nodeId || node.id || DEFAULT_NODE_ID;
   learningState.currentNodeName = node.name || "当前知识点";
-  updateCurrentLearningNodeText();
-}
-
-function updateCurrentLearningNodeText() {
-  const target = document.getElementById("currentLearningNode");
-  if (!target) {
-    return;
-  }
-  target.textContent = `${learningState.currentNodeId} · ${learningState.currentNodeName}`;
 }
 
 function getCurrentUserId() {
@@ -2188,7 +1967,7 @@ function setPracticeFilter(filter) {
 }
 
 function setPracticeMode(mode) {
-  const supportedModes = ["choice", "fill", "proof", "grading"];
+  const supportedModes = ["choice", "fill", "grading"];
   practiceState.mode = supportedModes.includes(mode) ? mode : "choice";
   practiceState.questionIndex[practiceState.mode] = 0;
   document.querySelectorAll(".practice-mode").forEach((button) => {
@@ -2202,14 +1981,6 @@ function setPracticeMode(mode) {
   // 模式切换时同步加载对应题库
   if (practiceState.mode === "fill" && practiceState.fillQuestions.length === 0) {
     loadFillQuestions();
-    return;
-  }
-  if (practiceState.mode === "calc" && practiceState.calcQuestions.length === 0) {
-    loadCalcQuestions();
-    return;
-  }
-  if (practiceState.mode === "proof" && practiceState.proofQuestions.length === 0) {
-    loadProofQuestions();
     return;
   }
   renderPracticeList();
@@ -2241,15 +2012,6 @@ function renderPracticeList() {
     renderFillList(target);
     return;
   }
-  if (practiceState.mode === "calc") {
-    renderCalcList(target);
-    return;
-  }
-  if (practiceState.mode === "proof") {
-    renderProofList(target);
-    return;
-  }
-
   const questions = practiceQuestions.filter((question) => (
     practiceState.filter === "all" || question.module === practiceState.filter
   ));
@@ -2443,185 +2205,6 @@ async function submitFillAnswer(questionId) {
   renderPracticeList();
 }
 
-// ==================== 证明题（拍照上传 → OCR 识别） ====================
-
-async function loadCalcQuestions() {
-  const target = document.getElementById("practiceList");
-  if (!target) return;
-  target.innerHTML = `<p class="muted-line">正在加载计算题…</p>`;
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/practice/calc-questions`);
-    if (!response.ok) throw new Error(`calc api ${response.status}`);
-    const data = await response.json();
-    practiceState.calcQuestions = data.questions || [];
-  } catch (error) {
-    console.warn("计算题加载失败:", error);
-    practiceState.calcQuestions = [];
-  }
-  renderPracticeList();
-}
-
-function renderCalcList(target) {
-  const questions = practiceState.calcQuestions.filter((q) => (
-    practiceState.filter === "all" || q.module === practiceState.filter
-  ));
-  if (!questions.length) {
-    target.innerHTML = `<p class="empty-state">该类别暂无计算题。</p>`;
-    return;
-  }
-  const q = getCurrentPracticeQuestion(questions);
-  const result = practiceState.calcResults.get(q.id);
-  const error = practiceState.calcErrors.get(q.id);
-  const text = practiceState.calcTexts.get(q.id) || "";
-  renderPracticePage(target, questions, `
-    <article class="practice-card calc-card" data-calc-id="${escapeHtml(q.id)}">
-      <div class="practice-card-header">
-        <span>${escapeHtml(q.moduleName)}</span>
-        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
-      </div>
-      <h4>${escapeHtml(q.question)}</h4>
-      ${q.fig ? `<img class="practice-figure" src="${escapeHtml(q.fig)}" alt="题目图示" />` : ""}
-      <p class="muted-line">请在纸上完成计算过程，拍照上传后核对识别文本，也可直接修改文本再提交。</p>
-      <div class="calc-action-row">
-        <label class="calc-upload-btn" for="calc-file-${escapeHtml(q.id)}">拍照上传</label>
-        <input id="calc-file-${escapeHtml(q.id)}" class="calc-file-input" type="file" accept="image/*" capture="environment" data-calc-upload="${escapeHtml(q.id)}" />
-        <span class="calc-status" data-calc-status="${escapeHtml(q.id)}"></span>
-      </div>
-      <div class="calc-ocr-box" data-calc-ocr="${escapeHtml(q.id)}" ${result || text || error ? "" : "hidden"}>
-        <strong>识别结果（可核对修正）：</strong>
-        <textarea class="calc-ocr-text" rows="6" data-calc-text="${escapeHtml(q.id)}">${escapeHtml(text)}</textarea>
-        <div class="calc-action-row">
-          <button class="calc-recheck" type="button" data-calc-recheck="${escapeHtml(q.id)}">重新识别</button>
-          <button class="calc-submit" type="button" data-calc-submit="${escapeHtml(q.id)}" ${practiceState.calcSubmitting.has(q.id) ? "disabled" : ""}>${practiceState.calcSubmitting.has(q.id) ? "正在智能批阅..." : "提交作答"}</button>
-        </div>
-        <div class="calc-answer" ${result || error ? "" : "hidden"}>${result ? renderProofGradingResultMarkup(result, q) : `<div class="proof-grading-error">${escapeHtml(error || "批阅失败")}<button type="button" class="calc-retry" data-calc-submit="${escapeHtml(q.id)}">重试批阅</button></div>`}</div>
-      </div>
-    </article>
-  `);
-  target.querySelectorAll(".calc-file-input").forEach((input) => input.addEventListener("change", () => handleCalcPhoto(input.dataset.calcUpload, input.files[0])));
-  target.querySelectorAll(".calc-recheck").forEach((button) => button.addEventListener("click", () => document.getElementById(`calc-file-${CSS.escape(button.dataset.calcRecheck)}`)?.click()));
-  target.querySelectorAll(".calc-submit, .calc-retry").forEach((button) => button.addEventListener("click", () => submitCalcAnswer(button.dataset.calcSubmit)));
-  typesetMath(target);
-}
-
-async function handleCalcPhoto(questionId, file) {
-  if (!file) return;
-  const status = document.querySelector(`.calc-status[data-calc-status="${CSS.escape(questionId)}"]`);
-  const box = document.querySelector(`.calc-ocr-box[data-calc-ocr="${CSS.escape(questionId)}"]`);
-  const textarea = document.querySelector(`.calc-ocr-text[data-calc-text="${CSS.escape(questionId)}"]`);
-  if (!status || !box || !textarea) return;
-  status.textContent = "识别中…";
-  try {
-    const base64 = await readFileAsBase64(file);
-    const response = await postJson("/api/practice/ocr", { image_base64: base64, filename: file.name || "photo.png" });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || data.detail || "OCR 失败");
-    textarea.value = data.text || "";
-    practiceState.calcTexts.set(questionId, textarea.value);
-    practiceState.calcStartedAt.set(questionId, Date.now());
-    box.hidden = false;
-    status.textContent = `识别完成（${data.seconds || "?"}s）`;
-  } catch (error) {
-    status.textContent = "";
-    window.alert(`识别失败：${error.message}`);
-  }
-}
-
-async function submitCalcAnswer(questionId) {
-  const question = practiceState.calcQuestions.find((q) => q.id === questionId);
-  if (!question || practiceState.calcSubmitting.has(questionId)) return;
-  const textarea = document.querySelector(`.calc-ocr-text[data-calc-text="${CSS.escape(questionId)}"]`);
-  const answerText = textarea?.value?.trim() || "";
-  if (!answerText) { window.alert("请先拍照上传作答内容"); return; }
-  practiceState.calcTexts.set(questionId, answerText);
-  const startedAt = practiceState.calcStartedAt.get(questionId) || Date.now();
-  practiceState.calcStartedAt.set(questionId, startedAt);
-  practiceState.calcSubmitting.add(questionId);
-  practiceState.calcErrors.delete(questionId);
-  try {
-    const response = await postJson("/api/grading/grade", {
-      question: question.question,
-      student_answer: answerText,
-      reference_answer: question.answer,
-      kp: question.kp || null,
-      knowledge_points: question.kp ? [question.kp] : [],
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || result.error || "批阅失败");
-    practiceState.calcResults.set(questionId, result);
-    await reportPracticeEvent(question, proofResultIsCorrect(result), answerText, "calc", Date.now() - startedAt);
-  } catch (error) {
-    practiceState.calcResults.delete(questionId);
-    practiceState.calcErrors.set(questionId, error.message || "请稍后重试");
-  } finally {
-    practiceState.calcSubmitting.delete(questionId);
-    renderPracticeList();
-  }
-}
-async function loadProofQuestions() {
-  const target = document.getElementById("practiceList");
-  if (!target) return;
-  target.innerHTML = `<p class="muted-line">正在加载证明题…</p>`;
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/practice/proof-questions`);
-    if (!response.ok) throw new Error(`proof api ${response.status}`);
-    const data = await response.json();
-    practiceState.proofQuestions = data.questions || [];
-  } catch (error) {
-    console.warn("证明题加载失败:", error);
-    practiceState.proofQuestions = [];
-  }
-  renderPracticeList();
-}
-
-function renderProofList(target) {
-  const questions = practiceState.proofQuestions.filter((q) => (
-    practiceState.filter === "all" || q.module === practiceState.filter
-  ));
-  if (!questions.length) {
-    target.innerHTML = `<p class="empty-state">该类别暂无证明题。</p>`;
-    return;
-  }
-  const q = getCurrentPracticeQuestion(questions);
-  renderPracticePage(target, questions, `
-    <article class="practice-card proof-card" data-proof-id="${escapeHtml(q.id)}">
-      <div class="practice-card-header">
-        <span>${escapeHtml(q.moduleName)}</span>
-      </div>
-      <h4>${escapeHtml(q.question)}</h4>
-      <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
-      <div class="proof-action-row">
-        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">拍照上传</label>
-        <input id="proof-file-${escapeHtml(q.id)}" class="proof-file-input" type="file"
-               accept="image/*" capture="environment"
-               data-proof-upload="${escapeHtml(q.id)}" />
-        <span class="proof-status" data-proof-status="${escapeHtml(q.id)}"></span>
-      </div>
-      <div class="proof-ocr-box" data-proof-ocr="${escapeHtml(q.id)}" ${practiceState.proofResults.has(q.id) || practiceState.proofTexts.has(q.id) ? "" : "hidden"}>
-        <strong>识别结果（可核对修正）：</strong>
-        <textarea class="proof-ocr-text" rows="6" data-proof-text="${escapeHtml(q.id)}">${escapeHtml(practiceState.proofTexts.get(q.id) || "")}</textarea>
-        <div class="proof-action-row">
-          <button class="proof-recheck" type="button" data-proof-recheck="${escapeHtml(q.id)}">重新识别</button>
-          <button class="proof-submit" type="button" data-proof-submit="${escapeHtml(q.id)}" ${practiceState.proofSubmitting.has(q.id) ? "disabled" : ""}>${practiceState.proofSubmitting.has(q.id) ? "正在智能批阅..." : "提交作答"}</button>
-        </div>
-        <div class="proof-answer" data-proof-answer="${escapeHtml(q.id)}" ${practiceState.proofResults.has(q.id) || practiceState.proofErrors.has(q.id) ? "" : "hidden"}>${practiceState.proofResults.has(q.id) ? renderProofGradingResultMarkup(practiceState.proofResults.get(q.id), q) : practiceState.proofErrors.has(q.id) ? `<div class="proof-grading-error">${escapeHtml(practiceState.proofErrors.get(q.id))}<button type="button" class="proof-retry" data-proof-submit="${escapeHtml(q.id)}">重试批阅</button></div>` : ""}</div>
-      </div>
-    </article>
-  `);
-  target.querySelectorAll(".proof-file-input").forEach((input) => {
-    input.addEventListener("change", () => handleProofPhoto(input.dataset.proofUpload, input.files[0]));
-  });
-  target.querySelectorAll(".proof-recheck").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.getElementById(`proof-file-${CSS.escape(button.dataset.proofRecheck)}`)?.click();
-    });
-  });
-  target.querySelectorAll(".proof-submit, .proof-retry").forEach((button) => {
-    button.addEventListener("click", () => submitProofAnswer(button.dataset.proofSubmit));
-  });
-  typesetMath(target);
-}
-
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2635,92 +2218,6 @@ function readFileAsBase64(file) {
   });
 }
 
-async function handleProofPhoto(questionId, file) {
-  if (!file) return;
-  const status = document.querySelector(`.proof-status[data-proof-status="${CSS.escape(questionId)}"]`);
-  const box = document.querySelector(`.proof-ocr-box[data-proof-ocr="${CSS.escape(questionId)}"]`);
-  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
-  if (!status || !box || !textarea) return;
-  status.textContent = "识别中…";
-  try {
-    const base64 = await readFileAsBase64(file);
-    const response = await postJson("/api/practice/ocr", {
-      image_base64: base64,
-      filename: file.name || "photo.png",
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || data.detail || "OCR 失败");
-    }
-    textarea.value = data.text || "";
-    practiceState.proofTexts.set(questionId, textarea.value);
-    box.hidden = false;
-    status.textContent = `识别完成（${data.seconds || "?"}s）`;
-  } catch (error) {
-    status.textContent = "";
-    window.alert(`识别失败：${error.message}`);
-  }
-}
-
-function proofResultIsCorrect(result) {
-  return result && !result.needs_manual_review ? Number(result.total_score) >= 60 : null;
-}
-
-function renderProofGradingResultMarkup(result, question) {
-  const dimensions = [
-    ["conclusion_correctness", "结论正确性", 20],
-    ["key_reasoning_steps", "关键推理步骤", 35],
-    ["logical_rigor", "逻辑严密性", 25],
-    ["definition_theorem_usage", "定义和定理使用", 10],
-    ["expression_notation", "表达与符号规范", 10],
-  ];
-  const dimensionHtml = dimensions.map(([key, label, max]) => {
-    const score = Number(result.dimension_scores?.[key] ?? 0);
-    const percent = Math.max(0, Math.min(100, score / max * 100));
-    return `<div class="proof-dimension"><div><span>${label}</span><strong>${score.toFixed(1)} / ${max}</strong></div><div class="proof-dimension-track"><span style="width:${percent}%"></span></div></div>`;
-  }).join("");
-  const errors = Array.isArray(result.error_types) && result.error_types.length
-    ? result.error_types.map((item) => `<span class="proof-error-tag">${escapeHtml(item)}</span>`).join("")
-    : '<span class="muted-line">未识别到结构性错误</span>';
-  const evidence = Array.isArray(result.evidence) && result.evidence.length
-    ? result.evidence.map((item) => `<div class="proof-evidence-item"><strong>${escapeHtml(item.dimension || "评分依据")}</strong><p>“${escapeHtml(item.student_excerpt || "") }”</p><span>${escapeHtml(item.reason || "")}</span></div>`).join("")
-    : '<p class="muted-line">暂无详细评分依据。</p>';
-  const review = result.needs_manual_review
-    ? `<div class="proof-review-warning"><strong>建议人工复核</strong><ul>${(result.review_reasons || ["该答案需要进一步确认"]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>`
-    : "";
-  return `<div class="proof-grading-result"><div class="proof-score-head"><span>自动批阅结果</span><strong>${Number(result.total_score || 0).toFixed(1)}<small> / 100</small></strong></div><div class="proof-dimensions">${dimensionHtml}</div><div class="proof-feedback"><strong>批阅反馈</strong><p>${escapeHtml(result.feedback || "暂无反馈")}</p></div><div class="proof-errors"><strong>错误类型</strong><div>${errors}</div></div><div class="proof-evidence-list"><strong>评分依据</strong>${evidence}</div>${review}<details class="proof-reference"><summary>查看参考答案</summary><p>${escapeHtml(question.answer || "暂无参考答案")}</p></details></div>`;
-}
-
-async function submitProofAnswer(questionId) {
-  const question = practiceState.proofQuestions.find((q) => q.id === questionId);
-  if (!question || practiceState.proofSubmitting.has(questionId)) return;
-  const textarea = document.querySelector(`.proof-ocr-text[data-proof-text="${CSS.escape(questionId)}"]`);
-  const answerText = textarea?.value?.trim() || "";
-  if (!answerText) { window.alert("请先拍照上传作答内容"); return; }
-  practiceState.proofTexts.set(questionId, answerText);
-  const startedAt = practiceState.proofStartedAt.get(questionId) || Date.now();
-  practiceState.proofStartedAt.set(questionId, startedAt);
-  practiceState.proofSubmitting.add(questionId);
-  try {
-    const response = await postJson("/api/grading/grade", {
-      question: question.question,
-      student_answer: answerText,
-      reference_answer: question.answer,
-      kp: question.kp || null,
-      knowledge_points: question.kp ? [question.kp] : [],
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || result.error || "批阅失败");
-    practiceState.proofResults.set(questionId, result);
-    await reportPracticeEvent(question, proofResultIsCorrect(result), answerText, "proof", Date.now() - startedAt);
-  } catch (error) {
-    practiceState.proofResults.delete(questionId);
-    practiceState.proofErrors.set(questionId, error.message || "请稍后重试");
-  } finally {
-    practiceState.proofSubmitting.delete(questionId);
-    renderPracticeList();
-  }
-}
 async function reportPracticeEvent(question, isCorrect, answerText, questionType, durationMs = null) {
   // 统一上报做题事件（供学情统计：搜索/问答/答题全维度评估掌握度）
   try {
@@ -2753,7 +2250,6 @@ async function submitPracticeAnswer(questionId, selectedIndex) {
   });
   learningState.currentNodeId = question.nodeId;
   learningState.currentNodeName = question.nodeName;
-  updateCurrentLearningNodeText();
   renderPracticeList();
 
   try {
@@ -2777,8 +2273,6 @@ async function submitPracticeAnswer(questionId, selectedIndex) {
     });
     localStorage.setItem("learning_events", JSON.stringify(localEvents.slice(-100)));
   }
-  // 同步写入学情事件（填空题/批阅题已上报，选择题补齐：供 path/report/时间线使用）
-  reportPracticeEvent(question, isCorrect, "", "single");
 }
 
 function updatePracticeScore() {
@@ -2796,7 +2290,6 @@ function updatePracticeScore() {
 }
 
 async function loadLearningReport(options = {}) {
-  updateCurrentLearningNodeText();
   const chartBox = document.getElementById("learningChart");
   const weakBox = document.getElementById("weakNodes");
   const pathBox = document.getElementById("recommendedPath");
@@ -2809,9 +2302,10 @@ async function loadLearningReport(options = {}) {
   }
 
   try {
-    const [reportResponse, profileResponse] = await Promise.all([
+    const [reportResponse, profileResponse, coverage] = await Promise.all([
       fetchLearningReport(userId),
       authenticatedFetch(`/api/learning/ability-profile?user_id=${encodeURIComponent(userId)}`),
+      fetchPracticeCoverage(),
     ]);
     const [data, profile] = await Promise.all([
       reportResponse.json().catch(() => ({})),
@@ -2820,25 +2314,38 @@ async function loadLearningReport(options = {}) {
     if (!reportResponse.ok) throw new Error(readApiError(data, "学情报告请求失败"));
     if (!profileResponse.ok) throw new Error(readApiError(profile, "能力画像请求失败"));
 
-    const report = normalizeLearningReport({
+    const report = applyPracticeCoverage(normalizeLearningReport({
       ...data,
       ability_profile: profile,
-      module_scores: profile.radar_data,
+      module_scores: profile.modules,
       weak_nodes: profile.weak_nodes,
-    });
+    }), coverage);
     renderLearningReport(report);
-    await Promise.all([
-      loadRecommendedLearningPath(report),
-      loadLearningTimeline(userId),
-    ]);
+    await loadRecommendedLearningPath(report);
   } catch (error) {
     if (options.silent) return;
     learningState.report = null;
     chartBox.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     weakBox.innerHTML = `<p class="error">无法读取真实能力画像。</p>`;
     pathBox.innerHTML = `<p class="error">路径接口暂不可用。</p>`;
-    document.getElementById("learningTimeline").innerHTML = `<p class="error">做题历史读取失败。</p>`;
   }
+}
+
+async function fetchPracticeCoverage() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/practice/coverage`);
+    if (response.ok) return await response.json();
+  } catch (error) {
+    console.warn("练习覆盖统计暂不可用：", error);
+  }
+
+  const nodes = Array.from(new Map(practiceQuestions.map((question) => [question.nodeId, {
+    node_id: question.nodeId,
+    name: question.nodeName,
+    module: question.module,
+    module_name: question.moduleName,
+  }])).values());
+  return { total_nodes: nodes.length, nodes, node_ids: nodes.map((node) => node.node_id) };
 }
 
 async function fetchLearningReport(userId) {
@@ -2881,6 +2388,51 @@ function normalizeLearningReport(raw) {
   };
 }
 
+function applyPracticeCoverage(report, coverage) {
+  const coverageNodes = Array.isArray(coverage?.nodes)
+    ? coverage.nodes
+    : (coverage?.node_ids || []).map((nodeId) => ({ node_id: nodeId }));
+  if (!coverageNodes.length) return report;
+
+  const coverageById = new Map(coverageNodes
+    .filter((node) => node?.node_id)
+    .map((node) => [node.node_id, node]));
+  const enrichNode = (node) => {
+    const coverageNode = coverageById.get(node.node_id) || {};
+    return {
+      ...coverageNode,
+      ...node,
+      name: resolveNodeDisplayName(
+        node.node_id,
+        node.name || coverageNode.name,
+      ),
+      module_name: node.module_name || coverageNode.module_name,
+    };
+  };
+  const mastered = report.mastered.filter((node) => coverageById.has(node.node_id)).map(enrichNode);
+  const weak = report.weak.filter((node) => coverageById.has(node.node_id)).map(enrichNode);
+  const unlearned = report.unlearned.filter((node) => coverageById.has(node.node_id)).map(enrichNode);
+  const classifiedIds = new Set([...mastered, ...weak, ...unlearned].map((node) => node.node_id));
+
+  coverageById.forEach((node, nodeId) => {
+    if (classifiedIds.has(nodeId)) return;
+    unlearned.push(normalizeLearningNode({
+      ...node,
+      name: node.module_name && node.name
+        ? `${node.module_name} > ${node.name}`
+        : node.name,
+    }, "unlearned", 0));
+  });
+
+  return {
+    ...report,
+    mastered,
+    weak,
+    unlearned,
+    total_knowledge_points: coverageById.size,
+  };
+}
+
 function normalizeLearningNodes(nodes, status, fallbackLevel) {
   if (!Array.isArray(nodes)) return [];
   return nodes.map((node) => normalizeLearningNode(
@@ -2891,36 +2443,14 @@ function normalizeLearningNodes(nodes, status, fallbackLevel) {
 }
 
 function normalizeLearningNode(node, status, fallbackLevel) {
+  const nodeId = node.node_id || node.id || "";
   return {
     ...node,
-    node_id: node.node_id || node.id || "",
-    name: node.name || node.node_name || findNodeName(node.node_id || node.id) || node.node_id || node.id,
+    node_id: nodeId,
+    name: resolveNodeDisplayName(nodeId, node.name || node.node_name),
     level: Number(node.level ?? node.mastery_level ?? fallbackLevel),
     status,
   };
-}
-
-function buildLocalLearningReport() {
-  const events = parseLocalLearningEvents();
-  const stats = new Map();
-  events.forEach((event) => {
-    if (!event.node_id) return;
-    if (!stats.has(event.node_id)) stats.set(event.node_id, { total: 0, correct: 0, name: event.node_name });
-    if (event.event_type === "answer") {
-      const stat = stats.get(event.node_id);
-      stat.total += 1;
-      if (event.is_correct) stat.correct += 1;
-    }
-  });
-  const mastered = [];
-  const weak = [];
-  stats.forEach((stat, nodeId) => {
-    const accuracy = stat.total ? stat.correct / stat.total : 0;
-    const node = { node_id: nodeId, name: stat.name || findNodeName(nodeId), answer_count: stat.total, accuracy };
-    if (stat.total && accuracy >= 0.85) mastered.push({ ...node, level: 4, status: "mastered" });
-    else weak.push({ ...node, level: accuracy >= 0.6 ? 3 : accuracy >= 0.3 ? 2 : 1, status: "weak" });
-  });
-  return { mastered, weak, unlearned: [], recommended_path: [], local: true };
 }
 
 function renderLearningReport(report) {
@@ -2942,7 +2472,6 @@ function renderLearningReport(report) {
   const total = mastered.length + weak.length + unlearned.length;
   const percent = total ? Math.round((mastered.length / total) * 100) : 0;
   document.getElementById("learningProgressPercent").textContent = `${percent}%`;
-  document.getElementById("learningProgressLabel").textContent = `总知识点 ${total} · 已掌握 ${mastered.length}`;
   document.getElementById("learningProgressBar").style.width = `${percent}%`;
 
   renderLearningChart(mastered, weak, unlearned, report.module_scores);
@@ -2973,7 +2502,10 @@ function renderLearningChart(mastered, weak, unlearned, moduleScores) {
     tooltip: {
       formatter: (params) => {
         const item = moduleStats[params.dataIndex];
-        return `${item.moduleName}<br>掌握度：${item.score}%<br>已掌握：${item.mastered}<br>薄弱：${item.weak}<br>未学：${item.unlearned}`;
+        const detail = [`掌握度：${item.score}%`];
+        if (Number.isFinite(item.accuracy)) detail.push(`练习正确率：${Math.round(item.accuracy * 100)}%`);
+        if (Number.isFinite(item.questionCount)) detail.push(`关联提问：${item.questionCount} 次`);
+        return `${item.moduleName}<br>${detail.join("<br>")}`;
       },
     },
     radar: { indicator: modules.map((name) => ({ name, max: 100 })), radius: "66%", splitNumber: 4 },
@@ -2989,7 +2521,12 @@ function renderLearningChart(mastered, weak, unlearned, moduleScores) {
 function normalizeModuleScores(moduleScores) {
   if (!moduleScores) return null;
   if (Array.isArray(moduleScores)) {
-    return moduleScores.map((item) => ({ moduleName: item.module || item.name, score: Number(item.score ?? item.value ?? 0), mastered: item.mastered || 0, weak: item.weak || 0, unlearned: item.unlearned || 0 }));
+    return moduleScores.map((item) => ({
+      moduleName: item.module || item.name,
+      score: Number(item.score ?? item.value ?? 0),
+      accuracy: item.accuracy == null ? null : Number(item.accuracy),
+      questionCount: item.question_count == null ? null : Number(item.question_count),
+    }));
   }
   if (typeof moduleScores === "object") {
     return Object.entries(moduleScores).map(([moduleName, score]) => ({ moduleName, score: Number(score?.score ?? score?.value ?? score ?? 0), mastered: 0, weak: 0, unlearned: 0 }));
@@ -3037,7 +2574,6 @@ function renderDashboard(report = learningState.report) {
 
   document.getElementById("todayMinutes").textContent = `${todayMinutes} 分钟`;
   document.getElementById("weeklyQuestions").textContent = weeklyAnswers;
-  document.getElementById("dashboardCurrentNode").textContent = `${learningState.currentNodeId} · ${learningState.currentNodeName}`;
 
   const mastered = report?.mastered?.length || 0;
   const weak = report?.weak?.length || 0;
@@ -3045,19 +2581,16 @@ function renderDashboard(report = learningState.report) {
   const total = mastered + weak + unlearned;
   const progress = total ? Math.round((mastered / total) * 100) : 0;
   document.getElementById("dashboardProgress").textContent = `${progress}%`;
-  document.getElementById("dashboardProgressText").textContent = total ? `${mastered}/${total} 个知识点已掌握` : "等待学情数据";
   document.getElementById("dashboardWeakCount").textContent = weak;
-  document.getElementById("dashboardSummary").textContent = report?.local
-    ? "学情接口待接入，当前概览来自本地练习记录。"
-    : "学习数据已同步，建议从薄弱知识点和推荐路径继续。";
+  document.getElementById("dashboardSummary").textContent = "综合学情数据已同步，建议从薄弱知识点和推荐路径继续。";
 
   const path = report?.recommended_path || [];
   const first = path[0];
   const nextNodeId = typeof first === "string" ? first : first?.node_id;
   const nextName = typeof first === "string" ? findNodeName(first) : first?.node_name || first?.name;
   document.getElementById("dashboardNextStep").innerHTML = nextNodeId
-    ? `<span>推荐知识点</span><strong>${escapeHtml(nextName || nextNodeId)}</strong><small>${escapeHtml(nextNodeId)}</small>`
-    : `<span>继续上次学习</span><strong>${escapeHtml(learningState.currentNodeName)}</strong><small>${escapeHtml(learningState.currentNodeId)}</small>`;
+    ? `<span>推荐知识点</span><strong>${escapeHtml(nextName || nextNodeId)}</strong>`
+    : `<span>继续学习</span><strong>${escapeHtml(learningState.currentNodeName)}</strong>`;
   renderActivityChart(recentEvents);
 }
 
@@ -3386,7 +2919,7 @@ function renderExamPaper() {
   form.innerHTML = examState.questions.map((question, index) => `
     <fieldset class="exam-question">
       <legend><span>${index + 1}</span>${escapeHtml(question.question)}</legend>
-      <small>${escapeHtml(question.type)} · ${question.score} 分 · ${escapeHtml(question.nodeId)}</small>
+      <small>${escapeHtml(question.type)} · ${question.score} 分</small>
       <label class="exam-answer-label" for="exam-answer-${question.id}">你的答案</label>
       <textarea id="exam-answer-${question.id}" data-question-id="${question.id}" rows="3" placeholder="${String(question.type).includes("选择") ? "输入选项字母，例如 A" : "输入完整作答过程"}"></textarea>
     </fieldset>
@@ -3556,13 +3089,15 @@ function formatDateTime(value) {
 async function loadGradingQuestions() {
   const type = document.getElementById("gradingQuestionType").value;
   const select = document.getElementById("gradingQuestionSelect");
-  select.innerHTML = '<option value="">正在读取结构化题库...</option>';
+  select.innerHTML = '<option value="">正在读取教师题库...</option>';
+  gradingState.selectedQuestion = null;
+  gradingState.ocrFile = null;
   try {
-    const data = await fetchApiJson(`/api/kb/structured-questions?type=${encodeURIComponent(type)}&limit=50`);
+    const data = await fetchApiJson(`/api/practice/${type}-questions?limit=50`);
     gradingState.questions = Array.isArray(data.questions) ? data.questions : [];
     select.innerHTML = gradingState.questions.length
       ? gradingState.questions.map((question, index) => `<option value="${index}">${escapeHtml(question.question).slice(0, 72)}</option>`).join("")
-      : '<option value="">该类型暂无结构化题目</option>';
+      : '<option value="">该类型暂无题目</option>';
     gradingState.loaded = true;
     if (gradingState.questions.length) {
       select.value = "0";
@@ -3580,12 +3115,18 @@ function selectGradingQuestion() {
   if (!question) return;
   gradingState.selectedQuestion = question;
   gradingState.startedAt = Date.now();
+  gradingState.ocrFile = null;
   document.getElementById("gradingQuestion").value = question.question || "";
   document.getElementById("gradingReference").value = question.answer || "";
-  document.getElementById("gradingKp").value = question.kp || "general";
-  document.getElementById("gradingModule").value = getGradingModule(question.kp);
+  document.getElementById("gradingModuleName").textContent = question.moduleName || getGradingModule(question.kp);
+  document.getElementById("gradingQuestionProgress").textContent = `第 ${index + 1} / ${gradingState.questions.length} 题`;
   document.getElementById("gradingStudentAnswer").value = "";
+  document.getElementById("gradingPhotoInput").value = "";
+  document.getElementById("gradingRecheckButton").disabled = true;
+  document.getElementById("gradingOcrStatus").textContent = "";
+  document.getElementById("gradingReferenceDisplay").textContent = question.answer || "暂无参考答案。";
   resetGradingResult();
+  typesetMath(document.getElementById("gradingPracticeWorkspace"));
 }
 
 function getGradingModule(kp = "") {
@@ -3609,21 +3150,55 @@ function resetGradingResult() {
   document.getElementById("gradingDimensions").textContent = "提交后展示五维评分。";
   document.getElementById("gradingComment").textContent = "等待批阅。";
   document.getElementById("gradingErrorTypes").innerHTML = "<span>暂无</span>";
+  const evidence = document.getElementById("gradingEvidence");
+  evidence.className = "grading-evidence-list empty-state";
+  evidence.textContent = "等待批阅。";
+  const review = document.getElementById("gradingReviewNotice");
+  review.hidden = true;
+  review.innerHTML = "";
+}
+
+async function handleGradingPhoto(file) {
+  if (!file || !gradingState.selectedQuestion) return;
+  const status = document.getElementById("gradingOcrStatus");
+  const recheck = document.getElementById("gradingRecheckButton");
+  gradingState.ocrFile = file;
+  status.textContent = "正在识别图片...";
+  recheck.disabled = true;
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await postJson("/api/practice/ocr", {
+      image_base64: base64,
+      filename: file.name || "photo.png",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.detail || "OCR 识别失败");
+    }
+    document.getElementById("gradingStudentAnswer").value = data.text || "";
+    status.textContent = `识别完成${data.seconds ? `（${data.seconds} 秒）` : ""}，可修改后提交`;
+  } catch (error) {
+    status.textContent = `识别失败：${error.message}`;
+  } finally {
+    recheck.disabled = false;
+  }
 }
 
 async function submitForGrading(event) {
   event.preventDefault();
+  if (gradingState.submitting) return;
   const button = document.getElementById("submitGradingButton");
+  const selected = gradingState.selectedQuestion;
   const payload = {
     question: document.getElementById("gradingQuestion").value.trim(),
     student_answer: document.getElementById("gradingStudentAnswer").value.trim(),
     reference_answer: document.getElementById("gradingReference").value.trim(),
-    kp: document.getElementById("gradingKp").value.trim(),
-    module: document.getElementById("gradingModule").value.trim(),
-    max_score: Number(document.getElementById("gradingMaxScore").value),
+    kp: selected?.kp || null,
+    knowledge_points: selected?.kp ? [selected.kp] : [],
   };
-  if (!payload.question || !payload.student_answer) return;
+  if (!selected || !payload.question || !payload.student_answer) return;
 
+  gradingState.submitting = true;
   button.disabled = true;
   button.textContent = "正在按五个维度批阅...";
   const badge = document.getElementById("gradingStatusBadge");
@@ -3647,47 +3222,85 @@ async function submitForGrading(event) {
     document.getElementById("gradingDimensions").textContent = error.message;
     document.getElementById("gradingComment").textContent = "未生成评分结果，请确认批阅接口与模型服务状态。";
   } finally {
+    gradingState.submitting = false;
     button.disabled = false;
     button.textContent = "提交智能批阅";
   }
 }
 
 function renderGradingResult(data) {
-  const score = Number(data.score || 0);
-  const maxScore = Number(data.max_score || document.getElementById("gradingMaxScore").value || 10);
-  const ratio = maxScore ? score / maxScore : 0;
-  document.getElementById("gradingScore").textContent = `${score}/${maxScore}`;
+  const score = Number(data.total_score || 0);
+  const ratio = score / 100;
+  document.getElementById("gradingScore").textContent = `${score.toFixed(1)}/100`;
   const badge = document.getElementById("gradingStatusBadge");
-  badge.className = `mastery-badge ${ratio >= 0.85 ? "mastered" : ratio >= 0.6 ? "learning" : "weak"}`;
-  badge.textContent = ratio >= 0.85 ? "优秀" : ratio >= 0.6 ? "达标" : "需订正";
+  badge.className = `mastery-badge ${data.needs_manual_review ? "learning" : ratio >= 0.85 ? "mastered" : ratio >= 0.6 ? "learning" : "weak"}`;
+  badge.textContent = data.needs_manual_review ? "待复核" : ratio >= 0.85 ? "优秀" : ratio >= 0.6 ? "达标" : "需订正";
 
-  const dimensions = Array.isArray(data.dimensions) ? data.dimensions : [];
+  const dimensionDefinitions = [
+    ["conclusion_correctness", "结论正确性", 20],
+    ["key_reasoning_steps", "关键推理步骤", 35],
+    ["logical_rigor", "逻辑严密性", 25],
+    ["definition_theorem_usage", "定义与定理使用", 10],
+    ["expression_notation", "表达与符号规范", 10],
+  ];
   const target = document.getElementById("gradingDimensions");
   target.className = "grading-dimensions";
-  target.innerHTML = dimensions.length ? dimensions.map((dimension) => {
-    const dimensionScore = Number(dimension.score || 0);
-    const dimensionMax = Number(dimension.max_score || maxScore * Number(dimension.weight || 0) || maxScore);
-    const percent = Math.max(0, Math.min(100, Math.round((dimensionScore / dimensionMax) * 100)));
-    return `<article><div><strong>${escapeHtml(dimension.name || "评分维度")}</strong><span>${dimensionScore}/${Number(dimensionMax.toFixed(2))}</span></div><div class="dimension-track"><span style="width:${percent}%"></span></div></article>`;
-  }).join("") : '<p class="empty-state">接口未返回五维评分明细。</p>';
-  document.getElementById("gradingComment").textContent = data.comment || "批阅完成，暂无补充评语。";
+  target.innerHTML = dimensionDefinitions.map(([key, name, maximum]) => {
+    const dimensionScore = Number(data.dimension_scores?.[key] || 0);
+    const percent = Math.max(0, Math.min(100, Math.round((dimensionScore / maximum) * 100)));
+    return `<article><div><strong>${name}</strong><span>${dimensionScore.toFixed(1)}/${maximum}</span></div><div class="dimension-track"><span style="width:${percent}%"></span></div></article>`;
+  }).join("");
+  document.getElementById("gradingComment").textContent = data.feedback || "批阅完成，暂无补充评语。";
   const errors = Array.isArray(data.error_types) ? data.error_types : [];
   document.getElementById("gradingErrorTypes").innerHTML = errors.length
-    ? errors.map((item) => `<span>${escapeHtml(item)}</span>`).join("")
+    ? errors.map((item) => `<span>${escapeHtml(formatGradingErrorType(item))}</span>`).join("")
     : "<span>未发现典型错误</span>";
+
+  const evidence = document.getElementById("gradingEvidence");
+  const evidenceItems = Array.isArray(data.evidence) ? data.evidence : [];
+  evidence.className = "grading-evidence-list";
+  evidence.innerHTML = evidenceItems.length
+    ? evidenceItems.map((item) => `<article><strong>${escapeHtml(formatGradingDimension(item.dimension))}</strong><p>“${escapeHtml(item.student_excerpt || "") }”</p><span>${escapeHtml(item.reason || "")}</span></article>`).join("")
+    : '<p class="empty-state">暂无详细评分依据。</p>';
+
+  const review = document.getElementById("gradingReviewNotice");
+  review.hidden = !data.needs_manual_review;
+  review.innerHTML = data.needs_manual_review
+    ? `<strong>建议人工复核</strong><ul>${(data.review_reasons || ["评分结果存在不确定项"]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
+    : "";
+  typesetMath(document.getElementById("gradingResultPanel"));
+}
+
+function formatGradingDimension(value) {
+  return {
+    conclusion_correctness: "结论正确性",
+    key_reasoning_steps: "关键推理步骤",
+    logical_rigor: "逻辑严密性",
+    definition_theorem_usage: "定义与定理使用",
+    expression_notation: "表达与符号规范",
+  }[value] || value || "评分依据";
+}
+
+function formatGradingErrorType(value) {
+  return {
+    circular_reasoning: "循环论证",
+    jump_step: "推导跳步",
+    theorem_misuse: "定理使用不当",
+    notation_error: "符号书写错误",
+    conclusion_error: "结论错误",
+  }[value] || value;
 }
 
 async function recordGradingEvent(result, payload) {
   const selected = gradingState.selectedQuestion;
   const questionType = document.getElementById("gradingQuestionType").value;
-  const maxScore = Number(result.max_score || payload.max_score || 10);
   const eventPayload = {
     user_id: getCurrentUserId(),
     question_id: selected?.id || `manual-${Date.now()}`,
     question_type: questionType === "calc" ? "calc" : "proof",
-    module: payload.module,
-    node_id: `grading_${payload.kp}`.slice(0, 100),
-    is_correct: maxScore ? Number(result.score || 0) / maxScore >= 0.6 : null,
+    module: selected?.module || "other",
+    node_id: selected?.nodeId || "ot_01_01",
+    is_correct: result.needs_manual_review ? null : Number(result.total_score || 0) >= 60,
     duration_ms: Math.max(0, Date.now() - gradingState.startedAt),
     answer_text: payload.student_answer,
   };
@@ -3699,48 +3312,8 @@ async function recordGradingEvent(result, payload) {
   }
 }
 
-async function loadLearningTimeline(userId) {
-  const target = document.getElementById("learningTimeline");
-  target.className = "learning-timeline empty-state";
-  target.textContent = "正在读取做题历史...";
-  try {
-    const data = await fetchApiJson(`/api/learning/events?user_id=${encodeURIComponent(userId)}&limit=30`);
-    renderLearningTimeline(data.events || []);
-  } catch (error) {
-    target.className = "learning-timeline error-state";
-    target.textContent = `做题历史读取失败：${error.message}`;
-  }
-}
-
-function renderLearningTimeline(events) {
-  const target = document.getElementById("learningTimeline");
-  if (!events.length) {
-    target.className = "learning-timeline empty-state";
-    target.textContent = "暂无做题记录。完成自测、考试或大题批阅后，这里会按时间展示真实事件。";
-    return;
-  }
-  const typeNames = { single: "选择题", fill: "填空题", calc: "计算题", proof: "证明题", exam: "考试" };
-  target.className = "learning-timeline";
-  target.innerHTML = events.map((event) => {
-    const resultClass = event.is_correct === true ? "correct" : event.is_correct === false ? "wrong" : "pending";
-    const resultText = event.is_correct === true ? "正确" : event.is_correct === false ? "需巩固" : "待批阅";
-    const duration = Number.isFinite(Number(event.duration_ms))
-      ? `${Math.max(1, Math.round(Number(event.duration_ms) / 1000))} 秒`
-      : "未记录耗时";
-    return `
-      <article class="timeline-event ${resultClass}">
-        <time>${escapeHtml(formatDateTime(event.created_at))}</time>
-        <div>
-          <strong>${escapeHtml(typeNames[event.question_type] || event.question_type)} · ${escapeHtml(event.module)}</strong>
-          <span>${escapeHtml(event.node_id)} · ${escapeHtml(duration)}</span>
-        </div>
-        <span class="timeline-result">${resultText}</span>
-      </article>
-    `;
-  }).join("");
-}
-
 function getModuleNameFromStatus(node) {
+  if (node.module_name) return node.module_name;
   const name = String(node.name || "未分类");
   return name.split(">").map((part) => part.trim()).filter(Boolean)[0] || "未分类";
 }
@@ -3770,9 +3343,10 @@ function renderRecommendedPath(path, nodeNameMap) {
 
   target.innerHTML = path.slice(0, 10).map((pathItem, index) => {
     const nodeId = typeof pathItem === "string" ? pathItem : pathItem.node_id || pathItem.id;
-    const name = typeof pathItem === "string"
+    const candidateName = typeof pathItem === "string"
       ? nodeNameMap.get(nodeId) || nodeId
       : pathItem.node_name || pathItem.name || nodeNameMap.get(nodeId) || nodeId;
+    const name = resolveNodeDisplayName(nodeId, candidateName);
     const action = typeof pathItem === "string" ? "学习" : pathItem.action || "练习";
     const questions = typeof pathItem === "string"
       ? []
@@ -3781,7 +3355,7 @@ function renderRecommendedPath(path, nodeNameMap) {
       <article class="path-step" data-action="${escapeHtml(action)}">
         <div class="path-step-head">
           <span class="path-step-number">${String(pathItem.step || index + 1).padStart(2, "0")}</span>
-          <div><strong>${escapeHtml(shortenNodeName(name))}</strong><small>${escapeHtml(nodeId)}</small></div>
+          <div><strong>${escapeHtml(shortenNodeName(name))}</strong></div>
           <span class="path-action">${escapeHtml(action)}</span>
         </div>
         ${pathItem.reason ? `<p>${escapeHtml(pathItem.reason)}</p>` : ""}
@@ -3823,6 +3397,16 @@ async function loadRecommendedLearningPath(report) {
     if (!response.ok) throw new Error(readApiError(data, "学习路径推荐失败"));
     const path = data.path || data.recommended_path || [];
     graphState.recommendedPath = path.map((item) => typeof item === "string" ? item : item.node_id).filter(Boolean);
+    const pathNameMap = new Map(path.map((item) => {
+      const nodeId = typeof item === "string" ? item : item.node_id || item.id;
+      const name = typeof item === "string" ? "" : item.node_name || item.name;
+      return [nodeId, resolveNodeDisplayName(nodeId, name)];
+    }));
+    report.weak = report.weak.map((node) => ({
+      ...node,
+      name: resolveNodeDisplayName(node.node_id, pathNameMap.get(node.node_id) || node.name),
+    }));
+    renderWeakNodes(report.weak);
     renderRecommendedPath(path, new Map(report.weak.map((node) => [node.node_id, node.name])));
     report.recommended_path = path;
     renderDashboard(report);
@@ -3872,7 +3456,7 @@ async function loadSelectedGraphRecommendations() {
   const target = document.getElementById("graphRecommendedQuestions");
   const node = graphState.selectedNode || findGraphNodeByNodeId(learningState.currentNodeId);
   if (!node) {
-    target.innerHTML = '<p class="muted-line">请先点击左侧知识图谱中的知识点。</p>';
+    target.innerHTML = '<p class="muted-line">请先选择一个知识点。</p>';
     return;
   }
   await loadRecommendedQuestions(node);
@@ -3918,7 +3502,7 @@ function deduplicateQuestions(questions) {
 function renderGraphRecommendedQuestions(questions, node) {
   const target = document.getElementById("graphRecommendedQuestions");
   if (!questions.length) {
-    target.innerHTML = `<p class="muted-line">该节点暂未映射题目，可先查看教材内容。</p>`;
+    target.innerHTML = `<p class="muted-line">暂无推荐题目。</p>`;
     return;
   }
   target.innerHTML = questions.map((question, index) => `
@@ -3934,7 +3518,6 @@ function renderGraphRecommendedQuestions(questions, node) {
       document.getElementById("questionInput").value = `请引导我完成这道题：${question.content || question.question}`;
       learningState.currentNodeId = question.node_id || node.nodeId || node.id;
       learningState.currentNodeName = findNodeName(learningState.currentNodeId);
-      updateCurrentLearningNodeText();
     });
   });
 }
@@ -3944,7 +3527,6 @@ function bindLearningNodeButtons(container) {
     button.addEventListener("click", () => {
       learningState.currentNodeId = button.dataset.nodeId || DEFAULT_NODE_ID;
       learningState.currentNodeName = button.dataset.nodeName || "推荐知识点";
-      updateCurrentLearningNodeText();
       switchTab("chat");
       document.getElementById("questionInput").value = `请讲解 ${learningState.currentNodeName}`;
       document.getElementById("questionInput").focus();
@@ -3958,23 +3540,20 @@ function shortenNodeName(name) {
 }
 
 function formatLearningStat(node) {
-  const viewCount = node.view_count || 0;
   const answerCount = node.answer_count || 0;
-  if (typeof node.accuracy === "number") {
-    return `浏览 ${viewCount} 次 · 答题 ${answerCount} 次 · 正确率 ${Math.round(node.accuracy * 100)}%`;
+  if (node.reason) {
+    return node.reason;
   }
-  return `浏览 ${viewCount} 次 · 暂无答题记录`;
+  if (typeof node.accuracy === "number") {
+    return `练习 ${answerCount} 次 · 正确率 ${Math.round(node.accuracy * 100)}%`;
+  }
+  return "建议优先巩固";
 }
 
 function resetKnowledgeGraph() {
   graphState.expandedModules.clear();
   graphState.expandedConcepts.clear();
   renderKnowledgeGraph();
-  showGraphNodeDetail({
-    name: "知识图谱",
-    level: "overview",
-    description: "已收起全部节点。点击模块展开子概念。",
-  });
 }
 
 function toggleSetValue(set, value) {
@@ -4098,7 +3677,17 @@ function findNodeName(nodeId) {
       if (item) return `${module.name} > ${concept.name} > ${item.name}`;
     }
   }
-  return nodeId || "未知知识点";
+  if (NODE_NAME_FALLBACKS[nodeId]) return NODE_NAME_FALLBACKS[nodeId];
+  const modulePrefix = String(nodeId || "").split("_")[0].toLowerCase();
+  return NODE_MODULE_FALLBACKS[modulePrefix] || "知识点";
+}
+
+function resolveNodeDisplayName(nodeId, candidateName) {
+  const name = String(candidateName || "").trim();
+  if (name && name !== nodeId && !/^[a-z]{2,4}(?:_\d{2}){1,3}$/i.test(name)) {
+    return name;
+  }
+  return findNodeName(nodeId);
 }
 
 function truncateText(text, length) {

@@ -10,7 +10,8 @@
 - 班级管理：学生加入班级、教师查看学生学情、学情分享申请审批
 - 在线考试：模块选择、15 分钟计时、自动判分和掌握度更新
 - 算法工具箱：公式化简、主范式、集合运算、哈斯图、最短路径、二分图和代码生成
-- 原有真值表、关系矩阵、自测练习页面
+- 自测练习：选择题、填空题，以及合并后的大题智能批阅
+- 大题批阅：证明题/计算题切换、教师题库、拍照 OCR、五维评分、失败重试和学情上报
 
 ## 启动
 
@@ -69,6 +70,11 @@ http://127.0.0.1:5500/tools
 
 - `GET /api/learning/report`
 - `POST /api/learning/update-mastery`
+- `GET /api/practice/proof-questions`
+- `GET /api/practice/calc-questions`
+- `POST /api/practice/ocr`
+- `POST /api/grading/grade`
+- `POST /api/learning/events`
 - `/api/class/*`
 - `/api/exam/*`
 - `/api/share/*`

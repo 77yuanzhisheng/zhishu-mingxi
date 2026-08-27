@@ -4,14 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=37">
+  <link rel="stylesheet" href="style.css?v=43">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
     <div class="auth-shell">
       <aside class="auth-intro">
         <div class="brand-mark">DM</div>
-        <p class="eyebrow">Discrete Mathematics Studio</p>
         <h1>离散数学智能学习平台</h1>
         <p>连接知识问答、符号推演、个性化练习与班级学情，让每次学习都有清晰的下一步。</p>
         <div class="auth-capabilities" aria-label="平台能力">
@@ -23,7 +22,6 @@
 
       <main class="auth-panel">
         <div>
-          <p class="eyebrow">Account Access</p>
           <h2 id="authTitle">登录学习空间</h2>
           <p id="authSubtitle" class="hint">使用你的账户继续上次学习。</p>
         </div>
@@ -117,7 +115,6 @@
     <main class="workspace">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Team 4 Frontend</p>
           <h2 id="pageTitle">个人学习仪表盘</h2>
         </div>
         <div class="top-actions">
@@ -131,7 +128,6 @@
       <section id="dashboard" class="panel active">
         <div class="dashboard-header">
           <div>
-            <p class="eyebrow">Personal Learning</p>
             <h3>上午好，继续完成你的离散数学学习计划</h3>
             <p id="dashboardSummary" class="hint">正在汇总今日学习与薄弱知识点。</p>
           </div>
@@ -141,24 +137,20 @@
         <div class="dashboard-metrics">
           <article><span>今日学习</span><strong id="todayMinutes">0 分钟</strong><small>由本地学习事件统计</small></article>
           <article><span>本周完成题目</span><strong id="weeklyQuestions">0</strong><small>最近 7 天答题记录</small></article>
-          <article><span>总体进度</span><strong id="dashboardProgress">0%</strong><small id="dashboardProgressText">等待学情数据</small></article>
+          <article><span>总体进度</span><strong id="dashboardProgress">0%</strong></article>
           <article class="alert-metric"><span>薄弱提醒</span><strong id="dashboardWeakCount">0</strong><small>建议优先巩固</small></article>
         </div>
 
         <div class="dashboard-grid">
           <section class="work-panel">
             <div class="section-title">
-              <div><p class="eyebrow">Weekly Activity</p><h3>近 7 天学习活动</h3></div>
+              <div><h3>近 7 天学习活动</h3></div>
             </div>
             <div id="activityChart" class="activity-chart"></div>
           </section>
           <aside class="insight-panel">
             <h3>下一步学习</h3>
             <div id="dashboardNextStep" class="next-step-box">正在读取推荐路径...</div>
-            <div class="study-card compact-card">
-              <h4>当前知识点</h4>
-              <p id="dashboardCurrentNode">rel_02 · 关系性质</p>
-            </div>
           </aside>
         </div>
       </section>
@@ -168,14 +160,13 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">RAG Assistant</p>
                 <h3>课程知识问答</h3>
               </div>
             </div>
 
             <div id="chatMessages" class="chat-messages">
               <article class="message assistant">
-                <p>你好，我是离散数学问答助手。请输入课程问题，我会检索知识库、调用 Qwen 生成回答。</p>
+                <p>你好，我是离散数学问答助手。请输入课程问题。</p>
               </article>
             </div>
 
@@ -213,7 +204,6 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Logic Calculator</p>
                 <h3>真值表生成</h3>
               </div>
             </div>
@@ -256,7 +246,6 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Relation Analyzer</p>
                 <h3>关系矩阵性质判断</h3>
               </div>
             </div>
@@ -304,7 +293,7 @@
           </aside>
           <section class="work-panel extended-tool-workspace">
             <div class="section-title">
-              <div><p class="eyebrow">Algorithm Lab</p><h3 id="extendedToolTitle">命题公式化简</h3></div>
+              <div><h3 id="extendedToolTitle">命题公式化简</h3></div>
             </div>
             <form id="extendedToolForm" class="extended-tool-form"></form>
             <button id="runExtendedToolButton" type="button">运行工具</button>
@@ -319,7 +308,6 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Knowledge Graph</p>
                 <h3>离散数学知识图谱</h3>
               </div>
             </div>
@@ -341,43 +329,20 @@
               </div>
             </div>
 
-            <p id="graphViewHint" class="graph-view-hint">思维导图按课程顺序展示层级；点击模块或子概念可继续展开。</p>
-
             <div id="knowledgeGraphChart" class="knowledge-graph-chart">
               正在加载知识图谱...
-            </div>
-
-            <div class="path-strip">
-              <span>推荐路径</span>
-              <strong>命题逻辑 → 集合论 → 谓词逻辑 → 数学归纳法 → 关系 → 图论</strong>
             </div>
           </section>
 
           <aside class="insight-panel graph-detail-panel">
-            <div class="graph-detail-heading">
-              <h3 id="graphDetailTitle">知识图谱</h3>
-              <p id="graphDetailPrereq" class="hint">默认展示 6 大模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。</p>
-            </div>
-            <div class="study-card graph-summary-card">
-              <h4>节点说明</h4>
-              <p id="graphDetailConcepts">请选择一个节点查看详情。</p>
-            </div>
-            <div class="study-card graph-knowledge-card">
-              <h4>知识库内容</h4>
-              <p id="graphDetailLinks">模块 → 子概念 → 条目。条目类型包括 definition、theorem、example、rule。</p>
-            </div>
-            <div class="study-card">
-              <h4>学情追踪</h4>
-              <p id="graphDetailTasks">拖动画布可观察节点关系，滚轮可缩放。再次点击已展开节点可以收起。</p>
-            </div>
             <div class="study-card">
               <h4>模块依赖</h4>
-              <div id="graphDependencies" class="dependency-list">正在读取依赖关系。</div>
+              <div id="graphDependencies" class="dependency-list">暂无依赖关系。</div>
             </div>
             <div class="study-card">
               <div class="detail-card-title"><h4>推荐题目</h4><span id="graphMasteryBadge" class="mastery-badge unlearned">未学</span></div>
               <button id="loadGraphRecommendationsButton" class="recommend-refresh-button" type="button">获取推荐题目</button>
-              <div id="graphRecommendedQuestions" class="recommended-question-list" aria-live="polite">选择知识点后获取个性化题目。</div>
+              <div id="graphRecommendedQuestions" class="recommended-question-list" aria-live="polite">暂无推荐题目。</div>
             </div>
           </aside>
         </div>
@@ -388,8 +353,7 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Learning Analytics</p>
-                <h3>学情分析面板</h3>
+                <h3>综合学情分析</h3>
               </div>
             </div>
 
@@ -419,7 +383,7 @@
             </div>
 
             <div class="progress-overview">
-              <div><strong id="learningProgressPercent">0%</strong><span id="learningProgressLabel">总知识点 0 · 已掌握 0</span></div>
+              <div><strong id="learningProgressPercent">0%</strong></div>
               <div class="progress-track"><span id="learningProgressBar" style="width: 0%"></span></div>
             </div>
 
@@ -437,21 +401,7 @@
               <div id="recommendedPath" class="path-list">暂无数据。</div>
             </div>
 
-            <div class="study-card">
-              <h4>当前追踪节点</h4>
-              <p id="currentLearningNode">rel_02 · 关系性质</p>
-            </div>
           </aside>
-
-          <section class="work-panel learning-history-panel">
-            <div class="section-title">
-              <div>
-                <p class="eyebrow">Practice Timeline</p>
-                <h3>做题历史时间线</h3>
-              </div>
-            </div>
-            <div id="learningTimeline" class="learning-timeline empty-state">暂无做题记录。</div>
-          </section>
         </div>
       </section>
 
@@ -460,7 +410,6 @@
           <section class="work-panel">
             <div class="section-title">
               <div>
-                <p class="eyebrow">Quick Practice</p>
                 <h3>自测练习</h3>
               </div>
             </div>
@@ -481,8 +430,6 @@
             <div class="practice-mode-bar">
               <button class="practice-mode active" type="button" data-practice-mode="choice">选择题</button>
               <button class="practice-mode" type="button" data-practice-mode="fill">填空题</button>
-              <button class="practice-mode" type="button" data-practice-mode="proof">证明题（拍照作答）</button>
-              <button class="practice-mode" type="button" data-practice-mode="calc">计算题（拍照作答）</button>
               <button class="practice-mode" type="button" data-practice-mode="grading">大题智能批阅</button>
             </div>
 
@@ -491,7 +438,6 @@
             <div id="gradingPracticeWorkspace" class="grading-practice-workspace" hidden>
               <div class="section-title grading-section-title">
                 <div>
-                  <p class="eyebrow">AI Grading Studio</p>
                   <h3>证明与计算题智能批阅</h3>
                 </div>
               </div>
@@ -509,14 +455,22 @@
 
               <form id="gradingForm" class="grading-form">
                 <label for="gradingQuestion">题目</label>
-                <textarea id="gradingQuestion" rows="4" required placeholder="选择题库题目，或在此输入需要批阅的大题"></textarea>
-                <div class="grading-meta-grid">
-                  <label>知识点<input id="gradingKp" value="prop-logic" required></label>
-                  <label>所属模块<input id="gradingModule" value="命题逻辑" required></label>
-                  <label>满分<input id="gradingMaxScore" type="number" min="1" max="100" value="10" required></label>
+                <textarea id="gradingQuestion" rows="4" readonly required placeholder="请先选择一道题目"></textarea>
+                <div class="grading-question-summary" aria-live="polite">
+                  <span id="gradingModuleName">尚未选择题目</span>
+                  <strong id="gradingQuestionProgress">--</strong>
                 </div>
-                <label for="gradingStudentAnswer">我的解答</label>
-                <textarea id="gradingStudentAnswer" rows="10" required placeholder="请写出完整推导过程，批阅引擎将检查结论、步骤、逻辑、定理使用和符号规范"></textarea>
+
+                <div class="grading-answer-head">
+                  <label for="gradingStudentAnswer">我的解答</label>
+                  <div class="grading-ocr-actions">
+                    <label class="grading-photo-button" for="gradingPhotoInput">拍照识别</label>
+                    <input id="gradingPhotoInput" class="proof-file-input" type="file" accept="image/*" capture="environment">
+                    <button id="gradingRecheckButton" class="ghost-button" type="button" disabled>重新识别</button>
+                    <span id="gradingOcrStatus" class="grading-ocr-status"></span>
+                  </div>
+                </div>
+                <textarea id="gradingStudentAnswer" rows="10" required placeholder="可拍照识别，也可直接输入；识别结果可在这里修改后再提交"></textarea>
                 <textarea id="gradingReference" hidden></textarea>
                 <button id="submitGradingButton" type="submit">提交智能批阅</button>
               </form>
@@ -553,6 +507,15 @@
               <h4>错误类型</h4>
               <div id="gradingErrorTypes" class="error-type-list"><span>暂无</span></div>
             </section>
+            <section class="grading-feedback">
+              <h4>评分依据</h4>
+              <div id="gradingEvidence" class="grading-evidence-list empty-state">等待批阅。</div>
+            </section>
+            <section id="gradingReviewNotice" class="grading-review-notice" hidden></section>
+            <details class="grading-reference">
+              <summary>查看参考答案</summary>
+              <p id="gradingReferenceDisplay">选择题目后显示参考答案。</p>
+            </details>
           </aside>
         </div>
       </section>
@@ -565,7 +528,7 @@
 
         <div id="studentClassView" class="class-layout">
           <section class="work-panel">
-            <div class="section-title"><div><p class="eyebrow">Student Classroom</p><h3>我的班级</h3></div></div>
+            <div class="section-title"><div><h3>我的班级</h3></div></div>
             <form id="joinClassForm" class="inline-form">
               <label for="inviteCodeInput">班级邀请码</label>
               <input id="inviteCodeInput" maxlength="12" placeholder="例如 DM2026">
@@ -590,7 +553,7 @@
 
         <div id="teacherClassView" class="class-layout" hidden>
           <section class="work-panel">
-            <div class="section-title"><div><p class="eyebrow">Teacher Classroom</p><h3>班级与学生</h3></div></div>
+            <div class="section-title"><div><h3>班级与学生</h3></div></div>
             <form id="createClassForm" class="inline-form">
               <label for="classNameInput">班级名称</label>
               <input id="classNameInput" placeholder="例如 离散数学 2026 春">
@@ -614,7 +577,7 @@
         <div id="studentExamView" class="exam-layout">
           <section class="work-panel">
             <div class="exam-topline">
-              <div><p class="eyebrow">Student Assessment</p><h3 id="examTitle">我的班级考试</h3></div>
+              <div><h3 id="examTitle">我的班级考试</h3></div>
               <div id="examTimer" class="exam-timer">15:00</div>
             </div>
             <div id="studentExamList" class="exam-list empty-state">正在读取已发布考试...</div>
@@ -634,13 +597,13 @@
 
         <div id="teacherExamView" class="exam-layout" hidden>
           <section class="work-panel">
-            <div class="section-title"><div><p class="eyebrow">Teacher Assessment</p><h3>发布班级考试</h3></div></div>
+            <div class="section-title"><div><h3>发布班级考试</h3></div></div>
             <form id="generateExamForm" class="exam-setup teacher-exam-form">
               <label for="examClassSelect">班级</label>
               <select id="examClassSelect" required></select>
               <label for="teacherExamTitle">考试标题</label>
               <input id="teacherExamTitle" required maxlength="200" placeholder="例如 命题逻辑单元测试">
-              <label for="teacherExamNodes">知识点 node_id</label>
+              <label for="teacherExamNodes">知识点</label>
               <input id="teacherExamNodes" required value="pl_02_02,pl_03_01" placeholder="多个 ID 使用英文逗号分隔">
               <label for="teacherExamCount">题目数量</label>
               <input id="teacherExamCount" type="number" min="1" max="50" value="5" required>
@@ -681,6 +644,6 @@
     };
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
-  <script defer src="app.js?v=40"></script>
+  <script defer src="app.js?v=45"></script>
 </body>
 </html>
