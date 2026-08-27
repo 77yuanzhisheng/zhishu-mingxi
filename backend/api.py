@@ -130,8 +130,6 @@ app.include_router(learning_router)
 
 # 前端兼容层（桥接队员4前端契约与队员3后端差异）
 from backend.compat import router as compat_router
-from backend.compat import stream_router as compat_stream_router
-app.include_router(compat_stream_router)
 app.include_router(compat_router)
 
 # 用户、班级、考试与学情共享模块（队员3）
@@ -161,7 +159,6 @@ app.include_router(calibration_router)
 # app.include_router(rag_router)
 # from backend.tools.router import router as tools_router
 # app.include_router(tools_router)
-
 
 # ==================== 基础端点 ====================
 

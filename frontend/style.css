@@ -839,7 +839,7 @@ button:disabled {
   background: var(--primary);
 }
 
-/* 练习模式切换（选择题 / 填空题 / 证明题拍照） */
+/* 练习模式切换 */
 .practice-mode-bar {
   display: flex;
   flex-wrap: wrap;
@@ -861,6 +861,26 @@ button:disabled {
   border-color: #16a085;
   border-style: solid;
   background: #16a085;
+}
+
+.grading-practice-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.grading-section-title {
+  margin-top: 8px;
+  margin-bottom: 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.grading-practice-workspace[hidden],
+#practiceFilterBar[hidden],
+#practiceList[hidden],
+#practiceResultPanel[hidden],
+#gradingResultPanel[hidden] {
+  display: none;
 }
 
 /* 填空题输入 */
@@ -1322,6 +1342,38 @@ button:hover,
   gap: 18px;
 }
 
+#graph .graph-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#graph .graph-detail-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+#graph .graph-detail-heading {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+}
+
+#graph .graph-detail-heading h3,
+#graph .graph-detail-heading p,
+#graph .graph-detail-panel > .study-card {
+  margin: 0;
+}
+
+#graph .graph-knowledge-card {
+  grid-column: span 2;
+}
+
+#graph .graph-detail-panel > .study-card {
+  min-width: 0;
+  align-content: start;
+}
+
 .work-panel,
 .insight-panel {
   border: 1px solid var(--line);
@@ -1752,8 +1804,15 @@ th {
 .graph-legend {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+.graph-legend-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .graph-legend span {
@@ -1782,7 +1841,7 @@ th {
 .graph-legend .definition::before { background: #6b73d6; }
 .graph-legend .theorem::before { background: #b54708; }
 .graph-legend .example::before { background: #12a1a7; }
-.graph-legend .rule::before { background: #7a5af8; }
+.graph-legend .rule::before { background: #20805f; }
 .graph-legend .mastered::before { background: var(--mastered); }
 .graph-legend .learning::before { background: var(--learning); }
 .graph-legend .weak::before { background: var(--danger); }
@@ -2291,6 +2350,16 @@ th {
   color: var(--danger);
 }
 
+@media (max-width: 1200px) {
+  #graph .graph-detail-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #graph .graph-knowledge-card {
+    grid-column: auto;
+  }
+}
+
 @media (max-width: 900px) {
   .auth-gate {
     padding: 14px;
@@ -2444,6 +2513,14 @@ th {
 
   .teacher-exam-form button {
     grid-column: 1;
+  }
+
+  #graph .graph-detail-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #graph .graph-knowledge-card {
+    grid-column: auto;
   }
 
   .exam-list article {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from backend.chat.context import prepare_context
 from backend.chat.llm import LLMClient, OpenAICompatibleLLM
 from backend.chat.models import ChatRequest, ChatResponse, ContextStatus
@@ -10,14 +12,14 @@ from backend.chat.reasoning import build_reasoning_enhancements, evaluate_answer
 from backend.chat.repository import ChatRepository
 
 
-SYSTEM_PROMPT = """你是"知数·明析"的离散数学助教。回答应准确、循序渐进。
+SYSTEM_PROMPT = """你是“知数·明析”的离散数学助教。回答应准确、循序渐进。
 优先利用给出的知识库材料；材料不足时应明确说明，不要编造来源。
 结合对话历史回答当前问题，并关注用户尚未理解的概念。
 
 【回答长度要求】
-- 概念题控制在300字以内，直接给出定义和要点
-- 证明题只写关键推导步骤，总长控制在500字以内，最后以”证毕”结尾
-- 公式使用LaTeX行内格式，不用多行公式块"""
+- 概念题控制在 300 字以内，直接给出定义和要点。
+- 证明题只写关键推导步骤，总长控制在 500 字以内，最后以“证毕”结尾。
+- 公式使用 LaTeX 行内格式，避免不必要的多行公式块。"""
 
 
 class ChatService:
@@ -32,6 +34,27 @@ class ChatService:
         self.rag = rag or RAGAdapter()
 
     def chat(self, request: ChatRequest) -> ChatResponse:
+        work = self._prepare_chat(request)
+        answer = self.llm.generate(work["llm_messages"])
+        return self._complete_chat(work, answer)
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[dict]:
+        """Stream answer deltas while preserving the same RAG and history flow."""
+
+        work = self._prepare_chat(request)
+        yield {
+            "type": "meta",
+            "session_id": work["session_id"],
+            "node_ids": request.node_ids,
+        }
+        chunks: list[str] = []
+        for content in self.llm.stream(work["llm_messages"]):
+            chunks.append(content)
+            yield {"type": "delta", "content": content}
+        response = self._complete_chat(work, "".join(chunks).strip())
+        yield {"type": "done", **response.model_dump()}
+
+    def _prepare_chat(self, request: ChatRequest) -> dict:
         self.llm.ensure_available()
         if request.session_id is None:
             session_id = self.repository.create_session(request.user_id)
@@ -67,23 +90,39 @@ class ChatService:
                 knowledge_note += f"\n\n{renh.check_note}"
             llm_messages.append({"role": "system", "content": knowledge_note})
         llm_messages.extend(prepared.messages)
-        answer = self.llm.generate(llm_messages)
-        self.repository.add_message(session_id, "assistant", answer, request.node_ids)
+        return {
+            "request": request,
+            "session_id": session_id,
+            "references": references,
+            "rag_status": rag_status,
+            "topic_switch_hint": topic_switch_hint,
+            "prepared": prepared,
+            "llm_messages": llm_messages,
+            "renh": renh,
+        }
+
+    def _complete_chat(self, work: dict, answer: str) -> ChatResponse:
+        request = work["request"]
+        self.repository.add_message(
+            work["session_id"], "assistant", answer, request.node_ids
+        )
+        prepared = work["prepared"]
+        references = work["references"]
 
         return ChatResponse(
             answer=answer,
-            session_id=session_id,
+            session_id=work["session_id"],
             references=references,
             node_ids=request.node_ids,
-            topic_switch_hint=topic_switch_hint,
-            reasoning=evaluate_answer(answer, request.message.strip(), renh),
+            topic_switch_hint=work["topic_switch_hint"],
+            reasoning=evaluate_answer(answer, request.message.strip(), work["renh"]),
             context=ContextStatus(
                 history_messages_used=len(prepared.messages),
                 total_rounds=prepared.total_rounds,
                 compressed=prepared.compressed,
                 summary_available=prepared.summary_available,
                 rag_used=bool(references),
-                rag_status=rag_status,
+                rag_status=work["rag_status"],
             ),
         )
 

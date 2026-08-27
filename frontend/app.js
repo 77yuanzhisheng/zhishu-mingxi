@@ -22,7 +22,6 @@ const tabRoutes = {
   chat: "/chat",
   graph: "/knowledge-graph",
   practice: "/practice",
-  grading: "/grading",
   learning: "/learning",
   classes: "/classes",
   exam: "/exam",
@@ -35,7 +34,6 @@ const titles = {
   tools: "离散数学工具中心",
   graph: "离散数学知识图谱",
   practice: "自测练习",
-  grading: "大题智能批阅",
   learning: "学情分析",
   classes: "班级管理",
   exam: "在线考试",
@@ -79,6 +77,7 @@ const practiceState = {
     fill: 0,
     proof: 0,
     calc: 0,
+    grading: 0,
   },
   answered: new Map(),
   fillQuestions: [],
@@ -548,16 +547,24 @@ function switchTab(tabName, updateHistory = true) {
     setTimeout(() => learningState.chart?.resize(), 0);
   }
   if (tabName === "practice") {
-    renderPracticeList();
+    syncPracticeModePanels();
+    if (practiceState.mode === "grading") {
+      loadGradingQuestions();
+    } else {
+      renderPracticeList();
+    }
   }
   if (tabName === "tools") selectUnifiedTool(unifiedToolState.current);
-  if (tabName === "grading") loadGradingQuestions();
   if (tabName === "classes") loadClassWorkspace();
   if (tabName === "exam") loadExamWorkspace();
 }
 
 function getTabFromLocation() {
   const path = window.location.pathname.replace(/\/$/, "") || "/";
+  if (path === "/grading") {
+    practiceState.mode = "grading";
+    return "practice";
+  }
   if (path === "/truth-table") {
     selectUnifiedTool("truth");
     return "tools";
@@ -787,7 +794,6 @@ function selectExtendedTool(toolName) {
     button.classList.toggle("active", button.dataset.toolName === toolName);
   });
   document.getElementById("extendedToolTitle").textContent = config.title;
-  document.getElementById("extendedToolEndpoint").textContent = `统一工具 · ${config.title}`;
   const form = document.getElementById("extendedToolForm");
   form.innerHTML = config.fields.map(renderExtendedToolField).join("");
   bindExtendedToolFieldRules(config, form);
@@ -1496,13 +1502,17 @@ function renderKnowledgeGraph() {
   }
 
   const option = graphState.view === "force"
-    ? buildForceGraphOption()
+    ? buildStaticRelationGraphOption()
     : buildMindMapOption();
+  graphState.chart.resize();
   graphState.chart.setOption(option, true);
 }
 
-function buildForceGraphOption() {
+function buildStaticRelationGraphOption() {
   const { nodes, links } = buildGraphSeriesData(true);
+  const rowCount = applyStaticRelationLayout(nodes);
+  const chart = document.getElementById("knowledgeGraphChart");
+  chart.style.height = `${Math.min(1400, Math.max(620, rowCount * 82 + 150))}px`;
   return {
     tooltip: {
       formatter: (params) => {
@@ -1510,7 +1520,11 @@ function buildForceGraphOption() {
         if (params.dataType === "edge") {
           return data.relationLabel || data.label?.formatter || "";
         }
-        return `${data.name}<br>${getTypeLabel(data.rawType || data.type)}`;
+        const rawNode = graphState.nodeIndex.get(data.id);
+        const mastery = getNodeMastery(rawNode);
+        const status = getMasteryStatus(mastery);
+        const level = Number(mastery?.level ?? mastery?.mastery_level ?? 0);
+        return `${data.name}<br>${getTypeLabel(data.rawType || data.type)} · ${getMasteryLabel(status, level)}`;
       },
     },
     legend: {
@@ -1520,23 +1534,18 @@ function buildForceGraphOption() {
     series: [
       {
         type: "graph",
-        layout: "force",
+        layout: "none",
         roam: true,
-        draggable: true,
-        animationDurationUpdate: 350,
+        draggable: false,
+        animation: false,
         categories: [
-          { name: "模块" },
-          { name: "子概念" },
-          { name: "定义" },
-          { name: "定理" },
-          { name: "例题" },
-          { name: "规则" },
+          { name: "模块", itemStyle: { color: getNodeColor("module", 0) } },
+          { name: "子概念", itemStyle: { color: getNodeColor("concept", 1) } },
+          { name: "定义", itemStyle: { color: getNodeColor("definition", 2) } },
+          { name: "定理", itemStyle: { color: getNodeColor("theorem", 3) } },
+          { name: "例题", itemStyle: { color: getNodeColor("example", 4) } },
+          { name: "规则", itemStyle: { color: getNodeColor("rule", 5) } },
         ],
-        force: {
-          repulsion: 260,
-          edgeLength: [80, 170],
-          gravity: 0.08,
-        },
         label: {
           show: true,
           position: "inside",
@@ -1559,6 +1568,7 @@ function buildForceGraphOption() {
 }
 
 function buildMindMapOption() {
+  document.getElementById("knowledgeGraphChart").style.height = "";
   graphState.nodeIndex = new Map();
   const treeData = {
     id: "course-root",
@@ -1695,6 +1705,71 @@ function buildGraphSeriesData(includeDependencies = false) {
   return { nodes, links };
 }
 
+function applyStaticRelationLayout(nodes) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const rowStep = 100;
+  const columns = { module: 100, concept: 500, item: 900 };
+  let row = 0;
+
+  const placeAtRow = (node, column, rowNumber) => {
+    node.x = column;
+    node.y = 60 + rowNumber * rowStep;
+    node.fixed = true;
+    return node.y;
+  };
+
+  graphState.modules.forEach((module) => {
+    const moduleNode = nodeById.get(module.id);
+    if (!moduleNode) return;
+
+    const conceptYs = [];
+    if (graphState.expandedModules.has(module.id)) {
+      module.children.forEach((concept) => {
+        const conceptNode = nodeById.get(concept.id);
+        if (!conceptNode) return;
+
+        const itemYs = [];
+        if (graphState.expandedConcepts.has(concept.id)) {
+          concept.items.forEach((item) => {
+            const itemNode = nodeById.get(item.id);
+            if (!itemNode) return;
+            itemYs.push(placeAtRow(itemNode, columns.item, row));
+            row += 1;
+          });
+        }
+
+        if (itemYs.length) {
+          conceptNode.x = columns.concept;
+          conceptNode.y = (itemYs[0] + itemYs[itemYs.length - 1]) / 2;
+          conceptNode.fixed = true;
+        } else {
+          conceptYs.push(placeAtRow(conceptNode, columns.concept, row));
+          row += 1;
+          return;
+        }
+        conceptYs.push(conceptNode.y);
+      });
+    }
+
+    if (conceptYs.length) {
+      moduleNode.x = columns.module;
+      moduleNode.y = (conceptYs[0] + conceptYs[conceptYs.length - 1]) / 2;
+      moduleNode.fixed = true;
+    } else {
+      placeAtRow(moduleNode, columns.module, row);
+      row += 1;
+    }
+    row += 0.65;
+  });
+
+  nodes.forEach((node) => {
+    if (Number.isFinite(node.x) && Number.isFinite(node.y)) return;
+    placeAtRow(node, columns.item, row);
+    row += 1;
+  });
+  return Math.max(6, row);
+}
+
 function pushGraphNode(nodes, rawNode, category, symbolSize) {
   const node = {
     id: rawNode.id,
@@ -1705,7 +1780,7 @@ function pushGraphNode(nodes, rawNode, category, symbolSize) {
     category,
     symbolSize: calculateForceNodeSize(rawNode, symbolSize),
     value: rawNode.description || "",
-    itemStyle: getGraphNodeStyle(rawNode),
+    itemStyle: getForceGraphNodeStyle(rawNode, category),
   };
   graphState.nodeIndex.set(rawNode.id, rawNode);
   nodes.push(node);
@@ -1721,8 +1796,14 @@ function buildGraphLink(source, target, label) {
     lineStyle: highlighted ? { color: "#157f6f", width: 4, opacity: 1 } : undefined,
     symbolSize: highlighted ? 12 : 8,
     label: {
-      show: true,
+      show: false,
       formatter: label,
+    },
+    emphasis: {
+      label: {
+        show: true,
+        formatter: label,
+      },
     },
   };
 }
@@ -1843,7 +1924,7 @@ function setGraphView(view) {
   const hint = document.getElementById("graphViewHint");
   hint.textContent = view === "tree"
     ? "思维导图按课程顺序展示层级；点击模块或子概念可继续展开。"
-    : "关系图展示层级连线和跨模块依赖；橙色虚线表示前置知识流向。";
+    : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
   document.querySelector(".graph-legend .dependency").hidden = view !== "force";
   renderKnowledgeGraph();
 }
@@ -2107,11 +2188,17 @@ function setPracticeFilter(filter) {
 }
 
 function setPracticeMode(mode) {
-  practiceState.mode = mode || "choice";
+  const supportedModes = ["choice", "fill", "proof", "grading"];
+  practiceState.mode = supportedModes.includes(mode) ? mode : "choice";
   practiceState.questionIndex[practiceState.mode] = 0;
   document.querySelectorAll(".practice-mode").forEach((button) => {
     button.classList.toggle("active", button.dataset.practiceMode === practiceState.mode);
   });
+  syncPracticeModePanels();
+  if (practiceState.mode === "grading") {
+    loadGradingQuestions();
+    return;
+  }
   // 模式切换时同步加载对应题库
   if (practiceState.mode === "fill" && practiceState.fillQuestions.length === 0) {
     loadFillQuestions();
@@ -2128,9 +2215,26 @@ function setPracticeMode(mode) {
   renderPracticeList();
 }
 
+function syncPracticeModePanels() {
+  const gradingMode = practiceState.mode === "grading";
+  document.querySelectorAll(".practice-mode").forEach((button) => {
+    const active = button.dataset.practiceMode === practiceState.mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.getElementById("practiceFilterBar").hidden = gradingMode;
+  document.getElementById("practiceList").hidden = gradingMode;
+  document.getElementById("gradingPracticeWorkspace").hidden = !gradingMode;
+  document.getElementById("practiceResultPanel").hidden = gradingMode;
+  document.getElementById("gradingResultPanel").hidden = !gradingMode;
+}
+
 function renderPracticeList() {
   const target = document.getElementById("practiceList");
   if (!target) {
+    return;
+  }
+  if (practiceState.mode === "grading") {
     return;
   }
   if (practiceState.mode === "fill") {
@@ -2215,7 +2319,6 @@ function renderPracticeQuestion(question) {
     <article class="practice-card ${resultClass}">
       <div class="practice-card-header">
         <span>${escapeHtml(question.moduleName)}</span>
-        <strong>${escapeHtml(question.nodeId)} · ${escapeHtml(question.nodeName)}</strong>
       </div>
       <h4>${escapeHtml(question.question)}</h4>
       <div class="practice-options">
@@ -2278,7 +2381,6 @@ function renderFillList(target) {
     <article class="practice-card">
       <div class="practice-card-header">
         <span>${escapeHtml(q.moduleName)}</span>
-        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
       </div>
       <h4>${escapeHtml(q.question)}</h4>
       <div class="fill-answer-row">
@@ -2485,7 +2587,6 @@ function renderProofList(target) {
     <article class="practice-card proof-card" data-proof-id="${escapeHtml(q.id)}">
       <div class="practice-card-header">
         <span>${escapeHtml(q.moduleName)}</span>
-        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
       </div>
       <h4>${escapeHtml(q.question)}</h4>
       <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
@@ -3914,22 +4015,37 @@ function getNodeColor(type, category) {
     definition: "#6b73d6",
     theorem: "#b54708",
     example: "#12a1a7",
-    rule: "#7a5af8",
+    rule: "#20805f",
   };
   return colors[String(type || "").toLowerCase()] || ["#1f5f8b", "#2f8f83", "#6b73d6"][category] || "#6b73d6";
 }
 
-function getGraphNodeStyle(node) {
-  const mastery = getNodeMastery(node);
-  const status = getMasteryStatus(mastery);
+function getMasteryColor(status) {
   const colors = {
     mastered: "#20805f",
     learning: "#d39a16",
     weak: "#c43d35",
     unlearned: "#8291a2",
   };
+  return colors[status] || colors.unlearned;
+}
+
+function getForceGraphNodeStyle(node, category) {
+  const status = getMasteryStatus(getNodeMastery(node));
   return {
-    color: colors[status],
+    color: getNodeColor(node?.type, category),
+    borderColor: getMasteryColor(status),
+    borderWidth: status === "weak" ? 6 : 4,
+    shadowBlur: status === "weak" ? 14 : 5,
+    shadowColor: status === "weak" ? "rgba(196,61,53,.48)" : "rgba(24,50,76,.16)",
+  };
+}
+
+function getGraphNodeStyle(node) {
+  const mastery = getNodeMastery(node);
+  const status = getMasteryStatus(mastery);
+  return {
+    color: getMasteryColor(status),
     borderColor: status === "weak" ? "#8e211c" : "#ffffff",
     borderWidth: status === "weak" ? 3 : 1,
     shadowBlur: status === "weak" ? 12 : 4,
@@ -3951,12 +4067,17 @@ function getNodeMastery(node) {
 
 function getMasteryStatus(mastery) {
   if (!mastery) return "unlearned";
-  if (mastery.status === "weak") return "weak";
-  const level = Number(mastery.level ?? mastery.mastery_level ?? 0);
-  if (level >= 3) return "mastered";
-  if (level === 2) return "learning";
-  if (level === 1) return "weak";
-  return "unlearned";
+  const rawLevel = mastery.level ?? mastery.mastery_level;
+  const level = Number(rawLevel);
+  if (rawLevel !== undefined && rawLevel !== null && Number.isFinite(level)) {
+    if (level >= 3) return "mastered";
+    if (level >= 2) return "learning";
+    if (level > 0) return "weak";
+    return "unlearned";
+  }
+  return ["mastered", "learning", "weak"].includes(mastery.status)
+    ? mastery.status
+    : "unlearned";
 }
 
 function getMasteryLabel(status, level) {
