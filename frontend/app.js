@@ -1998,9 +1998,7 @@ function setGraphView(view) {
 function showGraphNodeDetail(node) {
   document.getElementById("graphDetailTitle").textContent = node.name || "知识图谱";
   if (node.level === "overview") {
-    document.getElementById("graphDetailPrereq").textContent = "默认展示 6 大模块。点击模块展开子概念，再点击子概念展开定义、定理、例题和规则。";
-    document.getElementById("graphDetailLinks").textContent = "点击节点后，前端会使用该节点的 search_query 调用 /kb/search 获取教材内容。";
-    document.getElementById("graphDetailTasks").textContent = "点击节点后，前端会把 node_id 作为 view 事件传给学情分析接口。";
+    // overview 模式只显示标题，不显示任何内部实现/调用细节的占位文字。
     return;
   }
 
