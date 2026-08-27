@@ -1384,6 +1384,54 @@ function normalizeKnowledgeGraph(raw) {
     const children = module.children || module.concepts || module.nodes || [];
     const moduleName = module.name || module.title || module.label || `模块${moduleIndex + 1}`;
 
+    const normalizedChildren = children.map((child, childIndex) => {
+      const childNodeId = child.node_id || child.id || child.key || `${moduleNodeId}_${childIndex + 1}`;
+      const childId = `${moduleId}-concept-${childNodeId}`;
+      const items = child.items || child.children || [];
+      const childName = child.name || child.title || child.label || `子概念${childIndex + 1}`;
+      const chapter = child.chapter || `${moduleIndex + 1}.${childIndex + 1}`;
+
+      const normalizedItems = items.map((item, itemIndex) => ({
+        ...normalizeKnowledgeItem(item, itemIndex, childId, childNodeId, childName),
+      }));
+
+      // concept 节点的"强定义"：聚合所有子条目的 text（按类型/标题分块）。
+      // 这样点击"2.1 谓词与量词"也能看到强定义，而不只是相似度检索。
+      const childText = normalizedItems
+        .map((item) => `[${item.type || "条目"}] ${item.text || ""}`.trim())
+        .filter((line) => line.replace(/\[[^\]]+\]\s*/, "").length > 0)
+        .join("\n");
+
+      return {
+        id: childId,
+        nodeId: childNodeId,
+        parentId: moduleId,
+        parentNodeId: moduleNodeId,
+        name: childName,
+        type: "concept",
+        chapter,
+        chapterTitle: child.chapter_title || `${chapter} ${childName}`,
+        itemCount: Number(child.item_count || items.length),
+        description: child.description || child.summary || child.content || "",
+        text: childText,
+        searchQuery: child.search_query || child.query || `${moduleName} ${childName}`,
+        masteryLevels: child.mastery_levels || {},
+        items: normalizedItems,
+      };
+    });
+
+    // module 节点的"强定义"：聚合所有子概念 + 子条目，按概念分组。
+    const moduleText = normalizedChildren
+      .map((concept) => {
+        const conceptLines = [
+          `【${concept.name}】`,
+          ...concept.items.map((item) => `  · [${item.type || "条目"}] ${item.text || ""}`.trim()),
+        ];
+        return conceptLines.join("\n");
+      })
+      .filter((block) => block.length > 4)
+      .join("\n\n");
+
     return {
       id: moduleId,
       nodeId: moduleNodeId,
@@ -1392,32 +1440,9 @@ function normalizeKnowledgeGraph(raw) {
       chapter: module.chapter || `第${moduleIndex + 1}章`,
       itemCount: Number(module.item_count || 0),
       description: module.description || module.summary || module.content || "",
+      text: moduleText,
       searchQuery: module.search_query || module.query || moduleName,
-      children: children.map((child, childIndex) => {
-        const childNodeId = child.node_id || child.id || child.key || `${moduleNodeId}_${childIndex + 1}`;
-        const childId = `${moduleId}-concept-${childNodeId}`;
-        const items = child.items || child.children || [];
-        const childName = child.name || child.title || child.label || `子概念${childIndex + 1}`;
-        const chapter = child.chapter || `${moduleIndex + 1}.${childIndex + 1}`;
-
-        return {
-          id: childId,
-          nodeId: childNodeId,
-          parentId: moduleId,
-          parentNodeId: moduleNodeId,
-          name: childName,
-          type: "concept",
-          chapter,
-          chapterTitle: child.chapter_title || `${chapter} ${childName}`,
-          itemCount: Number(child.item_count || items.length),
-          description: child.description || child.summary || child.content || "",
-          searchQuery: child.search_query || child.query || `${moduleName} ${childName}`,
-          masteryLevels: child.mastery_levels || {},
-          items: items.map((item, itemIndex) => ({
-            ...normalizeKnowledgeItem(item, itemIndex, childId, childNodeId, childName),
-          })),
-        };
-      }),
+      children: normalizedChildren,
     };
   });
 }
@@ -1948,19 +1973,11 @@ function showGraphNodeDetail(node) {
   const nodeId = node.nodeId || node.id || "无";
   const searchQuery = node.searchQuery || node.name || "无";
   const chapterText = node.chapter ? `章节：${node.chapter} · ` : "";
-  document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)} · node_id：${nodeId}`;
+  document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)}`;
   document.getElementById("graphDetailConcepts").innerHTML = buildNodeSummaryHtml(node, searchQuery);
-
-  if (node.type === "module") {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  } else if (node.type === "concept") {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  } else {
-    document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在用 search_query 检索：${escapeHtml(searchQuery)}</p>`;
-    renderGraphNodeLearning(node);
-  }
+  // 知识库内容区显示加载占位，由 loadGraphNodeKnowledge 异步填充（强定义 + 相似度补充）。
+  document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
+  renderGraphNodeLearning(node);
 
   typesetMath(document.getElementById("graphDetailConcepts"));
 }
@@ -3726,12 +3743,15 @@ async function recordGradingEvent(result, payload) {
   const selected = gradingState.selectedQuestion;
   const questionType = document.getElementById("gradingQuestionType").value;
   const maxScore = Number(result.max_score || payload.max_score || 10);
+  // node_id 必须用真实的 leaf 节点 ID（如 pl_02_02、fl_01_01），否则 mastery 计算找不到节点。
+  // 旧实现用 `grading_${payload.kp}` 伪 ID，导致批阅/计算题做完不增长 mastery。
+  const realNodeId = selected?.nodeId || selected?.node_id || payload.kp || payload.node_id || "unknown";
   const eventPayload = {
     user_id: getCurrentUserId(),
     question_id: selected?.id || `manual-${Date.now()}`,
     question_type: questionType === "calc" ? "calc" : "proof",
     module: payload.module,
-    node_id: `grading_${payload.kp}`.slice(0, 100),
+    node_id: String(realNodeId).slice(0, 100),
     is_correct: maxScore ? Number(result.score || 0) / maxScore >= 0.6 : null,
     duration_ms: Math.max(0, Date.now() - gradingState.startedAt),
     answer_text: payload.student_answer,

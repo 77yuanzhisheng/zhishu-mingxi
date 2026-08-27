@@ -215,6 +215,7 @@ def get_structured_questions(
                     "question": item["q"],
                     "answer": item["a"],
                     "kp": item.get("kp", ""),
+                    "node_id": item.get("kp", ""),  # kp 即 leaf node_id，显式返回便于前端落库
                     "fig": item.get("fig"),
                     "grading_guide": GRADING_GUIDE.get(item.get("kp", "")),
                 })
