@@ -2103,26 +2103,6 @@ th {
   top: 476px;
 }
 
-.path-strip {
-  display: grid;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 13px;
-  border: 1px solid #c7dce8;
-  border-radius: 8px;
-  background: #eef8fb;
-}
-
-.path-strip span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.path-strip strong {
-  color: #315f73;
-  line-height: 1.5;
-}
-
 .progress-overview {
   display: grid;
   gap: 10px;

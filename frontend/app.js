@@ -2049,18 +2049,12 @@ function formatKnowledgeSource(metadata) {
 }
 
 function buildNodeSummaryHtml(node, searchQuery) {
-  const countText = node.type === "module"
-    ? `包含 ${node.children?.length || 0} 个子概念`
-    : node.type === "concept"
-      ? `包含 ${node.items?.length || 0} 条知识条目`
-      : `父节点：${node.parentNodeId || node.parentId || "无"}`;
+  // 节点说明只显示 description，移除 search_query / 父节点 / 包含 N 条 等技术性元数据。
   const description = node.description || "暂无节点简介，右侧将从知识库检索对应教材内容。";
 
   return `
     <div class="node-summary">
       <p>${formatAnswerHtml(description)}</p>
-      <div class="node-meta">search_query：${escapeHtml(searchQuery)}</div>
-      <div class="node-meta">${escapeHtml(countText)}</div>
     </div>
   `;
 }
