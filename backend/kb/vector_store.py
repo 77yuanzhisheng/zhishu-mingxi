@@ -24,6 +24,30 @@ from chromadb.config import Settings
 from backend.kb.chunker import Chunk, ChunkMetadata
 from backend.kb.embedder import EmbeddingService
 
+# ----------------------------------------------------------------------
+# chromadb 0.5.5 兼容性补丁：旧 schema 的 seq_id 是 INTEGER，
+# _decode_seq_id 期望 bytes，传入 int 会触发 `len(int)` 崩溃。
+# 兼容处理：int 直接返回（值等价），bytes 走原逻辑。
+# 触发场景：data/chroma 来自旧版本 chromadb，迁移前会有这个错误。
+# ----------------------------------------------------------------------
+try:
+    from chromadb.segment.impl.metadata import sqlite as _chromadb_sqlite
+
+    _original_decode_seq_id = _chromadb_sqlite._decode_seq_id
+
+    def _patched_decode_seq_id(seq_id_bytes):
+        # 旧 dump：sqlite 读出 INTEGER，传给本函数的可能是 int。
+        if isinstance(seq_id_bytes, int):
+            return seq_id_bytes
+        return _original_decode_seq_id(seq_id_bytes)
+
+    _chromadb_sqlite._decode_seq_id = _patched_decode_seq_id
+except Exception as _exc:  # pragma: no cover
+    # 兼容代码失败也不应阻断主流程；log 后继续。
+    logging.getLogger(__name__).warning(
+        "chromadb _decode_seq_id 兼容补丁未应用: %s", _exc
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -183,6 +207,10 @@ class KnowledgeBaseStore:
             src = meta.get("source_document", "") or ""
             if any(keyword in src for keyword in excluded_source_keywords):
                 continue
+            # 英文教材（Rosen Discrete Mathematics Open Introduction）按相似度打 0.85 折，
+            # 让中文教材（老师教材_xxx、命题逻辑.md 等）排前；中文用户优先看中文讲义。
+            if "Discrete_Mathematics_Open_Introduction" in src or "Open_Introduction" in src:
+                score = score * 0.85
             output.append({
                 "chunk_id": ids[i],
                 "content": docs[i] or "",
