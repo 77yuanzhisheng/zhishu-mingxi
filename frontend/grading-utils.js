@@ -70,16 +70,27 @@ function formatGradingText(text) {
 
 function gradingQuestionSummary(text, maxLength = 84) {
   const mathSymbols = {
-    cup: '∪', cap: '∩', in: '∈', notin: '∉',
-    subseteq: '⊆', subset: '⊂', emptyset: '∅',
-    leq: '≤', geq: '≥', neq: '≠', to: '→',
-    Rightarrow: '⇒', Leftrightarrow: '⇔',
+    aleph: 'ℵ', alpha: 'α', beta: 'β', gamma: 'γ', Gamma: 'Γ', chi: 'χ',
+    delta: 'δ', Delta: 'Δ', kappa: 'κ', lambda: 'λ', omega: 'ω', pi: 'π', Sigma: 'Σ',
+    cup: '∪', cap: '∩', in: '∈', notin: '∉', subseteq: '⊆', subset: '⊂',
+    emptyset: '∅', varnothing: '∅', leq: '≤', geq: '≥', neq: '≠', equiv: '≡',
+    to: '→', Rightarrow: '⇒', Leftrightarrow: '⇔', forall: '∀', exists: '∃',
+    neg: '¬', vee: '∨', wedge: '∧', cdot: '·', circ: '∘', times: '×',
+    pm: '±', mid: '|', sim: '∼', infty: '∞', sum: '∑', langle: '⟨', rangle: '⟩',
   };
+  const layoutCommands = new Set(['displaystyle', 'quad', 'left', 'right', 'underline', 'hline']);
   const plain = String(text ?? '')
     .replace(/<br\s*\/?>|\n/gi, ' ')
     .replace(/\$\$?([\s\S]*?)\$\$?/g, '$1')
     .replace(/\\(?:\(|\)|\[|\])/g, '')
-    .replace(/\\(cup|cap|in|notin|subseteq|subset|emptyset|leq|geq|neq|to|Rightarrow|Leftrightarrow)/g, (_, command) => mathSymbols[command])
+    .replace(/\\(?:d?frac|binom)\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)')
+    .replace(/\\sqrt\{([^{}]*)\}/g, '√$1')
+    .replace(/\\(?:text|mathbb|bar|restriction)\{([^{}]*)\}/g, '$1')
+    .replace(/\\([a-zA-Z]+)(?:\{([^{}]*)\})?/g, (_, command, argument) => {
+      if (Object.prototype.hasOwnProperty.call(mathSymbols, command)) return mathSymbols[command];
+      if (layoutCommands.has(command)) return argument || '';
+      return argument || '';
+    })
     .replace(/\bgreater than or equal to\b/gi, '≥')
     .replace(/\bless than or equal to\b/gi, '≤')
     .replace(/\bnot equal to\b/gi, '≠')
@@ -87,11 +98,12 @@ function gradingQuestionSummary(text, maxLength = 84) {
     .replace(/\bunion\b/gi, '∪')
     .replace(/\bbelongs to\b/gi, '∈')
     .replace(/\bnot in\b/gi, '∉')
-    .replace(/\\([a-zA-Z]+)(?:\{([^{}]*)\})?/g, (_, command, argument) => argument || ` ${command} `)
     .replace(/[{}]/g, '')
     .replace(/\s+/g, ' ')
-    .replace(/([∪∩∈∉⊆⊂≤≥≠⇒⇔])\s+/g, '$1')
+    .replace(/([∪∩∈∉⊆⊂≤≥≠≡→⇒⇔∀∃¬∨∧·∘×±|∼∞⟨⟩])\s+/g, '$1')
+    .replace(/\s+([∪∩∈∉⊆⊂≤≥≠≡→⇒⇔∀∃¬∨∧·∘×±|∼∞⟨⟩])/g, '$1')
     .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
     .trim();
   return plain.length > maxLength ? `${plain.slice(0, maxLength - 1).trim()}…` : plain;
 }

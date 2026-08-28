@@ -59,9 +59,37 @@ test('creates a readable Chinese mathematical question summary', () => {
 
 test('normalizes word-based mathematical comparisons in question summaries', () => {
   const summary = gradingQuestionSummary('设 n (greater than or equal to 4)，且 A union B。');
-  assert.equal(summary, '设 n (≥4)，且 A ∪B。');
+  assert.equal(summary, '设 n (≥4)，且 A∪B。');
 });
 
+test('renders common LaTex commands as readable symbols in question summaries', () => {
+  const summary = gradingQuestionSummary(
+    '设 $u$ 是群 $G$ 中任意固定元素，定义新运算 $\\cdot$：$\\forall a,b\\in G, a\\cdot b=au^{-1}b$。'
+  );
+
+  assert.match(summary, /·/);
+  assert.match(summary, /∀/);
+  assert.doesNotMatch(summary, /\\|cdot|forall|displaystyle/i);
+});
+
+test('renders quantified logic and summation notation without LaTex commands', () => {
+  const summary = gradingQuestionSummary(
+    '设 $n$ 阶图，证明：$6\\displaystyle\\sum_{i\\geq 3} S_i - \\sum_{i\\geq 3} iS_i = 12$，且 $\\forall x((F(x)\\vee G(x))\\to H(x))$。'
+  );
+
+  assert.match(summary, /6∑/);
+  assert.match(summary, /∀x\(\(F\(x\)∨G\(x\)\)→H\(x\)\)/);
+  assert.doesNotMatch(summary, /\\|displaystyle|sum|forall|vee|to|geq/i);
+});
+
+test('renders angle brackets and operator commands in question summaries', () => {
+  const summary = gradingQuestionSummary('证明 $\\langle S,\\circ\\rangle$ 的性质，其中 $R\\cap S$ 与 $R\\cup S$ 可交换。', 200);
+
+  assert.match(summary, /⟨S,∘⟩/);
+  assert.match(summary, /R∩S/);
+  assert.match(summary, /R∪S/);
+  assert.doesNotMatch(summary, /\\|langle|circ|rangle/i);
+});
 test('formats question text with safe line breaks and MathJax delimiters', () => {
   const html = formatGradingText('证明 $A\\cup B$。<br><script>alert(1)</script>');
   assert.match(html, /\\\(A\\cup B\\\)/);
