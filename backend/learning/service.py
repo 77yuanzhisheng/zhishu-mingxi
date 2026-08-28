@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from backend.learning.database import connection_scope, init_database
 from backend.learning.models import (
@@ -24,6 +25,12 @@ from backend.learning.models import (
     NodeLearningInsight,
     RadarModule,
 )
+
+if TYPE_CHECKING:
+    from backend.chat.llm import LLMClient
+
+
+MAX_AI_SUMMARY_CHARS = 50
 
 
 MODULE_PREFIXES = {
@@ -781,3 +788,100 @@ def get_learning_report(
         ],
         recent_chat_nodes=_recent_chat_nodes(node_insights),
     )
+
+
+def _fetch_recent_user_questions(
+    user_id: int,
+    database_path: str | Path | None,
+    limit: int = 8,
+) -> list[str]:
+    """Get the user's most recent chat questions across all sessions."""
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT m.content FROM messages m
+            JOIN sessions s ON s.id = m.session_id
+            WHERE s.user_id = ? AND m.role = 'user'
+            ORDER BY m.id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    return [str(row["content"]) for row in rows if row["content"]]
+
+
+def build_ai_summary(
+    user_id: int,
+    *,
+    llm: "LLMClient | None" = None,
+    database_path: str | Path | None = None,
+) -> str:
+    """Use LLM to summarize the user's learning status in <=50 Chinese characters."""
+
+    from backend.chat.llm import OpenAICompatibleLLM
+
+    if user_id <= 0:
+        raise UserNotFoundError(f"用户 {user_id} 不存在")
+
+    report = get_learning_report(user_id, database_path=database_path)
+    summary = report.summary or {}
+    radar = report.radar_data or []
+
+    # 模块得分按值升序（薄弱在前）
+    weak_modules = [
+        f"{item.module}（{item.value:.0f}%）"
+        for item in sorted(radar, key=lambda x: x.value)[:2]
+        if item.value < 60
+    ]
+
+    # 最近答题：取 5 条，统计正确率
+    recent_events = get_answer_events(
+        user_id, limit=10, database_path=database_path
+    ).events
+    recent_graded = [e for e in recent_events if e.is_correct is not None][:5]
+    recent_correct = sum(1 for e in recent_graded if e.is_correct)
+    recent_accuracy = (
+        f"{recent_correct}/{len(recent_graded)}" if recent_graded else "暂无"
+    )
+
+    # 最近问答话题
+    recent_questions = _fetch_recent_user_questions(user_id, database_path, limit=5)
+
+    # 拼 prompt
+    parts = [
+        f"已掌握节点 {summary.get('mastered_nodes', 0)} 个",
+        f"薄弱节点 {summary.get('weak_nodes', 0)} 个",
+        f"累计答题 {summary.get('total_answers', 0)} 题",
+        f"整体正确率 {int((summary.get('overall_accuracy', 0) or 0) * 100)}%",
+    ]
+    if weak_modules:
+        parts.append("薄弱模块：" + "、".join(weak_modules))
+    if recent_graded:
+        parts.append(f"最近 {len(recent_graded)} 题答对 {recent_accuracy}")
+    if recent_questions:
+        sample = " | ".join(q[:30] for q in recent_questions[:3])
+        parts.append(f"近期提问：{sample}")
+
+    evidence = "\n".join(parts) or "暂无学习数据"
+
+    prompt = (
+        "你是离散数学教学助手的学情分析专家。请根据以下学生学习数据，"
+        f"用不超过 {MAX_AI_SUMMARY_CHARS} 个汉字给出一句学情分析，"
+        "指出最主要的薄弱点和下一步建议，不要分点，不要客套。\n\n"
+        f"学情数据：\n{evidence}\n\n学情分析："
+    )
+
+    client = llm or OpenAICompatibleLLM()
+    answer = client.generate([
+        {"role": "system", "content": "你是离散数学教学助手，负责简洁的学情总结。"},
+        {"role": "user", "content": prompt},
+    ])
+    summary_text = (answer or "").strip().splitlines()[0].strip()
+    if not summary_text:
+        return "暂无足够学情数据。"
+    # 截断到 50 字
+    if len(summary_text) > MAX_AI_SUMMARY_CHARS:
+        summary_text = summary_text[:MAX_AI_SUMMARY_CHARS].rstrip("，。,. ") + "。"
+    return summary_text

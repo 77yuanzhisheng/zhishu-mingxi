@@ -17,6 +17,7 @@ from backend.learning.models import (
 )
 from backend.learning.service import (
     UserNotFoundError,
+    build_ai_summary,
     create_answer_event,
     get_ability_profile,
     get_answer_events,
@@ -109,5 +110,18 @@ def learning_report_endpoint(
 ) -> LearningReport:
     try:
         return get_learning_report(user_id)
+    except UserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/ai-summary",
+    summary="AI 综合学情分析（基于问答历史与答题数据，<=50 字）",
+)
+def ai_summary_endpoint(
+    user_id: int = Query(..., gt=0, description="User ID"),
+) -> dict[str, str]:
+    try:
+        return {"summary": build_ai_summary(user_id)}
     except UserNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

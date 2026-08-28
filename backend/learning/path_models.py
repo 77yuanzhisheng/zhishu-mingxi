@@ -41,5 +41,7 @@ class LearningPathResponse(BaseModel):
     data_quality: dict[str, Any]
     diagnosis: dict[str, Any]
     stages: list[LearningPathStage]
+    # 扁平化后的节点 id 列表（按 stage 顺序），给旧版薄 UI 兜底用。
+    path: list[str] = Field(default_factory=list)
     ai_notes: dict[str, Any]
     generated_at: str

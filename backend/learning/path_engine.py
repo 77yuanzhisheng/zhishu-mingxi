@@ -35,6 +35,12 @@ def refresh_learning_path(user_id: int, database_path: str | Path | None = None)
         }
     with connection_scope(database_path) as connection:
         version = next_version(user_id, connection)
+    flat_path: list[str] = []
+    for stage in stages:
+        for node in stage.get("nodes", []):
+            node_id = node.get("node_id")
+            if node_id and node_id not in flat_path:
+                flat_path.append(node_id)
     path = {
         "user_id": user_id,
         "path_id": f"path-{uuid.uuid4().hex[:12]}",
@@ -43,6 +49,7 @@ def refresh_learning_path(user_id: int, database_path: str | Path | None = None)
         "data_quality": data_quality,
         "diagnosis": diagnosis,
         "stages": stages,
+        "path": flat_path,
         "ai_notes": ai_notes,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

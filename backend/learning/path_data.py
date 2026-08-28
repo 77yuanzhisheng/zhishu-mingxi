@@ -122,7 +122,19 @@ def persist_snapshot(path: dict[str, Any], source_summary: dict[str, Any], datab
         )
 
 
+def _flatten_path(stages: list[dict[str, Any]]) -> list[str]:
+    """从嵌套 stages 派生扁平节点列表（兜底旧快照无 path 字段时使用）。"""
+    flat: list[str] = []
+    for stage in stages:
+        for node in stage.get("nodes", []):
+            node_id = node.get("node_id")
+            if node_id and node_id not in flat:
+                flat.append(node_id)
+    return flat
+
+
 def _snapshot_row_to_response(row: sqlite3.Row) -> dict[str, Any]:
+    stages = json.loads(row["stages"])
     return {
         "user_id": row["user_id"],
         "path_id": row["path_id"],
@@ -130,7 +142,8 @@ def _snapshot_row_to_response(row: sqlite3.Row) -> dict[str, Any]:
         "strategy": row["strategy"],
         "data_quality": json.loads(row["data_quality"]),
         "diagnosis": json.loads(row["diagnosis"]),
-        "stages": json.loads(row["stages"]),
+        "stages": stages,
+        "path": _flatten_path(stages),
         "ai_notes": json.loads(row["ai_notes"]),
         "generated_at": row["generated_at"],
     }
