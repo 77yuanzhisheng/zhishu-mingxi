@@ -3828,7 +3828,7 @@ function renderGradingResult(data) {
   document.getElementById("gradingComment").textContent = normalized.comment || "批阅完成，暂无补充评语。";
   const errors = normalized.errors;
   document.getElementById("gradingErrorTypes").innerHTML = errors.length
-    ? errors.map((item) => `<span>${escapeHtml(item)}</span>`).join("")
+    ? errors.map((item) => `<span>${escapeHtml(window.GradingUtils.gradingErrorLabel(item))}</span>`).join("")
     : "<span>未发现典型错误</span>";
 }
 

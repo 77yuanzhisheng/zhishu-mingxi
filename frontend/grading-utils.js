@@ -1,3 +1,12 @@
+const ERROR_TYPE_LABELS = {
+  circular_reasoning: '循环论证',
+  jump_step: '推理跳步',
+  theorem_misuse: '定理误用',
+  notation_error: '符号错误',
+  conclusion_error: '结论错误',
+  calculation_error: '计算错误',
+};
+
 const DIMENSION_RUBRIC = [
   ['conclusion_correctness', '结论正确性', 20],
   ['key_reasoning_steps', '关键推理步骤', 35],
@@ -35,6 +44,10 @@ function normalizeGradingResult(data) {
   };
 }
 
+function gradingErrorLabel(errorType) {
+  return ERROR_TYPE_LABELS[String(errorType ?? '')] || '其他问题';
+}
+
 function escapeGradingHtml(text) {
   return String(text ?? '')
     .replaceAll('&', '&amp;')
@@ -56,26 +69,37 @@ function formatGradingText(text) {
 }
 
 function gradingQuestionSummary(text, maxLength = 84) {
+  const mathSymbols = {
+    cup: '∪', cap: '∩', in: '∈', notin: '∉',
+    subseteq: '⊆', subset: '⊂', emptyset: '∅',
+    leq: '≤', geq: '≥', neq: '≠', to: '→',
+    Rightarrow: '⇒', Leftrightarrow: '⇔',
+  };
   const plain = String(text ?? '')
     .replace(/<br\s*\/?>|\n/gi, ' ')
     .replace(/\$\$?([\s\S]*?)\$\$?/g, '$1')
     .replace(/\\(?:\(|\)|\[|\])/g, '')
-    .replace(/\\(cup|cap|in|notin|subseteq|subset|emptyset|leq|geq|neq|to|Rightarrow|Leftrightarrow)/g, (_, command) => ({
-      cup: ' union ', cap: ' intersection ', in: ' belongs to ', notin: ' not in ',
-      subseteq: ' subset of ', subset: ' proper subset of ', emptyset: ' empty set ',
-      leq: ' less than or equal to ', geq: ' greater than or equal to ', neq: ' not equal to ',
-      to: ' to ', Rightarrow: ' implies ', Leftrightarrow: ' if and only if ',
-    }[command]))
+    .replace(/\\(cup|cap|in|notin|subseteq|subset|emptyset|leq|geq|neq|to|Rightarrow|Leftrightarrow)/g, (_, command) => mathSymbols[command])
+    .replace(/\bgreater than or equal to\b/gi, '≥')
+    .replace(/\bless than or equal to\b/gi, '≤')
+    .replace(/\bnot equal to\b/gi, '≠')
+    .replace(/\bintersection\b/gi, '∩')
+    .replace(/\bunion\b/gi, '∪')
+    .replace(/\bbelongs to\b/gi, '∈')
+    .replace(/\bnot in\b/gi, '∉')
     .replace(/\\([a-zA-Z]+)(?:\{([^{}]*)\})?/g, (_, command, argument) => argument || ` ${command} `)
     .replace(/[{}]/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/([∪∩∈∉⊆⊂≤≥≠⇒⇔])\s+/g, '$1')
+    .replace(/\(\s+/g, '(')
     .trim();
   return plain.length > maxLength ? `${plain.slice(0, maxLength - 1).trim()}…` : plain;
 }
-
 const api = {
+  ERROR_TYPE_LABELS,
   DIMENSION_RUBRIC,
   gradingResultRatio,
+  gradingErrorLabel,
   normalizeGradingResult,
   formatGradingText,
   gradingQuestionSummary,

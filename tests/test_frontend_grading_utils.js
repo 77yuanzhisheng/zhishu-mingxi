@@ -5,6 +5,7 @@ const {
   gradingResultRatio,
   formatGradingText,
   gradingQuestionSummary,
+  gradingErrorLabel,
 } = require('../frontend/grading-utils');
 
 test('normalizes the current grading response into a 100-point five-dimension result', () => {
@@ -44,10 +45,21 @@ test('keeps compatibility with the legacy grading response fields', () => {
   assert.equal(result.comment, '旧接口评语');
 });
 
-test('creates a readable plain-text question summary', () => {
-  const summary = gradingQuestionSummary('设 $A\\cup B$ 为集合。<br>证明 $A\\cap B$ 的性质。');
-  assert.equal(summary, '设 A union B 为集合。 证明 A intersection B 的性质。');
-  assert.doesNotMatch(summary, /[$\\]|<br>/);
+test('localizes grading error type codes for display', () => {
+  assert.equal(gradingErrorLabel('jump_step'), '推理跳步');
+  assert.equal(gradingErrorLabel('calculation_error'), '计算错误');
+  assert.equal(gradingErrorLabel('unknown_error'), '其他问题');
+});
+
+test('creates a readable Chinese mathematical question summary', () => {
+  const summary = gradingQuestionSummary('设 $A\\cup B$ 为集合。<br>证明 $A\\cap B$ 的性质，且 $n(\\geq 4)$。');
+  assert.equal(summary, '设 A∪B 为集合。 证明 A∩B 的性质，且 n(≥4)。');
+  assert.doesNotMatch(summary, /[$\\]|<br>|union|intersection|greater than or equal to/i);
+});
+
+test('normalizes word-based mathematical comparisons in question summaries', () => {
+  const summary = gradingQuestionSummary('设 n (greater than or equal to 4)，且 A union B。');
+  assert.equal(summary, '设 n (≥4)，且 A ∪B。');
 });
 
 test('formats question text with safe line breaks and MathJax delimiters', () => {
