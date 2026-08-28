@@ -102,15 +102,46 @@ let practiceQuestions = [];
 // 用这里的静态映射补全显示。键是 node_id，值是中文名称。
 // 来源：knowledge-graph 端点硬编码的概念名称（队员4 整理）。
 const NODE_NAME_FALLBACKS = {
+  // 命题逻辑
   pl_01_01: "命题",
   pl_01_02: "联结词",
+  pl_02_01: "真值表",
   pl_02_02: "德摩根律",
-  fl_01_02: "全称量词",
+  pl_03_01: "重言式（永真式）",
+  pl_03_02: "主析取范式",
+  pl_03_03: "推理规则",
+  // 谓词逻辑
+  fl_01_01: "谓词 P(x)",
+  fl_01_02: "全称量词 ∀xP(x)",
+  fl_02_01: "量词否定律",
+  fl_02_02: "量词分配律",
+  // 集合论
+  st_01_01: "集合",
+  st_01_02: "子集",
   st_01_03: "幂集",
-  rel_02_01: "自反性",
-  rel_03_01: "等价关系",
+  st_02_01: "并集",
+  st_02_02: "交集",
+  st_02_03: "补集",
+  // 数学归纳法
   mi_01: "数学归纳法",
+  mi_02: "强归纳法",
+  // 关系
+  relation: "关系",
+  rel_01: "关系基本概念",
+  rel_02_01: "自反性",
+  rel_02_02: "对称性",
+  rel_02_03: "传递性",
+  rel_03_01: "等价关系",
+  rel_04_01: "偏序关系",
+  // 图论
+  gt_01_01: "图",
+  gt_02_01: "路径",
+  gt_02_02: "连通性",
   gt_03_01: "握手定理",
+  gt_04_01: "欧拉图",
+  gt_04_02: "哈密顿图",
+  gt_05_01: "树",
+  gt_06_01: "图着色",
 };
 
 // 模块名兜底字典：按 node_id 前缀（pl/fl/st/...）给出模块中文名。
@@ -578,6 +609,7 @@ function switchTab(tabName, updateHistory = true) {
   }
   if (tabName === "learning") {
     loadLearningReport();
+    loadAiSummary();
     setTimeout(() => learningState.chart?.resize(), 0);
   }
   if (tabName === "practice") {
@@ -1997,17 +2029,20 @@ function setGraphView(view) {
 
 function showGraphNodeDetail(node) {
   document.getElementById("graphDetailTitle").textContent = node.name || "知识图谱";
+  const linksEl = document.getElementById("graphDetailLinks");
+  const tasksEl = document.getElementById("graphDetailTasks");
   if (node.level === "overview") {
     // overview 模式只显示标题，不显示任何内部实现/调用细节的占位文字。
+    linksEl.hidden = true;
+    linksEl.innerHTML = "";
+    tasksEl.hidden = true;
+    tasksEl.innerHTML = "";
     return;
   }
 
-  const nodeId = node.nodeId || node.id || "无";
-  const searchQuery = node.searchQuery || node.name || "无";
-  const chapterText = node.chapter ? `章节：${node.chapter} · ` : "";
-  document.getElementById("graphDetailPrereq").textContent = `${chapterText}类型：${getTypeLabel(node.type || node.level)}`;
-  // 知识库内容区显示加载占位，由 loadGraphNodeKnowledge 异步填充（强定义 + 相似度补充）。
-  document.getElementById("graphDetailLinks").innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
+  // 强定义 / 学情追踪 卡片：点击非根节点时展开。
+  linksEl.hidden = false;
+  linksEl.innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
   renderGraphNodeLearning(node);
 }
 
@@ -2017,10 +2052,12 @@ async function loadGraphNodeKnowledge(node) {
     return;
   }
 
-  // 只渲染节点的强定义（节点自带的 text/description 字段），不再追加相似度检索结果。
-  const strongDefinition = (node.text || "").trim();
+  // 节点的强定义：优先用 text（若后端有强定义内容），否则用 description（模块/概念简介）。
+  const strongDefinition = (node.text || node.description || "").trim();
   if (strongDefinition) {
     target.innerHTML = renderStrongDefinition(node, strongDefinition);
+  } else {
+    target.innerHTML = `<p class="muted-line">该节点暂无强定义内容。</p>`;
   }
 }
 
@@ -2082,6 +2119,7 @@ function buildTrackingHtml(node) {
 function renderGraphNodeLearning(node) {
   const target = document.getElementById("graphDetailTasks");
   if (!target) return;
+  target.hidden = false;
   target.innerHTML = buildTrackingHtml(node);
   loadGraphNodeLearning(node);
 }
@@ -2195,7 +2233,7 @@ function updateCurrentLearningNodeText() {
   if (!target) {
     return;
   }
-  target.textContent = `${learningState.currentNodeId} · ${learningState.currentNodeName}`;
+  target.textContent = learningState.currentNodeName || "尚未选择知识点";
 }
 
 function getCurrentUserId() {
@@ -2852,17 +2890,13 @@ async function loadLearningReport(options = {}) {
       weak_nodes: profile.weak_nodes,
     });
     renderLearningReport(report);
-    await Promise.all([
-      loadRecommendedLearningPath(report),
-      loadLearningTimeline(userId),
-    ]);
+    await loadRecommendedLearningPath(report);
   } catch (error) {
     if (options.silent) return;
     learningState.report = null;
     chartBox.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     weakBox.innerHTML = `<p class="error">无法读取真实能力画像。</p>`;
     pathBox.innerHTML = `<p class="error">路径接口暂不可用。</p>`;
-    document.getElementById("learningTimeline").innerHTML = `<p class="error">做题历史读取失败。</p>`;
   }
 }
 
@@ -2909,6 +2943,29 @@ async function refreshGraphMastery() {
   }
 }
 
+async function loadAiSummary() {
+  const target = document.getElementById("aiSummaryResult");
+  if (!target) return;
+  const userId = getCurrentUserId();
+  if (!userId) {
+    target.textContent = "请先登录后再生成学情分析。";
+    return;
+  }
+
+  target.textContent = "正在综合问答与答题数据生成学情分析...";
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/learning/ai-summary?user_id=${encodeURIComponent(userId)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || "学情分析生成失败");
+    }
+    target.textContent = data.summary || "暂无足够学情数据。";
+    target.classList.remove("muted-line");
+  } catch (error) {
+    target.textContent = `学情分析失败：${error.message}`;
+  }
+}
+
 function normalizeLearningReport(raw) {
   const mastered = normalizeLearningNodes(raw.mastered || raw.mastered_nodes || [], "mastered", 4);
   const weak = normalizeLearningNodes(raw.weak || raw.weak_nodes || [], "weak", 1);
@@ -2919,7 +2976,17 @@ function normalizeLearningReport(raw) {
       const level = Number(record.level ?? record.mastery_level ?? 0);
       const status = level >= 3 ? "mastered" : level === 0 ? "unlearned" : level === 1 ? "weak" : "learning";
       const target = status === "mastered" ? mastered : status === "unlearned" ? unlearned : weak;
-      if (!target.some((node) => node.node_id === record.node_id)) {
+      const existing = target.find((node) => node.node_id === record.node_id);
+      if (existing) {
+        // 把 node_mastery 里的统计字段（正确数 / 总数 / 准确率）合并到已有的 weak 节点上，
+        // 让"答对 X/Y"能跟 ability-profile 的"正确率"同时显示。
+        Object.assign(existing, {
+          correct_count: record.correct_count,
+          total_count: record.total_count,
+          accuracy: record.accuracy,
+          module: existing.module || record.module,
+        });
+      } else {
         target.push(normalizeLearningNode(record, status, level));
       }
     });
@@ -3091,7 +3158,7 @@ function renderDashboard(report = learningState.report) {
 
   document.getElementById("todayMinutes").textContent = `${todayMinutes} 分钟`;
   document.getElementById("weeklyQuestions").textContent = weeklyAnswers;
-  document.getElementById("dashboardCurrentNode").textContent = `${learningState.currentNodeId} · ${learningState.currentNodeName}`;
+  document.getElementById("dashboardCurrentNode").textContent = learningState.currentNodeName || "尚未选择知识点";
 
   const mastered = report?.mastered?.length || 0;
   const weak = report?.weak?.length || 0;
@@ -3847,6 +3914,11 @@ function renderWeakNodes(weak) {
 
 function renderRecommendedPath(path, nodeNameMap) {
   const target = document.getElementById("recommendedPath");
+  // 新接口：嵌套 stages + ai_notes（来自 /api/learning/path）
+  if (path && typeof path === "object" && !Array.isArray(path) && Array.isArray(path.stages)) {
+    renderPathStages(target, path);
+    return;
+  }
   if (!path.length) {
     target.textContent = "暂无推荐路径。";
     return;
@@ -3891,6 +3963,80 @@ function renderRecommendedPath(path, nodeNameMap) {
   });
 }
 
+function renderPathStages(target, pathPayload) {
+  const stages = pathPayload.stages || [];
+  const aiNotes = pathPayload.ai_notes || {};
+  const diagnosis = pathPayload.diagnosis || {};
+
+  if (!stages.length) {
+    target.textContent = "暂无推荐路径。";
+    return;
+  }
+
+  const stageLabels = { foundation: "补基", reinforcement: "巩固", advancement: "提升" };
+  const stageIcons = { foundation: "①", reinforcement: "②", advancement: "③" };
+
+  // 顶部 AI 总结 / 诊断文字不在前端展示，直入三段式卡片。
+  const headerHtml = "";
+
+  const stagesHtml = stages.map((stage, stageIndex) => {
+    const label = stageLabels[stage.stage] || stage.title || stage.stage;
+    const icon = stageIcons[stage.stage] || String(stageIndex + 1);
+    const nodes = stage.nodes || [];
+    if (!nodes.length) return "";
+    const nodesHtml = nodes.map((node) => {
+      const nodeId = node.node_id;
+      const name = node.title && !node.title.includes(":") && !node.title.includes("：")
+        ? node.title
+        : findNodeName(nodeId) || nodeId;
+      const evidence = node.evidence || {};
+      const tasks = node.tasks || [];
+      const gate = node.mastery_gate || {};
+      const conf = typeof node.confidence === "number" ? Math.round(node.confidence * 100) : null;
+      const evidenceText = [
+        evidence.mastery ? `掌握度 L${evidence.mastery.level ?? 0} · 正确率 ${Math.round((evidence.mastery.accuracy || 0) * 100)}% · ${evidence.mastery.total_count ?? 0} 题` : "",
+        evidence.practice && evidence.practice.event_count ? `近 ${evidence.practice.event_count} 次练习 · 错题 ${evidence.practice.wrong_count ?? 0}` : "",
+        evidence.qa && evidence.qa.count ? `问答困惑 ${evidence.qa.count} 次` : "",
+      ].filter(Boolean).join(" · ");
+      const tasksHtml = tasks.map((t) => `<li>${escapeHtml(t.title || t.type || "练习")}</li>`).join("");
+      const gateParts = [];
+      if (gate.required_questions) gateParts.push(`${gate.required_questions} 题`);
+      if (typeof gate.accuracy_at_least === "number") gateParts.push(`正确率 ≥ ${Math.round(gate.accuracy_at_least * 100)}%`);
+      return `
+        <article class="path-stage-node">
+          <div class="path-stage-node-head">
+            <div>
+              <strong>${escapeHtml(name)}</strong>
+              <span class="path-priority">优先级 ${(node.priority || 0).toFixed(0)}</span>
+            </div>
+            ${conf !== null ? `<span class="path-confidence" title="置信度">${conf}%</span>` : ""}
+          </div>
+          ${node.reason ? `<p class="path-reason">${escapeHtml(node.reason)}</p>` : ""}
+          ${evidenceText ? `<p class="path-evidence muted-line">${escapeHtml(evidenceText)}</p>` : ""}
+          ${tasksHtml ? `<ul class="path-tasks">${tasksHtml}</ul>` : ""}
+          ${gateParts.length ? `<p class="path-gate">过关条件：${gateParts.map(escapeHtml).join(" · ")}</p>` : ""}
+          <button class="path-learn-button" type="button" data-node-id="${escapeHtml(nodeId)}" data-node-name="${escapeHtml(name)}">进入学习</button>
+        </article>
+      `;
+    }).join("");
+
+    return `
+      <section class="path-stage">
+        <header class="path-stage-header">
+          <span class="path-stage-icon">${icon}</span>
+          <div>
+            <h4>${escapeHtml(label)}${stage.objective ? `<small>${escapeHtml(stage.objective)}</small>` : ""}</h4>
+          </div>
+        </header>
+        <div class="path-stage-nodes">${nodesHtml}</div>
+      </section>
+    `;
+  }).filter(Boolean).join("");
+
+  target.innerHTML = `<div class="path-stages">${headerHtml}${stagesHtml}</div>`;
+  bindLearningNodeButtons(target);
+}
+
 async function loadRecommendedLearningPath(report) {
   const weakNodes = report.weak.map((node) => node.node_id).filter(Boolean);
   const levels = Object.fromEntries(report.weak.map((node) => [node.node_id, node.level ?? 1]));
@@ -3905,10 +4051,14 @@ async function loadRecommendedLearningPath(report) {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(readApiError(data, "学习路径推荐失败"));
-    const path = data.path || data.recommended_path || [];
-    graphState.recommendedPath = path.map((item) => typeof item === "string" ? item : item.node_id).filter(Boolean);
-    renderRecommendedPath(path, new Map(report.weak.map((node) => [node.node_id, node.name])));
-    report.recommended_path = path;
+    // 后端返回 { stages, path, ai_notes, diagnosis, ... } — 直接把整个对象传给渲染器，
+    // 渲染器根据是否含 stages 选择三段式或扁平视图。
+    const pathPayload = data.stages ? data : (data.path || data.recommended_path || []);
+    const flatPath = Array.isArray(pathPayload) ? pathPayload : (data.path || []);
+    graphState.recommendedPath = flatPath.map((item) => typeof item === "string" ? item : item.node_id).filter(Boolean);
+    renderRecommendedPath(pathPayload, new Map(report.weak.map((node) => [node.node_id, node.name])));
+    report.recommended_path = flatPath;
+    report.learning_path = data;
     renderDashboard(report);
     if (graphState.loaded) renderKnowledgeGraph();
   } catch (error) {
@@ -4025,12 +4175,16 @@ function renderGraphRecommendedQuestions(questions, node) {
 
 function bindLearningNodeButtons(container) {
   container.querySelectorAll("[data-node-id]").forEach((button) => {
+    if (button.tagName !== "BUTTON") return; // 只响应按钮点击，忽略 article 等容器
     button.addEventListener("click", () => {
-      learningState.currentNodeId = button.dataset.nodeId || DEFAULT_NODE_ID;
-      learningState.currentNodeName = button.dataset.nodeName || "推荐知识点";
+      const nodeId = button.dataset.nodeId || DEFAULT_NODE_ID;
+      const nodeName = button.dataset.nodeName || findNodeName(nodeId) || "该知识点";
+      learningState.currentNodeId = nodeId;
+      learningState.currentNodeName = nodeName;
       updateCurrentLearningNodeText();
       switchTab("chat");
-      document.getElementById("questionInput").value = `请讲解 ${learningState.currentNodeName}`;
+      document.getElementById("questionInput").value =
+        `请系统讲解「${nodeName}」的定义、定理、典型例题与常见易错点，给出 1-2 道自测题。`;
       document.getElementById("questionInput").focus();
     });
   });
@@ -4042,12 +4196,16 @@ function shortenNodeName(name) {
 }
 
 function formatLearningStat(node) {
-  const viewCount = node.view_count || 0;
-  const answerCount = node.answer_count || 0;
-  if (typeof node.accuracy === "number") {
-    return `浏览 ${viewCount} 次 · 答题 ${answerCount} 次 · 正确率 ${Math.round(node.accuracy * 100)}%`;
+  const correct = Number(node.correct_count ?? 0);
+  const total = Number(node.total_count ?? node.answer_count ?? 0);
+  const accuracyPct = typeof node.accuracy === "number" ? Math.round(node.accuracy * 100) : null;
+  if (total > 0) {
+    return `答对 ${correct}/${total} · 正确率 ${accuracyPct ?? 0}%`;
   }
-  return `浏览 ${viewCount} 次 · 暂无答题记录`;
+  if (accuracyPct !== null) {
+    return `正确率 ${accuracyPct}%`;
+  }
+  return "暂无答题记录";
 }
 
 function resetKnowledgeGraph() {
@@ -4174,6 +4332,8 @@ function isRecommendedNode(node) {
 }
 
 function findNodeName(nodeId) {
+  if (!nodeId) return "未知知识点";
+  if (NODE_NAME_FALLBACKS[nodeId]) return NODE_NAME_FALLBACKS[nodeId];
   for (const module of graphState.modules) {
     if (module.nodeId === nodeId) return module.name;
     for (const concept of module.children || []) {
@@ -4182,7 +4342,7 @@ function findNodeName(nodeId) {
       if (item) return `${module.name} > ${concept.name} > ${item.name}`;
     }
   }
-  return nodeId || "未知知识点";
+  return nodeId;
 }
 
 function truncateText(text, length) {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=37">
+  <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -156,7 +156,7 @@
             <div id="dashboardNextStep" class="next-step-box">正在读取推荐路径...</div>
             <div class="study-card compact-card">
               <h4>当前知识点</h4>
-              <p id="dashboardCurrentNode">rel_02 · 关系性质</p>
+              <p id="dashboardCurrentNode">尚未选择知识点</p>
             </div>
           </aside>
         </div>
@@ -389,6 +389,11 @@
               <button id="refreshLearningButton">刷新学情</button>
             </div>
 
+            <div class="study-card ai-summary-card">
+              <h4>学情分析</h4>
+              <p id="aiSummaryResult" class="muted-line">综合知识库历史问答与答题情况，由 AI 给出 50 字以内的学情洞察。</p>
+            </div>
+
             <div class="learning-summary-grid">
               <article>
                 <span>综合能力</span>
@@ -416,6 +421,11 @@
             <div id="learningChart" class="learning-chart">
               点击刷新学情后展示掌握情况。
             </div>
+
+            <div class="study-card">
+              <h4>推荐学习路径</h4>
+              <div id="recommendedPath" class="path-list">暂无数据。</div>
+            </div>
           </section>
 
           <aside class="insight-panel">
@@ -423,25 +433,10 @@
             <div id="weakNodes" class="learning-node-list empty-state">暂无数据。</div>
 
             <div class="study-card">
-              <h4>推荐学习路径</h4>
-              <div id="recommendedPath" class="path-list">暂无数据。</div>
-            </div>
-
-            <div class="study-card">
               <h4>当前追踪节点</h4>
-              <p id="currentLearningNode">rel_02 · 关系性质</p>
+              <p id="currentLearningNode">尚未选择知识点</p>
             </div>
           </aside>
-
-          <section class="work-panel learning-history-panel">
-            <div class="section-title">
-              <div>
-                <p class="eyebrow">Practice Timeline</p>
-                <h3>做题历史时间线</h3>
-              </div>
-            </div>
-            <div id="learningTimeline" class="learning-timeline empty-state">暂无做题记录。</div>
-          </section>
         </div>
       </section>
 
@@ -675,6 +670,6 @@
     };
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
-  <script defer src="app.js?v=40"></script>
+  <script defer src="app.js?v=49"></script>
 </body>
 </html>

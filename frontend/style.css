@@ -452,6 +452,36 @@ button:disabled {
   font-size: 32px;
 }
 
+.ai-summary-card {
+  padding: 22px 26px;
+  background: linear-gradient(135deg, #f4f8fb 0%, #e8f0f7 100%);
+  border: 1px solid #c8dceb;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(31, 95, 139, 0.08);
+}
+
+.ai-summary-card h4 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  color: var(--primary);
+  letter-spacing: 0.5px;
+}
+
+.ai-summary-card #aiSummaryResult {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.7;
+  color: #1f3a52;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.ai-summary-card #aiSummaryResult.muted-line {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
 .learning-chart {
   display: grid;
   min-height: 430px;
@@ -2590,4 +2620,163 @@ th {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* 个性化学习路径（三段式）样式 */
+.path-stages {
+  display: grid;
+  gap: 14px;
+}
+
+.path-stages-header {
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #f4f8fb 0%, #e8f0f7 100%);
+  border: 1px solid #c8dceb;
+  border-radius: 10px;
+}
+
+.path-ai-summary {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f3a52;
+  font-weight: 500;
+}
+
+.path-diagnosis {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.path-stage {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.path-stage-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f7fafc;
+  border-bottom: 1px solid var(--line);
+}
+
+.path-stage-icon {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--primary);
+  min-width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  background: #e7f1f8;
+  border-radius: 50%;
+}
+
+.path-stage-header h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--primary);
+}
+
+.path-stage-header small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.path-stage-nodes {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.path-stage-node {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfe;
+}
+
+.path-stage-node-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.path-stage-node-head strong {
+  font-size: 14px;
+  color: #1f3a52;
+}
+
+.path-priority {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #6b7c93;
+  background: #eef2f7;
+  border-radius: 4px;
+}
+
+.path-confidence {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f8f83;
+}
+
+.path-reason {
+  margin: 4px 0 6px;
+  font-size: 13px;
+  color: #314559;
+  line-height: 1.55;
+}
+
+.path-evidence {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.path-tasks {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #314559;
+  line-height: 1.6;
+}
+
+.path-tasks li {
+  list-style: disc;
+}
+
+.path-gate {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  font-size: 11px;
+  color: #6b7c93;
+  border-top: 1px dashed #e0e7ef;
+}
+
+.path-learn-button {
+  margin-top: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #ffffff;
+  background: var(--primary);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.path-learn-button:hover {
+  background: #1f5f8b;
 }
