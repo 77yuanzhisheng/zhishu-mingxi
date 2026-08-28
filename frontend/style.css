@@ -731,6 +731,16 @@ button:disabled {
   line-height: 1.65;
 }
 
+.grading-question-preview {
+  min-height: 96px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fbff;
+  color: var(--ink);
+  line-height: 1.8;
+}
+
 .grading-meta-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

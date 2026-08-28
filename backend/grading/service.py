@@ -89,6 +89,7 @@ class GradingService:
                 payload = json.loads(raw)
                 if not isinstance(payload, dict):
                     raise ValueError('JSON root must be an object')
+                self._normalize_error_types(payload)
                 validator(payload)
                 return payload, attempt
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -125,6 +126,14 @@ class GradingService:
         if not isinstance(payload.get('review_notes'), str) or not payload['review_notes'].strip():
             raise ValueError('review_notes is required')
 
+    @staticmethod
+    def _normalize_error_types(payload: dict) -> None:
+        errors = payload.get('error_types')
+        if not isinstance(errors, list):
+            return
+        payload['error_types'] = list(dict.fromkeys(
+            error for error in errors if isinstance(error, str) and error in ERROR_TYPES
+        ))
     @staticmethod
     def _validate_rubric(payload: dict) -> None:
         scores = payload.get('dimension_scores')

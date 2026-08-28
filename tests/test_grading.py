@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sqlite3
@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.chat.exceptions import LLMUnavailableError
 from backend.grading.models import GradeRequest
+from backend.grading.prompts import repair_messages
 from backend.grading.router import get_grading_service, router
 from backend.grading.service import GradingService, InvalidGradingOutputError
 from backend.learning.database import connection_scope
@@ -114,6 +115,23 @@ def test_grade_resolves_question_bank_guide_repairs_json_and_persists(tmp_path, 
     assert json.loads(row['dimension_scores'])['key_reasoning_steps'] == 30
     assert json.loads(row['review_json'])['approved'] is True
 
+
+def test_grade_normalizes_unsupported_error_types_after_review(tmp_path):
+    review = valid_review()
+    review['error_types'] = ['calculation_error', 'jump_step']
+    llm = ScriptedLLM([valid_analysis(), valid_scoring(), review])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer')
+    )
+
+    assert result.error_types == ['jump_step']
+
+
+def test_review_repair_prompt_requires_explicit_approval():
+    prompt = repair_messages('review', '{dimension_scores: {}}', 'missing approved')
+
+    assert 'approved:true' in prompt[1]['content']
 
 def test_grade_rejects_invalid_model_scores_after_repair(tmp_path):
     invalid_scoring = valid_scoring()

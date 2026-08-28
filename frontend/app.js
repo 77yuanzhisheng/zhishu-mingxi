@@ -3682,7 +3682,7 @@ async function loadGradingQuestions() {
     const data = await fetchApiJson(`/api/kb/structured-questions?type=${encodeURIComponent(type)}&limit=50`);
     gradingState.questions = Array.isArray(data.questions) ? data.questions : [];
     select.innerHTML = gradingState.questions.length
-      ? gradingState.questions.map((question, index) => `<option value="${index}">${escapeHtml(question.question).slice(0, 72)}</option>`).join("")
+      ? gradingState.questions.map((question, index) => `<option value="${index}">${escapeHtml(window.GradingUtils.gradingQuestionSummary(question.question))}</option>`).join("")
       : '<option value="">该类型暂无结构化题目</option>';
     gradingState.loaded = true;
     if (gradingState.questions.length) {
@@ -3702,6 +3702,12 @@ function selectGradingQuestion() {
   gradingState.selectedQuestion = question;
   gradingState.startedAt = Date.now();
   document.getElementById("gradingQuestion").value = question.question || "";
+  const questionInput = document.getElementById("gradingQuestion");
+  const questionPreview = document.getElementById("gradingQuestionPreview");
+  questionPreview.innerHTML = window.GradingUtils.formatGradingText(question.question || "");
+  questionPreview.hidden = false;
+  questionInput.hidden = true;
+  typesetMath(questionPreview);
   document.getElementById("gradingReference").value = question.answer || "";
   document.getElementById("gradingKp").value = question.kp || "general";
   document.getElementById("gradingModule").value = getGradingModule(question.kp);

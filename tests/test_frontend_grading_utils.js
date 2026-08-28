@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeGradingResult, gradingResultRatio } = require('../frontend/grading-utils');
+const {
+  normalizeGradingResult,
+  gradingResultRatio,
+  formatGradingText,
+  gradingQuestionSummary,
+} = require('../frontend/grading-utils');
 
 test('normalizes the current grading response into a 100-point five-dimension result', () => {
   const result = normalizeGradingResult({
@@ -37,4 +42,17 @@ test('keeps compatibility with the legacy grading response fields', () => {
   assert.equal(result.maxScore, 10);
   assert.deepEqual(result.dimensions[0], { name: '结论', score: 7, maxScore: 10 });
   assert.equal(result.comment, '旧接口评语');
+});
+
+test('creates a readable plain-text question summary', () => {
+  const summary = gradingQuestionSummary('设 $A\\cup B$ 为集合。<br>证明 $A\\cap B$ 的性质。');
+  assert.equal(summary, '设 A union B 为集合。 证明 A intersection B 的性质。');
+  assert.doesNotMatch(summary, /[$\\]|<br>/);
+});
+
+test('formats question text with safe line breaks and MathJax delimiters', () => {
+  const html = formatGradingText('证明 $A\\cup B$。<br><script>alert(1)</script>');
+  assert.match(html, /\\\(A\\cup B\\\)/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.equal((html.match(/<br>/g) || []).length, 1);
 });

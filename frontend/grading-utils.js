@@ -35,7 +35,51 @@ function normalizeGradingResult(data) {
   };
 }
 
-const api = { DIMENSION_RUBRIC, gradingResultRatio, normalizeGradingResult };
+function escapeGradingHtml(text) {
+  return String(text ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function normalizeGradingLatex(text) {
+  return String(text ?? '')
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_, body) => `\\[${body.trim()}\\]`)
+    .replace(/(^|[^\\])\$([^$\n]+?)\$/g, (_, prefix, body) => `${prefix}\\(${body.trim()}\\)`);
+}
+
+function formatGradingText(text) {
+  const normalized = normalizeGradingLatex(String(text ?? '').replace(/\r\n?/g, '\n'));
+  return normalized.split(/<br\s*\/?>|\n/i).map((line) => escapeGradingHtml(line)).join('<br>');
+}
+
+function gradingQuestionSummary(text, maxLength = 84) {
+  const plain = String(text ?? '')
+    .replace(/<br\s*\/?>|\n/gi, ' ')
+    .replace(/\$\$?([\s\S]*?)\$\$?/g, '$1')
+    .replace(/\\(?:\(|\)|\[|\])/g, '')
+    .replace(/\\(cup|cap|in|notin|subseteq|subset|emptyset|leq|geq|neq|to|Rightarrow|Leftrightarrow)/g, (_, command) => ({
+      cup: ' union ', cap: ' intersection ', in: ' belongs to ', notin: ' not in ',
+      subseteq: ' subset of ', subset: ' proper subset of ', emptyset: ' empty set ',
+      leq: ' less than or equal to ', geq: ' greater than or equal to ', neq: ' not equal to ',
+      to: ' to ', Rightarrow: ' implies ', Leftrightarrow: ' if and only if ',
+    }[command]))
+    .replace(/\\([a-zA-Z]+)(?:\{([^{}]*)\})?/g, (_, command, argument) => argument || ` ${command} `)
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > maxLength ? `${plain.slice(0, maxLength - 1).trim()}…` : plain;
+}
+
+const api = {
+  DIMENSION_RUBRIC,
+  gradingResultRatio,
+  normalizeGradingResult,
+  formatGradingText,
+  gradingQuestionSummary,
+};
 
 if (typeof window !== "undefined") window.GradingUtils = api;
 if (typeof module !== "undefined" && module.exports) module.exports = api;
