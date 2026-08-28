@@ -3801,25 +3801,26 @@ async function submitForGrading(event) {
 }
 
 function renderGradingResult(data) {
-  const score = Number(data.score || 0);
-  const maxScore = Number(data.max_score || document.getElementById("gradingMaxScore").value || 10);
-  const ratio = maxScore ? score / maxScore : 0;
+  const normalized = window.GradingUtils.normalizeGradingResult(data);
+  const score = normalized.score;
+  const maxScore = normalized.maxScore;
+  const ratio = window.GradingUtils.gradingResultRatio(data);
   document.getElementById("gradingScore").textContent = `${score}/${maxScore}`;
   const badge = document.getElementById("gradingStatusBadge");
   badge.className = `mastery-badge ${ratio >= 0.85 ? "mastered" : ratio >= 0.6 ? "learning" : "weak"}`;
   badge.textContent = ratio >= 0.85 ? "优秀" : ratio >= 0.6 ? "达标" : "需订正";
 
-  const dimensions = Array.isArray(data.dimensions) ? data.dimensions : [];
+  const dimensions = normalized.dimensions;
   const target = document.getElementById("gradingDimensions");
   target.className = "grading-dimensions";
   target.innerHTML = dimensions.length ? dimensions.map((dimension) => {
     const dimensionScore = Number(dimension.score || 0);
-    const dimensionMax = Number(dimension.max_score || maxScore * Number(dimension.weight || 0) || maxScore);
+    const dimensionMax = Number(dimension.maxScore || maxScore);
     const percent = Math.max(0, Math.min(100, Math.round((dimensionScore / dimensionMax) * 100)));
     return `<article><div><strong>${escapeHtml(dimension.name || "评分维度")}</strong><span>${dimensionScore}/${Number(dimensionMax.toFixed(2))}</span></div><div class="dimension-track"><span style="width:${percent}%"></span></div></article>`;
   }).join("") : '<p class="empty-state">接口未返回五维评分明细。</p>';
-  document.getElementById("gradingComment").textContent = data.comment || "批阅完成，暂无补充评语。";
-  const errors = Array.isArray(data.error_types) ? data.error_types : [];
+  document.getElementById("gradingComment").textContent = normalized.comment || "批阅完成，暂无补充评语。";
+  const errors = normalized.errors;
   document.getElementById("gradingErrorTypes").innerHTML = errors.length
     ? errors.map((item) => `<span>${escapeHtml(item)}</span>`).join("")
     : "<span>未发现典型错误</span>";
@@ -3828,7 +3829,8 @@ function renderGradingResult(data) {
 async function recordGradingEvent(result, payload) {
   const selected = gradingState.selectedQuestion;
   const questionType = document.getElementById("gradingQuestionType").value;
-  const maxScore = Number(result.max_score || payload.max_score || 10);
+  const normalized = window.GradingUtils.normalizeGradingResult(result);
+  const maxScore = normalized.maxScore;
   // node_id 必须用真实的 leaf 节点 ID（如 pl_02_02、fl_01_01），否则 mastery 计算找不到节点。
   // 旧实现用 `grading_${payload.kp}` 伪 ID，导致批阅/计算题做完不增长 mastery。
   const realNodeId = selected?.nodeId || selected?.node_id || payload.kp || payload.node_id || "unknown";
@@ -3838,7 +3840,7 @@ async function recordGradingEvent(result, payload) {
     question_type: questionType === "calc" ? "calc" : "proof",
     module: payload.module,
     node_id: String(realNodeId).slice(0, 100),
-    is_correct: maxScore ? Number(result.score || 0) / maxScore >= 0.6 : null,
+    is_correct: maxScore ? normalized.score / maxScore >= 0.6 : null,
     duration_ms: Math.max(0, Date.now() - gradingState.startedAt),
     answer_text: payload.student_answer,
   };
