@@ -26,6 +26,7 @@ const tabRoutes = {
   classes: "/classes",
   exam: "/exam",
   tools: "/tools",
+  textbook: "/textbook",
 };
 
 const titles = {
@@ -37,6 +38,7 @@ const titles = {
   learning: "学情分析",
   classes: "班级管理",
   exam: "在线考试",
+  textbook: "Web 交互式教材 2.0",
 };
 
 const graphState = {
@@ -352,6 +354,10 @@ document.querySelectorAll(".nav-item").forEach((item) => {
 });
 window.addEventListener("popstate", () => switchTab(getTabFromLocation(), false));
 window.addEventListener("resize", () => extendedToolState.hasseChart?.resize());
+document.getElementById("reloadTextbookFrame")?.addEventListener("click", () => {
+  const frame = document.getElementById("textbookFrame");
+  if (frame) frame.src = frame.src;
+});
 
 document.querySelectorAll(".sample-button").forEach((button) => {
   button.addEventListener("click", () => {

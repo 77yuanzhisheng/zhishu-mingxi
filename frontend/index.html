@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=42">
+  <link rel="stylesheet" href="style.css?v=43">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -102,6 +102,10 @@
         <button class="nav-item" data-tab="exam">
           <span>测评</span>
           <strong>在线考试</strong>
+        </button>
+        <button class="nav-item" data-tab="textbook">
+          <span>Web 教材</span>
+          <strong>交互式教材 2.0</strong>
         </button>
       </nav>
 
@@ -649,6 +653,26 @@
           </aside>
         </div>
       </section>
+
+      <section id="textbook" class="panel">
+        <div class="textbook-shell">
+          <header class="textbook-toolbar">
+            <div>
+              <p class="eyebrow">Interactive Textbook 2.0</p>
+              <h3>可计算 · 可证明 · 可构造 · Web 交互式教材</h3>
+            </div>
+            <div class="textbook-actions">
+              <a class="ghost-button" href="/textbook/index.html" target="_blank" rel="noopener">新窗口打开 ↗</a>
+              <a class="ghost-button" href="/textbook/%E8%AE%AD%E7%BB%83%E9%A2%98%E5%BA%93.html" target="_blank" rel="noopener">训练题库 ↗</a>
+              <button id="reloadTextbookFrame" class="ghost-button" type="button">重新加载</button>
+            </div>
+          </header>
+          <div class="textbook-hint">
+            每个知识点右上角的 🤖 走 <code>/chat</code>（Qwen3-8B + bge 检索），训练题库的 ✍️ AI 评阅走 <code>/api/grading</code>（五维评分）。
+          </div>
+          <iframe id="textbookFrame" class="textbook-frame" src="/textbook/index.html" title="Web 交互式教材 2.0" allow="fullscreen"></iframe>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -670,6 +694,6 @@
     };
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
-  <script defer src="app.js?v=49"></script>
+  <script defer src="app.js?v=50"></script>
 </body>
 </html>
