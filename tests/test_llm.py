@@ -82,6 +82,23 @@ def test_transient_timeout_is_retried(tmp_path, monkeypatch):
     assert attempts == 2
 
 
+def test_thinking_setting_is_sent_to_vllm_chat_template(tmp_path, monkeypatch):
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "OPENAI_BASE_URL=http://127.0.0.1:18000/v1\n"
+        "OPENAI_CHAT_MODEL=qwen38-27b\n"
+        "OPENAI_ENABLE_THINKING=false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    llm = OpenAICompatibleLLM()
+
+    assert llm._payload([{ "role": "user", "content": "test" }])["chat_template_kwargs"] == {
+        "enable_thinking": False
+    }
+
+
 def test_stream_parses_openai_sse_deltas(tmp_path, monkeypatch):
     dotenv_path = tmp_path / ".env"
     dotenv_path.write_text(

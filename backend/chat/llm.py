@@ -193,5 +193,7 @@ class OpenAICompatibleLLM:
             "max_tokens": self.max_tokens,
         }
         if self.enable_thinking is not None:
-            payload["enable_thinking"] = self.enable_thinking
+            payload["chat_template_kwargs"] = {
+                "enable_thinking": self.enable_thinking,
+            }
         return payload
