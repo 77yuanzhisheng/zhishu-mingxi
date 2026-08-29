@@ -137,10 +137,12 @@ class GradingService:
             if not 0 <= score <= maximum:
                 raise ValueError(f'{dimension} is outside its allowed range')
         errors = payload.get('error_types')
-        if not isinstance(errors, list) or any(error not in ERROR_TYPES for error in errors):
-            raise ValueError('error_types contains unsupported values')
-        if len(errors) != len(set(errors)):
-            raise ValueError('error_types must not contain duplicates')
+        if not isinstance(errors, list):
+            raise ValueError('error_types must be a list')
+        # 宽容 LLM 输出：把不在白名单的未知值直接过滤掉，不阻断整次批阅。
+        filtered = [e for e in errors if isinstance(e, str) and e in ERROR_TYPES]
+        filtered = list(dict.fromkeys(filtered))
+        payload['error_types'] = filtered
         if not isinstance(payload.get('feedback'), str) or not payload['feedback'].strip():
             raise ValueError('feedback is required')
 
