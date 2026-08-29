@@ -68,6 +68,11 @@ def review_messages(context, student_answer: str, scoring: dict) -> list[dict[st
 
 
 def repair_messages(stage: str, invalid_output: str, error: str) -> list[dict[str, str]]:
+    contracts = {
+        'analysis': 'Return {key_steps:[string],missing_steps:[string],error_candidates:[string]}.',
+        'scoring': 'Return a valid scoring JSON object with all five dimension scores, allowed error_types, evidence, and feedback.',
+        'review': 'Return {approved:true,dimension_scores:{all five keys},error_types:[allowed values],evidence:[objects],feedback:string,review_notes:string}. approved must be the JSON boolean true.',
+    }
     return [
         {
             'role': 'system',
@@ -75,7 +80,9 @@ def repair_messages(stage: str, invalid_output: str, error: str) -> list[dict[st
         },
         {
             'role': 'user',
-            'content': f'stage: {stage}\nvalidation error: {error}\ninvalid output:\n{invalid_output}',
+            'content': 'stage: {}\nvalidation error: {}\n{}\ninvalid output:\n{}'.format(
+                stage, error, contracts.get(stage, 'Return a valid JSON object.'), invalid_output
+            ),
         },
     ]
 
