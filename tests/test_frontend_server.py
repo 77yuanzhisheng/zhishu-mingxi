@@ -1,34 +1,29 @@
 from __future__ import annotations
 
-from pathlib import Path
+from functools import partial
+from http.server import ThreadingHTTPServer
+from threading import Thread
+from urllib.request import urlopen
 
-from frontend.server import resolve_textbook_directory, textbook_fallback_path
+from frontend.server import FrontendHandler
 
 
-def test_textbook_uses_configured_external_directory(tmp_path, monkeypatch):
+def test_textbook_assets_are_served_from_the_frontend_directory(tmp_path):
     textbook = tmp_path / 'textbook'
     textbook.mkdir()
-    (textbook / 'index.html').write_text('<h1>??</h1>', encoding='utf-8')
-    monkeypatch.setenv('TEXTBOOK_DIR', str(textbook))
+    (textbook / 'index.html').write_text('<h1>real interactive textbook</h1>', encoding='utf-8')
 
-    assert resolve_textbook_directory() == textbook.resolve()
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(FrontendHandler, directory=str(tmp_path)))
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f'http://127.0.0.1:{server.server_port}/textbook/index.html'
+        with urlopen(url, timeout=5) as response:
+            body = response.read().decode('utf-8')
 
-
-def test_textbook_has_a_non_blank_fallback_when_external_resource_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv('TEXTBOOK_DIR', str(tmp_path / 'missing-textbook'))
-
-    fallback = textbook_fallback_path()
-
-    assert resolve_textbook_directory() is None
-    assert fallback.name == 'textbook-unavailable.html'
-    assert fallback.is_file()
-
-
-def test_textbook_uses_frontend_junction_when_no_environment_path_is_set(tmp_path, monkeypatch):
-    textbook = tmp_path / 'textbook'
-    textbook.mkdir()
-    (textbook / 'index.html').write_text('<h1>??</h1>', encoding='utf-8')
-    monkeypatch.delenv('TEXTBOOK_DIR', raising=False)
-    monkeypatch.setattr('frontend.server.FRONTEND_DIR', tmp_path)
-
-    assert resolve_textbook_directory() == textbook.resolve()
+        assert response.status == 200
+        assert 'real interactive textbook' in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
