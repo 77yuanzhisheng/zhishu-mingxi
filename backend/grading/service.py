@@ -23,10 +23,8 @@ from backend.grading.models import (
 )
 from backend.grading.prompts import (
     PROMPT_VERSION,
-    analysis_messages,
+    grading_messages,
     repair_messages,
-    review_messages,
-    scoring_messages,
 )
 from backend.learning.database import connection_scope, init_database
 
@@ -48,9 +46,16 @@ class GradingService:
             knowledge_points=request.knowledge_points,
         )
         started_at = time.perf_counter()
-        analysis, analysis_attempts = self._run_json('analysis', analysis_messages(context, request.student_answer), self._validate_analysis)
-        scoring, scoring_attempts = self._run_json('scoring', scoring_messages(context, request.student_answer, analysis), self._validate_scoring)
-        review, review_attempts = self._run_json('review', review_messages(context, request.student_answer, scoring), self._validate_review)
+        # A three-request cloud pipeline caused the synchronous endpoint to appear stuck.
+        # Keep the same auditable artifacts, but obtain them in one constrained response.
+        grade_payload, grade_attempts = self._run_json(
+            'grade',
+            grading_messages(context, request.student_answer),
+            self._validate_grade,
+        )
+        analysis = grade_payload['analysis']
+        scoring = self._scoring_snapshot(grade_payload)
+        review = self._review_snapshot(grade_payload)
         scores = DimensionScores(**review['dimension_scores'])
         errors = review['error_types']
         reliability = evaluate_reliability(
@@ -59,7 +64,7 @@ class GradingService:
             evidence=review['evidence'],
         )
         latency_ms = round((time.perf_counter() - started_at) * 1000)
-        attempts = GradingAttempts(analysis=analysis_attempts, scoring=scoring_attempts, review=review_attempts)
+        attempts = GradingAttempts(analysis=grade_attempts, scoring=grade_attempts, review=grade_attempts)
         result_id = self._persist(context, request.student_answer, scores, errors, review['evidence'], analysis, scoring, review, attempts, latency_ms, reliability)
         return GradeResponse(
             result_id=result_id,
@@ -83,7 +88,7 @@ class GradingService:
         )
 
     def _run_json(self, stage: str, messages: list[dict[str, str]], validator) -> tuple[dict, int]:
-        raw = self.llm.generate(messages)
+        raw = self._generate_json(messages)
         for attempt in (1, 2):
             try:
                 payload = json.loads(raw)
@@ -95,8 +100,39 @@ class GradingService:
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 if attempt == 2:
                     raise InvalidGradingOutputError(f'{stage} output failed validation after one repair: {exc}') from exc
-                raw = self.llm.generate(repair_messages(stage, raw, str(exc)))
+                raw = self._generate_json(repair_messages(stage, raw, str(exc)))
         raise AssertionError('unreachable')
+
+    def _generate_json(self, messages: list[dict[str, str]]) -> str:
+        """Use provider JSON mode when available, while retaining test and provider compatibility."""
+        generate_json = getattr(self.llm, 'generate_json', None)
+        if callable(generate_json):
+            return generate_json(messages)
+        return self.llm.generate(messages)
+
+    @staticmethod
+    def _validate_grade(payload: dict) -> None:
+        analysis = payload.get('analysis')
+        if not isinstance(analysis, dict):
+            raise ValueError('analysis must be an object')
+        GradingService._validate_analysis(analysis)
+        GradingService._validate_review(payload)
+
+    @staticmethod
+    def _scoring_snapshot(payload: dict) -> dict:
+        return {
+            key: payload[key]
+            for key in ('dimension_scores', 'error_types', 'evidence', 'feedback')
+        }
+
+    @staticmethod
+    def _review_snapshot(payload: dict) -> dict:
+        return {
+            key: payload[key]
+            for key in (
+                'approved', 'dimension_scores', 'error_types', 'evidence', 'feedback', 'review_notes'
+            )
+        }
 
     @staticmethod
     def _validate_analysis(payload: dict) -> None:

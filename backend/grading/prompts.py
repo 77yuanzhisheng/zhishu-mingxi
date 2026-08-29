@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 
-PROMPT_VERSION = 'grading-v1.0'
+PROMPT_VERSION = 'grading-v1.1-fast'
 
 RUBRIC = {
     'conclusion_correctness': 20,
@@ -26,6 +26,32 @@ def _context_block(context) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def grading_messages(context, student_answer: str) -> list[dict[str, str]]:
+    """Request all auditable grading artifacts in one concise model response."""
+    return [
+        {
+            'role': 'system',
+            'content': (
+                'You are a rigorous discrete mathematics grader. Return one valid JSON object only, '
+                'with no markdown. Be concise: at most 3 items in each analysis list and evidence list; '
+                'feedback must be Chinese and no more than 120 Chinese characters.'
+            ),
+        },
+        {
+            'role': 'user',
+            'content': (
+                f'{_context_block(context)}\nstudent_answer: {student_answer}\n'
+                f'rubric maximums: {json.dumps(RUBRIC)}\n'
+                'Allowed error_types: circular_reasoning, jump_step, theorem_misuse, notation_error, conclusion_error. '
+                'Return {analysis:{key_steps:[string],missing_steps:[string],error_candidates:[string]},'
+                'approved:true,dimension_scores:{all five keys},error_types:[allowed values],'
+                'evidence:[{dimension:key,student_excerpt:string,reason:string}],feedback:string,review_notes:string}. '
+                'Grade only reasoning that the student explicitly wrote.'
+            ),
+        },
+    ]
 
 
 def analysis_messages(context, student_answer: str) -> list[dict[str, str]]:

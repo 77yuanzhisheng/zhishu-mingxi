@@ -72,9 +72,26 @@ class OpenAICompatibleLLM:
             )
 
     def generate(self, messages: list[dict[str, str]]) -> str:
+        return self._generate(messages)
+
+    def generate_json(self, messages: list[dict[str, str]]) -> str:
+        """Generate a short JSON object for structured downstream workflows."""
+        return self._generate(
+            messages,
+            response_format={"type": "json_object"},
+            max_tokens=min(self.max_tokens, max(256, int(os.getenv("GRADING_MAX_TOKENS", "500")))),
+        )
+
+    def _generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        response_format: dict | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
         self.ensure_available()
         headers = self._headers()
-        payload = self._payload(messages)
+        payload = self._payload(messages, response_format=response_format, max_tokens=max_tokens)
         answer = None
         retryable_statuses = {429, 500, 502, 503, 504}
         for attempt in range(self.max_retries + 1):
@@ -99,7 +116,7 @@ class OpenAICompatibleLLM:
                 break
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 if attempt >= self.max_retries:
-                    raise LLMUnavailableError(f"LLM 调用失败：{exc}") from exc
+                    raise LLMUnavailableError(f"LLM request failed: {exc}") from exc
                 logger.warning(
                     "LLM network timeout; retry %s/%s",
                     attempt + 1,
@@ -107,9 +124,9 @@ class OpenAICompatibleLLM:
                 )
                 time.sleep(min(2 ** attempt, 4))
             except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-                raise LLMUnavailableError(f"LLM 调用失败：{exc}") from exc
+                raise LLMUnavailableError(f"LLM request failed: {exc}") from exc
         if not isinstance(answer, str) or not answer.strip():
-            raise LLMUnavailableError("LLM 返回了空回答")
+            raise LLMUnavailableError("LLM returned an empty answer")
         return answer.strip()
 
     def stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
@@ -185,13 +202,21 @@ class OpenAICompatibleLLM:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _payload(self, messages: list[dict[str, str]]) -> dict:
+    def _payload(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        response_format: dict | None = None,
+        max_tokens: int | None = None,
+    ) -> dict:
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.3,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         if self.enable_thinking is not None:
             payload["chat_template_kwargs"] = {
                 "enable_thinking": self.enable_thinking,

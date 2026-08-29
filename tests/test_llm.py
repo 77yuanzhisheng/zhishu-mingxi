@@ -137,3 +137,30 @@ def test_stream_parses_openai_sse_deltas(tmp_path, monkeypatch):
     assert list(llm.stream([{"role": "user", "content": "你好"}])) == ["逐", "字"]
     assert captured["method"] == "POST"
     assert captured["payload"]["stream"] is True
+
+
+def test_generate_json_requests_json_object_and_uses_grading_token_cap(tmp_path, monkeypatch):
+    (tmp_path / '.env').write_text(
+        'OPENAI_BASE_URL=https://example.test/v1\n'
+        'OPENAI_CHAT_MODEL=test-model\n'
+        'OPENAI_API_KEY=test-key\n'
+        'OPENAI_MAX_TOKENS=800\n'
+        'GRADING_MAX_TOKENS=400\n',
+        encoding='utf-8',
+    )
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(payload=json)
+        return httpx.Response(
+            200,
+            json={'choices': [{'message': {'content': '{}'}}]},
+            request=httpx.Request('POST', url),
+        )
+
+    monkeypatch.setattr(httpx, 'post', fake_post)
+
+    assert OpenAICompatibleLLM().generate_json([{'role': 'user', 'content': 'grade'}]) == '{}'
+    assert captured['payload']['response_format'] == {'type': 'json_object'}
+    assert captured['payload']['max_tokens'] == 400
