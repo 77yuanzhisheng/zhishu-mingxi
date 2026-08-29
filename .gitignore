@@ -38,3 +38,9 @@ scripts/*.pid
 
 # Local Git worktrees used for isolated feature development
 .worktrees/
+
+# Web 交互式教材 2.0（54MB，导师分发，团队内部留存）
+# 通过 junction 挂载到 frontend/textbook，本地初始化：
+#   cmd> mklink /J frontend\textbook D:\挑战杯\textbook_2.0
+# 不要再 commit 资源文件本身。
+frontend/textbook
