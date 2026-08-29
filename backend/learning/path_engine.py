@@ -9,7 +9,13 @@ from typing import Any
 
 from backend.learning.database import connection_scope, init_database
 from backend.learning.path_ai import generate_ai_notes
-from backend.learning.path_data import load_latest_snapshot, load_user_evidence, next_version, persist_snapshot
+from backend.learning.path_data import (
+    counts_user_evidence,
+    load_latest_snapshot,
+    load_user_evidence,
+    next_version,
+    persist_snapshot,
+)
 from backend.learning.path_models import LearningPathResponse
 from backend.learning.path_scoring import build_rule_path
 
@@ -17,6 +23,10 @@ from backend.learning.path_scoring import build_rule_path
 def get_learning_path(user_id: int, database_path: str | Path | None = None) -> LearningPathResponse:
     snapshot = load_latest_snapshot(user_id, database_path)
     if snapshot is not None:
+        # 快照过期检测：学情证据量（掌握度/答题/问答/批阅）与快照生成时不一致 → 自动重算
+        summary = snapshot.get("source_summary")
+        if not summary or counts_user_evidence(user_id, database_path) != summary:
+            return refresh_learning_path(user_id, database_path=database_path)
         return LearningPathResponse(**snapshot)
     return refresh_learning_path(user_id, database_path=database_path)
 

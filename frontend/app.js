@@ -436,6 +436,30 @@ switchTab(getTabFromLocation(), false);
 bootstrapApp();
 
 async function bootstrapApp() {
+  // 演示/截图模式：?demo=1003 直接以演示账户进入（评委演示也方便）。
+  const demoParams = new URLSearchParams(location.search);
+  const demoParam = demoParams.get("demo");
+  if (demoParam !== null) {
+    const demoUserId = Number(demoParam) || DEFAULT_USER_ID;
+    authState.user = {
+      user_id: demoUserId,
+      name: demoUserId === 1003 ? "张鹤轩" : `演示用户 ${demoUserId}`,
+      role: "student",
+    };
+    await startAuthenticatedApp();
+    // 演示/截图模式：?ask=问题 自动在 RAG 问答中发送（真实问答，用于截图）
+    const askQuestion = demoParams.get("ask");
+    if (askQuestion) {
+      setTimeout(() => {
+        const input = document.getElementById("questionInput");
+        if (input) {
+          input.value = askQuestion;
+          handleAsk();
+        }
+      }, 1500);
+    }
+    return;
+  }
   const restored = await restoreAuthSession();
   if (!restored) {
     showAuthGate();
@@ -607,6 +631,28 @@ function switchTab(tabName, updateHistory = true) {
   if (tabName === "graph") {
     loadKnowledgeGraph();
     setTimeout(() => graphState.chart?.resize(), 0);
+    const graphParams = new URLSearchParams(location.search);
+    // 演示/截图模式：?expand=all 自动展开全部模块与概念；?graphview=force 切关系图视图
+    if (graphParams.get("expand") === "all" || graphParams.get("graphview")) {
+      const timer = setInterval(() => {
+        if (!graphState.modules.length) return;
+        clearInterval(timer);
+        if (graphParams.get("graphview") === "force") {
+          // 关系图视图下也展开全部层级，让图更完整（关系图支持逐层展开）
+          graphState.modules.forEach((module) => {
+            graphState.expandedModules.add(module.id);
+            (module.children || []).forEach((concept) => graphState.expandedConcepts.add(concept.id));
+          });
+          setGraphView("force");
+          return;
+        }
+        graphState.modules.forEach((module) => {
+          graphState.expandedModules.add(module.id);
+          (module.children || []).forEach((concept) => graphState.expandedConcepts.add(concept.id));
+        });
+        renderKnowledgeGraph();
+      }, 300);
+    }
   }
   if (tabName === "dashboard") {
     renderDashboard();
@@ -694,6 +740,21 @@ async function handleAsk() {
 }
 
 async function requestStreamingChat(payload, message) {
+  // 演示/截图模式：?nostream=1 走非流式（一次拿完整回答再打字机输出），规避流式偶发挂起
+  if (new URLSearchParams(location.search).get("nostream") === "1") {
+    let resp = await fetch(`${RAG_API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || "问答请求失败");
+    if (data.session_id) chatState.sessionId = data.session_id;
+    const fallbackWriter = createTypewriter(message);
+    fallbackWriter.enqueue(data.answer || "");
+    await fallbackWriter.drain();
+    return data;
+  }
   let response = await fetch(`${RAG_API_BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4052,6 +4113,11 @@ function renderPathStages(target, pathPayload) {
 }
 
 async function loadRecommendedLearningPath(report) {
+  // 演示/截图模式：?no-path=1 跳过路径生成（用于展示"回答前：暂无推荐路径"状态）
+  if (new URLSearchParams(location.search).get("no-path") === "1") {
+    document.getElementById("recommendedPath").textContent = "暂无推荐路径。";
+    return;
+  }
   const weakNodes = report.weak.map((node) => node.node_id).filter(Boolean);
   const levels = Object.fromEntries(report.weak.map((node) => [node.node_id, node.level ?? 1]));
   try {

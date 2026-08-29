@@ -32,6 +32,52 @@ def load_latest_snapshot(user_id: int, database_path: str | Path | None = None) 
     return _snapshot_row_to_response(row) if row else None
 
 
+def counts_user_evidence(user_id: int, database_path: str | Path | None = None) -> dict[str, int]:
+    """轻量统计当前学情证据量，用于判断快照是否过期（与 source_summary 字段对齐）。"""
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        ensure_user(connection, user_id)
+        mastery = int(connection.execute(
+            "SELECT COUNT(*) AS c FROM node_mastery WHERE user_id = ?", (user_id,)
+        ).fetchone()["c"])
+        events = int(connection.execute(
+            "SELECT COUNT(*) AS c FROM answer_events WHERE user_id = ?", (user_id,)
+        ).fetchone()["c"])
+        messages = int(connection.execute(
+            """
+            SELECT COUNT(*) AS c FROM messages m
+            JOIN sessions s ON s.id = m.session_id
+            WHERE s.user_id = ? AND m.role = 'user'
+            """,
+            (user_id,),
+        ).fetchone()["c"])
+        question_ids = sorted({
+            str(row["question_id"]).strip()
+            for row in connection.execute(
+                "SELECT DISTINCT question_id FROM answer_events WHERE user_id = ? AND question_id IS NOT NULL",
+                (user_id,),
+            ).fetchall()
+            if str(row["question_id"]).strip()
+        })
+        grading = 0
+        if question_ids:
+            placeholders = ",".join("?" for _ in question_ids)
+            grading = int(connection.execute(
+                f"""
+                SELECT COUNT(*) AS c FROM grading_results
+                WHERE question_type = 'proof' AND question_id IN ({placeholders})
+                """,
+                question_ids,
+            ).fetchone()["c"])
+    return {
+        "mastery_rows": mastery,
+        "answer_events": events,
+        "qa_messages": messages,
+        "grading_results": grading,
+    }
+
+
 def load_user_evidence(user_id: int, database_path: str | Path | None = None) -> dict[str, Any]:
     init_database(database_path)
     with connection_scope(database_path) as connection:
@@ -135,7 +181,7 @@ def _flatten_path(stages: list[dict[str, Any]]) -> list[str]:
 
 def _snapshot_row_to_response(row: sqlite3.Row) -> dict[str, Any]:
     stages = json.loads(row["stages"])
-    return {
+    snapshot = {
         "user_id": row["user_id"],
         "path_id": row["path_id"],
         "version": row["version"],
@@ -147,3 +193,9 @@ def _snapshot_row_to_response(row: sqlite3.Row) -> dict[str, Any]:
         "ai_notes": json.loads(row["ai_notes"]),
         "generated_at": row["generated_at"],
     }
+    # source_summary 不对外返回，仅供 get_learning_path 判断快照是否过期
+    try:
+        snapshot["source_summary"] = json.loads(row["source_summary"])
+    except (TypeError, json.JSONDecodeError):
+        snapshot["source_summary"] = None
+    return snapshot
