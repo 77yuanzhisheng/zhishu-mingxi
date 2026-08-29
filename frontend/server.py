@@ -27,9 +27,11 @@ FRONTEND_ROUTES = {
 
 class FrontendHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
-        path = urlparse(self.path).path.rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
         if path in FRONTEND_ROUTES:
-            self.path = "/index.html"
+            # 保留 query（如 ?demo=1003），只回退路由到 index.html
+            self.path = "/index.html" + (f"?{parsed.query}" if parsed.query else "")
         super().do_GET()
 
 
