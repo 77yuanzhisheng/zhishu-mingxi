@@ -31,7 +31,7 @@ const tabRoutes = {
 
 const titles = {
   dashboard: "个人学习仪表盘",
-  chat: "知识库 RAG 问答",
+  chat: "推理大拿 · 课程知识问答",
   tools: "离散数学工具中心",
   graph: "离散数学知识图谱",
   practice: "自测练习",
