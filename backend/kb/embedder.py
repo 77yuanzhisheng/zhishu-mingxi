@@ -159,7 +159,9 @@ class EmbeddingService:
             elif self.backend_name == "openai":
                 result = self._embed_openai(text)
             elif self.backend_name == "chroma_default":
-                result = self._model([text])[0].tolist()
+                raw = self._model([text])[0]
+                # chroma 默认模型（onnx）返回 list/tuple，不一定有 .tolist()
+                result = raw.tolist() if hasattr(raw, "tolist") else list(raw)
             else:
                 raise RuntimeError(f"未知后端: {self.backend_name}")
         except Exception as e:
@@ -198,7 +200,10 @@ class EmbeddingService:
                 elif self.backend_name == "openai":
                     unique_results = [self._embed_openai(t) for t in unique_texts]
                 elif self.backend_name == "chroma_default":
-                    unique_results = [r.tolist() for r in self._model(unique_texts)]
+                    unique_results = [
+                        r.tolist() if hasattr(r, "tolist") else list(r)
+                        for r in self._model(unique_texts)
+                    ]
                 else:
                     raise RuntimeError(f"未知后端: {self.backend_name}")
             except Exception as e:
