@@ -1,0 +1,1090 @@
+{
+ "generated": "2026-08-31",
+ "count": 150,
+ "mapping": {
+  "K010101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K010102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.545
+  },
+  "K010103": {
+   "platform_node_id": "st_01_03",
+   "platform_name": "st_01_03",
+   "kind": "auto",
+   "score": 0.667
+  },
+  "K010201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.364
+  },
+  "K010202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.222
+  },
+  "K010301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K010302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K010401": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K020101": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K020102": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.133
+  },
+  "K020201": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.211
+  },
+  "K020202": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K020301": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.444
+  },
+  "K020302": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K020303": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K020401": {
+   "platform_node_id": "rel_02_04",
+   "platform_name": "rel_02_04",
+   "kind": "auto",
+   "score": 0.571
+  },
+  "K020402": {
+   "platform_node_id": "rel_02_05",
+   "platform_name": "rel_02_05",
+   "kind": "auto",
+   "score": 0.571
+  },
+  "K020403": {
+   "platform_node_id": "rel_02_03",
+   "platform_name": "rel_02_03",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K020501": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.133
+  },
+  "K020502": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K020601": {
+   "platform_node_id": "rel_03_01",
+   "platform_name": "rel_03_01",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K020602": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K020701": {
+   "platform_node_id": "rel_04",
+   "platform_name": "rel_04",
+   "kind": "auto",
+   "score": 0.667
+  },
+  "K020702": {
+   "platform_node_id": "relations",
+   "platform_name": "rel",
+   "kind": "module_fallback",
+   "score": 0.2
+  },
+  "K030101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K030102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K030201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K030202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K030301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K030302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.154
+  },
+  "K040101": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.143
+  },
+  "K040102": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K040103": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K040201": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.105
+  },
+  "K040202": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K040203": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.167
+  },
+  "K040301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.167
+  },
+  "K040302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K040303": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.154
+  },
+  "K040401": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.133
+  },
+  "K040402": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K040501": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K040502": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.545
+  },
+  "K040503": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.222
+  },
+  "K040601": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.133
+  },
+  "K040701": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K040702": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K050101": {
+   "platform_node_id": "gt_01",
+   "platform_name": "gt_01",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K050102": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K050201": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.154
+  },
+  "K050202": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K050203": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K050301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.364
+  },
+  "K050302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.364
+  },
+  "K050401": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K050402": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K050403": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K060101": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.222
+  },
+  "K060102": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K060201": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K060202": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.545
+  },
+  "K060301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.167
+  },
+  "K060302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K070101": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K070201": {
+   "platform_node_id": "gt_04_04",
+   "platform_name": "gt_04_04",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K070202": {
+   "platform_node_id": "gt_04_04",
+   "platform_name": "gt_04_04",
+   "kind": "auto",
+   "score": 0.667
+  },
+  "K070301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K070302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K070303": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K080101": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K080201": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K080202": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K080301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.2
+  },
+  "K080302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.167
+  },
+  "K080401": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K080402": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.2
+  },
+  "K090101": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090102": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090103": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090201": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090202": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090203": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K090301": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K090302": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090401": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090402": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K090403": {
+   "platform_node_id": "graph_theory",
+   "platform_name": "gt",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K100302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K100401": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K110101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K110201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K110202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K110301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K110302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.2
+  },
+  "K110401": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K110402": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.167
+  },
+  "K110501": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K110601": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K110602": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K120101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K120102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K120103": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K120201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K120301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K120302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130103": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.182
+  },
+  "K130301": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130302": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130401": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K130402": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K140101": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K140102": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.182
+  },
+  "K140201": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K140202": {
+   "platform_node_id": "set_theory",
+   "platform_name": "st",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K150101": {
+   "platform_node_id": "pl_01_01",
+   "platform_name": "pl_01_01",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K150102": {
+   "platform_node_id": "pl_01_02",
+   "platform_name": "pl_01_02",
+   "kind": "auto",
+   "score": 1.0
+  },
+  "K150103": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K150201": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.5
+  },
+  "K150202": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.444
+  },
+  "K150203": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K160101": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K160102": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K160201": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.5
+  },
+  "K160202": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K160301": {
+   "platform_node_id": "pl_01_02",
+   "platform_name": "pl_01_02",
+   "kind": "auto",
+   "score": 0.571
+  },
+  "K160401": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K160402": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K170101": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.222
+  },
+  "K170201": {
+   "platform_node_id": "pl_03",
+   "platform_name": "pl_03",
+   "kind": "auto",
+   "score": 0.667
+  },
+  "K170202": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K170301": {
+   "platform_node_id": "propositional_logic",
+   "platform_name": "pl",
+   "kind": "module_fallback",
+   "score": 0.286
+  },
+  "K180101": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.444
+  },
+  "K180102": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.4
+  },
+  "K180103": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.364
+  },
+  "K180201": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.25
+  },
+  "K180202": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.0
+  },
+  "K190101": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.444
+  },
+  "K190201": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K190301": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.462
+  },
+  "K190302": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.333
+  },
+  "K190401": {
+   "platform_node_id": "predicate_logic",
+   "platform_name": "fl",
+   "kind": "module_fallback",
+   "score": 0.2
+  }
+ },
+ "reverse": {
+  "set_theory": [
+   "K010101",
+   "K010102",
+   "K010201",
+   "K010202",
+   "K010301",
+   "K010302",
+   "K010401",
+   "K030101",
+   "K030102",
+   "K030201",
+   "K030202",
+   "K030301",
+   "K030302",
+   "K100101",
+   "K100102",
+   "K100201",
+   "K100202",
+   "K100301",
+   "K100302",
+   "K100401",
+   "K110101",
+   "K110201",
+   "K110202",
+   "K110301",
+   "K110302",
+   "K110401",
+   "K110402",
+   "K110501",
+   "K110601",
+   "K110602",
+   "K120101",
+   "K120102",
+   "K120103",
+   "K120201",
+   "K120301",
+   "K120302",
+   "K130101",
+   "K130102",
+   "K130103",
+   "K130201",
+   "K130202",
+   "K130301",
+   "K130302",
+   "K130401",
+   "K130402",
+   "K140101",
+   "K140102",
+   "K140201",
+   "K140202"
+  ],
+  "st_01_03": [
+   "K010103"
+  ],
+  "relations": [
+   "K020101",
+   "K020102",
+   "K020201",
+   "K020202",
+   "K020301",
+   "K020302",
+   "K020303",
+   "K020501",
+   "K020502",
+   "K020602",
+   "K020702"
+  ],
+  "rel_02_04": [
+   "K020401"
+  ],
+  "rel_02_05": [
+   "K020402"
+  ],
+  "rel_02_03": [
+   "K020403"
+  ],
+  "rel_03_01": [
+   "K020601"
+  ],
+  "rel_04": [
+   "K020701"
+  ],
+  "graph_theory": [
+   "K040101",
+   "K040102",
+   "K040103",
+   "K040201",
+   "K040202",
+   "K040203",
+   "K040301",
+   "K040302",
+   "K040303",
+   "K040401",
+   "K040402",
+   "K040501",
+   "K040502",
+   "K040503",
+   "K040601",
+   "K040701",
+   "K040702",
+   "K050102",
+   "K050201",
+   "K050202",
+   "K050203",
+   "K050301",
+   "K050302",
+   "K050401",
+   "K050402",
+   "K050403",
+   "K060101",
+   "K060102",
+   "K060201",
+   "K060202",
+   "K060301",
+   "K060302",
+   "K070101",
+   "K070301",
+   "K070302",
+   "K070303",
+   "K080101",
+   "K080201",
+   "K080202",
+   "K080301",
+   "K080302",
+   "K080401",
+   "K080402",
+   "K090101",
+   "K090102",
+   "K090103",
+   "K090201",
+   "K090202",
+   "K090203",
+   "K090301",
+   "K090302",
+   "K090401",
+   "K090402",
+   "K090403"
+  ],
+  "gt_01": [
+   "K050101"
+  ],
+  "gt_04_04": [
+   "K070201",
+   "K070202"
+  ],
+  "pl_01_01": [
+   "K150101"
+  ],
+  "pl_01_02": [
+   "K150102",
+   "K160301"
+  ],
+  "propositional_logic": [
+   "K150103",
+   "K150201",
+   "K150202",
+   "K150203",
+   "K160101",
+   "K160102",
+   "K160201",
+   "K160202",
+   "K160401",
+   "K160402",
+   "K170101",
+   "K170202",
+   "K170301"
+  ],
+  "pl_03": [
+   "K170201"
+  ],
+  "predicate_logic": [
+   "K180101",
+   "K180102",
+   "K180103",
+   "K180201",
+   "K180202",
+   "K190101",
+   "K190201",
+   "K190301",
+   "K190302",
+   "K190401"
+  ]
+ }
+}

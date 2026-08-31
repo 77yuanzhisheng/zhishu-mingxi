@@ -44,6 +44,8 @@ const titles = {
 const graphState = {
   chart: null,
   modules: [],
+  teacherGraph: null,
+  teacherLoaded: false,
   dependencies: [],
   nodeIndex: new Map(),
   expandedModules: new Set(),
@@ -644,6 +646,10 @@ function switchTab(tabName, updateHistory = true) {
             (module.children || []).forEach((concept) => graphState.expandedConcepts.add(concept.id));
           });
           setGraphView("force");
+          return;
+        }
+        if (graphParams.get("graphview") === "teacher") {
+          setGraphView("teacher");
           return;
         }
         graphState.modules.forEach((module) => {
@@ -1658,6 +1664,12 @@ function normalizeKnowledgeItem(item, itemIndex, parentId, parentNodeId, parentN
 }
 
 function renderKnowledgeGraph() {
+  // 教材图谱视图：单独渲染（四层结构 + 映射染色）
+  if (graphState.view === "teacher") {
+    renderTeacherGraph();
+    return;
+  }
+
   const container = document.getElementById("knowledgeGraphChart");
   if (!graphState.chart) {
     container.innerHTML = "";
@@ -2041,6 +2053,12 @@ function handleGraphClick(params) {
     return;
   }
 
+  // 教材图谱（教师四层结构）视图：点击 K 知识点 → 走平台映射后的行为链
+  if (graphState.view === "teacher") {
+    handleTeacherGraphClick(params.data);
+    return;
+  }
+
   if (params.data?.id === "course-root") {
     showGraphNodeDetail({
       name: "离散数学",
@@ -2076,7 +2094,7 @@ function handleGraphClick(params) {
 }
 
 function setGraphView(view) {
-  if (!['tree', 'force'].includes(view) || graphState.view === view) {
+  if (!['tree', 'force', 'teacher'].includes(view) || graphState.view === view) {
     return;
   }
   graphState.view = view;
@@ -2089,9 +2107,139 @@ function setGraphView(view) {
   const hint = document.getElementById("graphViewHint");
   hint.textContent = view === "tree"
     ? "思维导图按课程顺序展示层级；点击模块或子概念可继续展开。"
-    : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
+    : view === "teacher"
+      ? "教材图谱按 章→节→知识点→要点 四层展示；颜色表示对应知识点的掌握状态（映射到平台学情）。"
+      : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
   document.querySelector(".graph-legend .dependency").hidden = view !== "force";
   renderKnowledgeGraph();
+}
+
+// ============ 教材图谱（教师四层结构 · 映射联动学情） ============
+async function loadTeacherGraph() {
+  if (graphState.teacherLoaded) return graphState.teacherGraph;
+  const response = await fetch(`${KB_API_BASE_URL}/kb/teacher-graph`).catch(() => null);
+  if (!response || !response.ok) {
+    throw new Error("教材图谱接口暂不可用");
+  }
+  graphState.teacherGraph = await response.json();
+  graphState.teacherLoaded = true;
+  return graphState.teacherGraph;
+}
+
+function handleTeacherGraphClick(data) {
+  if (!data || data.kpId) {
+    // K 知识点节点
+    const platformNodeId = data.platform || "";
+    const kind = data.mappingKind || "";
+    const nodeId = platformNodeId || "";
+    const name = nodeId ? findNodeName(nodeId) : data.name;
+    const pseudo = {
+      id: `teacher-kp-${data.kpId || data.name}`,
+      nodeId,
+      name,
+      type: nodeId ? "item" : "module",
+      description: `（来自教材图谱）${data.name}\n章节：${data.chapter || ""}`,
+      text: "",
+    };
+    graphState.selectedNode = pseudo;
+    setCurrentLearningNode(pseudo);
+    showGraphNodeDetail(pseudo);
+    loadGraphNodeKnowledge(pseudo);
+    if (nodeId && kind !== "module_fallback") {
+      loadRecommendedQuestions(pseudo);
+    }
+    recordLearningEvent(pseudo);
+    return;
+  }
+  if (data.children) {
+    graphState.expandedModules.add(data.id || data.name);
+    renderKnowledgeGraph();
+  }
+}
+
+async function renderTeacherGraph() {
+  const container = document.getElementById("knowledgeGraphChart");
+  if (container && container.dataset.renderer === "teacher") return;
+  let teacher;
+  try {
+    teacher = await loadTeacherGraph();
+  } catch (error) {
+    container.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  container.dataset.renderer = "teacher";
+
+  // 递归建树（章→节→K），K 节点带 platform 映射
+  function chaptersToTree(chapters) {
+    return chapters.map((ch) => {
+      const sections = (ch.sections || []).map((sec) => ({
+        name: sec.title || sec.id,
+        children: (sec.kps || []).map((k) => ({
+          name: k.title || k.id,
+          kpId: k.id,
+          platform: k.platform_node_id || "",
+          mappingKind: k.mapping_kind || "",
+          chapter: ch.title || "",
+          value: k.id,
+        })),
+      }));
+      return { name: ch.title || ch.id, children: sections };
+    });
+  }
+
+  const treeData = { name: "离散数学教材 · 19 章", children: chaptersToTree(teacher.chapters || []) };
+
+  // 四层染色：K 用 platform 映射的掌握度；其上层按均值
+  function colorFor(node) {
+    const leaf = !node.children || !node.children.length;
+    if (leaf && node.kpId) {
+      const pNode = node.platform
+        ? { nodeId: node.platform, type: "concept", children: [], items: [] }
+        : null;
+      const mastery = pNode ? getNodeMastery(pNode) : null;
+      return getMasteryColor(getMasteryStatus(mastery));
+    }
+    if (leaf) return "transparent";
+    const colors = (node.children || []).map((c) => colorFor(c)).filter((c) => c && c !== "transparent");
+    return colors.length ? colors[Math.floor(colors.length / 2)] : "transparent";
+  }
+  function attachColors(node) {
+    node.itemStyle = { color: colorFor(node) === "transparent" ? "#d7e1ea" : colorFor(node), borderColor: "#ffffff", borderWidth: 1.2 };
+    (node.children || []).forEach(attachColors);
+  }
+  attachColors(treeData);
+
+  if (graphState.chart) {
+    graphState.chart.dispose();
+  }
+  graphState.chart = echarts.init(container);
+  graphState.chart.on("click", handleGraphClick);
+  graphState.chart.setOption({
+    tooltip: {
+      formatter: (params) => {
+        const d = params.data || {};
+        return d.kpId
+          ? `${d.name}<br/>K：${d.kpId}${d.platform ? `<br/>映射：${d.platform}（${d.chapter || ""}）` : "<br/>（暂未映射到平台节点）"}`
+          : d.name;
+      },
+    },
+    series: [{
+      type: "tree",
+      data: [treeData],
+      top: "8%",
+      left: "8%",
+      bottom: "8%",
+      right: "26%",
+      symbolSize: 11,
+      initialTreeDepth: 2,
+      orient: "LR",
+      expandAndCollapse: true,
+      label: { position: "left", verticalAlign: "middle", fontSize: 12.5, color: "#314559" },
+      leaves: { label: { position: "right", verticalAlign: "middle" } },
+      emphasis: { focus: "descendant" },
+      lineStyle: { color: "#7fa6cc", width: 1.2 },
+    }],
+  }, true);
 }
 
 function showGraphNodeDetail(node) {
@@ -4291,6 +4439,9 @@ function formatLearningStat(node) {
 function resetKnowledgeGraph() {
   graphState.expandedModules.clear();
   graphState.expandedConcepts.clear();
+  const container = document.getElementById("knowledgeGraphChart");
+  container.dataset.renderer = "";
+  graphState.teacherLoaded = false;
   renderKnowledgeGraph();
   showGraphNodeDetail({
     name: "知识图谱",

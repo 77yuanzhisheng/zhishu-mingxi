@@ -44,3 +44,6 @@ scripts/*.pid
 #   cmd> mklink /J frontend\textbook D:\挑战杯\textbook_2.0
 # 不要再 commit 资源文件本身。
 frontend/textbook
+
+# chroma 向量库备份（180MB，不提交）
+data/chroma_bak_20260827/

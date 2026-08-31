@@ -14,8 +14,10 @@
 """
 
 import os
+import json
 import logging
 import tempfile
+from pathlib import Path
 from typing import Optional, List
 
 from fastapi import APIRouter, UploadFile, File, Query, HTTPException
@@ -700,3 +702,32 @@ async def recommend_learning_path(req: LearningPathRequest):
         user_levels=req.levels or {},
     )
     return LearningPathResponse(path=path)
+
+
+# ==================== 教师教材图谱（队友提供资源 · 四层结构） ====================
+
+_WEB_RESOURCE_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+
+@router.get("/teacher-graph", summary="教师教材四层知识图谱（章→节→知识点→要点 + 平台映射）")
+def get_teacher_graph():
+    """读取教师课件资源解析出的四层结构（19 章/73 节/150 知识点/376 要点），
+    并合并 data/mapping_v1.json 的节点映射：
+    每个 K 节点带 platform_node_id（学情染色/推荐题/路径联动用），未校准节点回退到模块。"""
+    try:
+        kg = json.load(open(_WEB_RESOURCE_DIR / "teacher_kg.json", encoding="utf-8"))
+    except Exception as exc:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": f"teacher_kg.json 未就绪: {exc}"}, status_code=503)
+    mapping = {}
+    try:
+        mapping = json.load(open(_WEB_RESOURCE_DIR / "mapping_v1.json", encoding="utf-8")).get("mapping", {})
+    except Exception:
+        pass
+    for ch in kg.get("chapters", []):
+        for sec in ch.get("sections", []):
+            for k in sec.get("kps", []):
+                entry = mapping.get(k.get("id"))
+                k["platform_node_id"] = entry["platform_node_id"] if entry else ""
+                k["mapping_kind"] = entry.get("kind", "") if entry else ""
+    return kg
