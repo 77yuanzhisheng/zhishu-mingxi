@@ -221,12 +221,20 @@ print(6)
 class ExtendedApiTests(unittest.TestCase):
     client = TestClient(app)
 
-    def test_unified_catalog_contains_all_tools(self):
+    def test_unified_catalog_groups_eight_symbolic_tools(self):
         response = self.client.get("/tools")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["total"], 9)
+        self.assertEqual(data["total"], 8)
+        self.assertEqual(data["symbolic_total"], 8)
+        self.assertEqual(
+            data["groups"],
+            [
+                {"key": "compute", "title": "可计算", "count": 6},
+                {"key": "construct", "title": "可构造", "count": 2},
+            ],
+        )
         self.assertEqual(
             {item["name"] for item in data["tools"]},
             {
@@ -238,8 +246,17 @@ class ExtendedApiTests(unittest.TestCase):
                 "hasse-diagram",
                 "dijkstra",
                 "bipartite",
-                "code-generate",
             },
+        )
+        self.assertEqual(data["assistant_tools"][0]["name"], "code-generate")
+
+    def test_unified_catalog_can_filter_construct_tools(self):
+        response = self.client.get("/tools?mode=construct")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {item["name"] for item in response.json()["tools"]},
+            {"normal-forms", "hasse-diagram"},
         )
 
     def test_unified_runner_dispatches_to_selected_tool(self):

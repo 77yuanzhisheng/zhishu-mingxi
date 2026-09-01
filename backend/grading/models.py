@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -28,6 +30,8 @@ class GradeRequest(BaseModel):
     reference_answer: str | None = Field(default=None, min_length=1)
     knowledge_points: list[str] = Field(default_factory=list, max_length=25)
     kp: str | None = Field(default=None, max_length=100)
+    grading_mode: Literal['fast', 'strict'] = 'fast'
+    tolerance: Literal['strict', 'standard', 'lenient'] = 'standard'
 
     @field_validator('knowledge_points')
     @classmethod
@@ -73,9 +77,9 @@ class EvidenceItem(BaseModel):
 
 
 class GradingAttempts(BaseModel):
-    analysis: int = Field(ge=1, le=2)
-    scoring: int = Field(ge=1, le=2)
-    review: int = Field(ge=1, le=2)
+    analysis: int = Field(ge=0, le=2)
+    scoring: int = Field(ge=0, le=2)
+    review: int = Field(ge=0, le=2)
 
 
 class GradingAudit(BaseModel):
@@ -84,6 +88,8 @@ class GradingAudit(BaseModel):
     llm_model: str
     latency_ms: int = Field(ge=0)
     review_notes: str
+    grading_mode: Literal['fast', 'strict']
+    tolerance: Literal['strict', 'standard', 'lenient']
 
 
 class GradeResponse(BaseModel):
@@ -99,5 +105,4 @@ class GradeResponse(BaseModel):
     audit: GradingAudit
     needs_manual_review: bool = False
     review_reasons: list[str] = Field(default_factory=list)
-
 

@@ -76,6 +76,10 @@ def valid_review() -> dict:
     }
 
 
+def valid_fast_review() -> dict:
+    return {**valid_review(), 'analysis': valid_analysis()}
+
+
 def test_grading_contract_is_available():
     request = GradeRequest(question_id='e2_proof_4', student_answer='Attempt.')
     assert request.question_id == 'e2_proof_4'
@@ -102,7 +106,11 @@ def test_grade_resolves_question_bank_guide_repairs_json_and_persists(tmp_path, 
     database_path = tmp_path / 'grading.db'
 
     result = GradingService(llm=llm, database_path=database_path).grade(
-        GradeRequest(question_id='proof-1', student_answer='therefore the claim holds')
+        GradeRequest(
+            question_id='proof-1',
+            student_answer='therefore the claim holds',
+            grading_mode='strict',
+        )
     )
 
     assert result.total_score == 85
@@ -122,7 +130,12 @@ def test_grade_normalizes_unsupported_error_types_after_review(tmp_path):
     llm = ScriptedLLM([valid_analysis(), valid_scoring(), review])
 
     result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
-        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer')
+        GradeRequest(
+            question='Question',
+            reference_answer='Reference',
+            student_answer='Answer',
+            grading_mode='strict',
+        )
     )
 
     assert result.error_types == ['jump_step']
@@ -140,8 +153,46 @@ def test_grade_rejects_invalid_model_scores_after_repair(tmp_path):
 
     with pytest.raises(InvalidGradingOutputError, match='scoring output failed validation'):
         GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
-            GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer')
+            GradeRequest(
+                question='Question',
+                reference_answer='Reference',
+                student_answer='Answer',
+                grading_mode='strict',
+            )
         )
+
+
+def test_fast_mode_grades_in_one_call_and_accepts_fenced_json(tmp_path):
+    raw = '```json\n' + json.dumps(valid_fast_review()) + '\n```'
+    llm = ScriptedLLM([raw])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer')
+    )
+
+    assert len(llm.messages) == 1
+    assert result.attempts.model_dump() == {'analysis': 0, 'scoring': 1, 'review': 0}
+    assert result.audit.grading_mode == 'fast'
+    assert result.audit.prompt_version == 'grading-v2.0'
+
+
+def test_lenient_mode_only_calibrates_harmless_notation_error(tmp_path):
+    review = valid_fast_review()
+    review['error_types'] = ['notation_error']
+    review['dimension_scores']['expression_notation'] = 3
+    llm = ScriptedLLM([review])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(
+            question='Question',
+            reference_answer='Reference',
+            student_answer='Answer',
+            tolerance='lenient',
+        )
+    )
+
+    assert result.dimension_scores.expression_notation == 8
+    assert 'calibrated to 8' in result.audit.review_notes
 
 
 def test_grade_endpoint_maps_unavailable_model_to_503(tmp_path):
@@ -161,4 +212,3 @@ def test_grade_endpoint_maps_unavailable_model_to_503(tmp_path):
 
     assert response.status_code == 503
     assert response.json()['detail'] == 'model unavailable'
-

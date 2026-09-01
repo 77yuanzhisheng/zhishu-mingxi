@@ -17,18 +17,18 @@
     GET /api/practice/questions?module=xxx — 返回练习题目列表
 """
 
-import base64
 import json
 import logging
 import os
 import random
 import re
-import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
+
+from backend.practice.ocr import OCRInputError, OCRService
 
 logger = logging.getLogger(__name__)
 
@@ -274,10 +274,6 @@ def get_practice_coverage() -> Dict:
 # ==================== 证明题 / 填空题 / OCR 拍照识别 ====================
 
 OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"  # OCR 专用视觉模型（约 1-3s/张）
-OCR_PROMPT = (
-    "这是一张学生手写或拍摄的离散数学证明/答案照片。请逐字提取其中的全部文字与数学符号"
-    "（保留 ∀ ∃ ∈ ⊆ → ↔ ¬ ∧ ∨ ≡、分数、下标等写法），按原始顺序输出。只输出识别到的内容，不要评论。"
-)
 
 
 class OCRRequest(BaseModel):
@@ -313,41 +309,14 @@ def _find_teacher_item(question_id: str) -> Optional[Dict]:
 
 @router.post("/ocr")
 def ocr_image(req: OCRRequest) -> Dict:
-    """证明题拍照上传 → OCR 文字识别（PaddleOCR-VL）。
-
-    返回: {text, seconds}
-    """
+    """对手写证明或计算过程做图像增强、公式 OCR 和低质量重试。"""
     try:
-        raw = base64.b64decode(req.image_base64)
-    except Exception:
-        return {"ok": False, "error": "图片 base64 解码失败"}
-    if len(raw) > 15 * 1024 * 1024:
-        return {"ok": False, "error": "图片过大（>15MB）"}
-
-    ext = os.path.splitext(req.filename)[1].lower().lstrip(".") or "png"
-    if ext not in ("png", "jpg", "jpeg", "webp", "bmp", "gif"):
-        ext = "png"
-    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
-        f.write(raw)
-        tmp_path = f.name
-
-    try:
-        sys_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        import sys
-        sys.path.insert(0, os.path.join(sys_path, "scripts"))
-        from vision import describe
-
-        t0 = time.time()
-        text = describe(tmp_path, OCR_PROMPT, model=OCR_MODEL)
-        return {"ok": True, "text": text.strip(), "seconds": round(time.time() - t0, 1)}
+        return OCRService(model=OCR_MODEL).recognize(req.image_base64)
+    except OCRInputError as exc:
+        return {"ok": False, "error": str(exc)}
     except Exception as exc:
         logger.warning("OCR 失败: %s", exc)
         return {"ok": False, "error": f"OCR 识别失败: {str(exc)[:120]}"}
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
 
 
 @router.get("/proof-questions")
