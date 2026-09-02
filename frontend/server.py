@@ -19,8 +19,10 @@ FRONTEND_ROUTES = {
     "/practice",
     "/grading",
     "/learning",
+    "/companion",
     "/classes",
     "/exam",
+    "/lesson-prep",
     "/tools",
 }
 

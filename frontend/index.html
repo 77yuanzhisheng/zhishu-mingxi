@@ -95,6 +95,10 @@
           <span>分析</span>
           <strong>学情面板</strong>
         </button>
+        <button class="nav-item" data-tab="companion" data-role-only="student">
+          <span>陪伴</span>
+          <strong>今日学习</strong>
+        </button>
         <button class="nav-item" data-tab="classes">
           <span>协作</span>
           <strong>班级管理</strong>
@@ -102,6 +106,10 @@
         <button class="nav-item" data-tab="exam">
           <span>测评</span>
           <strong>在线考试</strong>
+        </button>
+        <button class="nav-item" data-tab="lessonPrep" data-role-only="teacher">
+          <span>教学</span>
+          <strong>智能备课</strong>
         </button>
         <button class="nav-item" data-tab="textbook">
           <span>Web 教材</span>
@@ -332,6 +340,7 @@
                 <button class="graph-view-button active" type="button" data-graph-view="tree" aria-pressed="true">思维导图</button>
                 <button class="graph-view-button" type="button" data-graph-view="force" aria-pressed="false">关系图</button>
                 <button class="graph-view-button" type="button" data-graph-view="teacher" aria-pressed="false">教材图谱</button>
+                <button class="graph-view-button" type="button" data-graph-view="fusion" aria-pressed="false">融合导航</button>
               </div>
               <button class="ghost-button" id="refreshGraphButton">刷新图谱</button>
               <button class="ghost-button" id="resetGraphButton">收起全部</button>
@@ -506,6 +515,19 @@
                 </div>
                 <label for="gradingStudentAnswer">我的解答</label>
                 <textarea id="gradingStudentAnswer" rows="10" required placeholder="请写出完整推导过程，批阅引擎将检查结论、步骤、逻辑、定理使用和符号规范"></textarea>
+                <section id="proofStepWorkspace" class="proof-step-workspace" hidden>
+                  <div class="proof-step-head">
+                    <div><strong>分步证明</strong><span id="proofStepProgress">尚未记录步骤</span></div>
+                    <button id="undoProofStepButton" class="ghost-button" type="button" disabled>撤销上一步</button>
+                  </div>
+                  <ol id="proofStepList" class="proof-step-list"></ol>
+                  <label for="proofStepInput">当前一步</label>
+                  <textarea id="proofStepInput" rows="4" placeholder="只写当前一步的条件、推导或结论"></textarea>
+                  <div class="proof-step-actions">
+                    <button id="addProofStepButton" type="button">记录本步</button>
+                    <button id="finishProofButton" type="button">完成证明并批阅</button>
+                  </div>
+                </section>
                 <textarea id="gradingReference" hidden></textarea>
                 <div class="grading-photo-row">
                   <label class="grading-photo-button" for="gradingPhotoInput">拍照识别</label>
@@ -548,7 +570,67 @@
               <h4>错误类型</h4>
               <div id="gradingErrorTypes" class="error-type-list"><span>暂无</span></div>
             </section>
+            <section id="proofExplanationPanel" class="grading-feedback proof-explanation-panel" hidden>
+              <div class="proof-explanation-head"><h4>讲解模式</h4><span id="proofExplanationProgress">0/0</span></div>
+              <ol id="proofExplanationSteps" class="proof-explanation-steps"></ol>
+              <button id="nextProofExplanationButton" type="button">展示第一步</button>
+            </section>
           </aside>
+        </div>
+      </section>
+
+      <section id="companion" class="panel">
+        <div class="companion-layout">
+          <section class="work-panel companion-main">
+            <div class="section-title"><div><h3>今日学习</h3><p class="hint">结合学情和最近练习，安排一个能完成的学习回合。</p></div></div>
+            <div class="companion-metrics">
+              <article><span>今日学习</span><strong id="companionTodayMinutes">0 分钟</strong></article>
+              <article><span>本周练习</span><strong id="companionWeeklyQuestions">0 题</strong></article>
+              <article><span>待巩固</span><strong id="companionWeakCount">0 项</strong></article>
+            </div>
+            <div class="companion-choice" role="group" aria-label="建议类型">
+              <button class="companion-kind active" type="button" data-companion-kind="today">今日计划</button>
+              <button class="companion-kind" type="button" data-companion-kind="mistakes">错题提醒</button>
+              <button class="companion-kind" type="button" data-companion-kind="duration">时长建议</button>
+            </div>
+            <div id="companionAdvice" class="assistant-document" aria-live="polite">点击生成，获取本次学习安排。</div>
+            <div class="companion-actions">
+              <button id="generateCompanionButton" type="button">生成学习建议</button>
+              <button id="companionPracticeButton" class="ghost-button" type="button">开始练习</button>
+              <button id="companionPathButton" class="ghost-button" type="button">查看学习路径</button>
+            </div>
+          </section>
+          <aside class="insight-panel companion-focus">
+            <h3>当前重点</h3>
+            <strong id="companionCurrentNode">尚未选择知识点</strong>
+            <div id="companionWeakNodes" class="compact-topic-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="lessonPrep" class="panel">
+        <div class="prep-layout">
+          <aside class="prep-controls">
+            <h3>备课设置</h3>
+            <label for="prepChapterSelect">章节</label>
+            <select id="prepChapterSelect"></select>
+            <label for="prepSectionSelect">小节</label>
+            <select id="prepSectionSelect"></select>
+            <label for="prepAudienceSelect">授课对象</label>
+            <select id="prepAudienceSelect"><option>大一学生</option><option>基础薄弱班</option><option>提高班</option></select>
+            <label for="prepDurationInput">课时（分钟）</label>
+            <input id="prepDurationInput" type="number" min="20" max="180" value="45">
+            <label for="prepOutputSelect">生成内容</label>
+            <select id="prepOutputSelect"><option>教学设计</option><option>课件大纲</option><option>课堂活动方案</option></select>
+            <button id="generateLessonPrepButton" type="button">生成备课内容</button>
+          </aside>
+          <section class="work-panel prep-document-panel">
+            <div class="section-title">
+              <div><h3 id="prepDocumentTitle">智能备课</h3><p id="prepDocumentMeta" class="hint">选择章节和小节后生成。</p></div>
+              <button id="copyLessonPrepButton" class="ghost-button" type="button" disabled>复制内容</button>
+            </div>
+            <div id="lessonPrepResult" class="assistant-document prep-document" aria-live="polite">备课内容将在这里显示。</div>
+          </section>
         </div>
       </section>
 
@@ -697,6 +779,7 @@
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
   <script src="grading-utils.js?v=3"></script>
-  <script defer src="app.js?v=50"></script>
+  <script src="team4-utils.js?v=1"></script>
+  <script defer src="app.js?v=51"></script>
 </body>
 </html>
