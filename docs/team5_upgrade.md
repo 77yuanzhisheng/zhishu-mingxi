@@ -34,3 +34,34 @@
 ## 4. 批阅实验
 
 评测样本位于 `data/evaluation/grading_samples.jsonl`，运行方法见同目录 README。正式 MAE/Kappa 结论必须使用教师独立评分并仲裁后的真实学生数据。
+
+## 5. 微调前后 112 题对比
+
+`scripts/team5_benchmark.py` 会让微调前、微调后两个模型分别完成老师题库全部 112 题，并使用同一个独立裁判模型评分。题型分布为填空题 56 道、计算题 36 道、证明题 16 道、应用题 4 道。运行过程按模型写入 JSONL 断点，最终生成：
+
+- `artifacts/team5_benchmark/comparison.csv`：逐题准确性、分数和耗时。
+- `artifacts/team5_benchmark/summary.json`：机器可读汇总及前后差值。
+- `artifacts/team5_benchmark/report.md`：准确率、平均分、平均/P95 耗时对照表。
+- `artifacts/team5_benchmark/proof_speed_gate.json`：证明题 `<=30s` 独立验收结果。
+
+先在 `.env` 配置 `BASELINE_*`、`TUNED_*`、`JUDGE_*` 三组 OpenAI 兼容模型信息，再运行：
+
+```powershell
+& "D:\LabSource\tiaozhanbei\.venv310\Scripts\python.exe" scripts\team5_benchmark.py --resume --workers 2 --disable-thinking
+```
+
+默认速度门禁要求微调后 16 道证明题全部成功且每道不超过 30 秒，未达标时进程返回码为 2。联调时可先加 `--limit 2` 冒烟；只测速度可加 `--skip-judge`，但该模式不会生成准确率，不能作为最终对比结论。没有微调模型和独立裁判模型的真实 API 时，脚本不会伪造跑分。
+
+## 6. 题库转微调指令集
+
+`scripts/prepare_finetune_dataset.py` 将现有 112 题转为星火 MaaS 所需的 `system/user/assistant` JSONL，同时完成 HTML 清理、离散数学符号统一、空字段检查、重复问题去重和同题冲突答案检测：
+
+```powershell
+& "D:\LabSource\tiaozhanbei\.venv310\Scripts\python.exe" scripts\prepare_finetune_dataset.py
+```
+
+当前输出为 `data/finetune/teacher_questions_112.jsonl`，校验结果为 112/112 条有效、0 重复、0 冲突、0 无效，共规范化 562 处符号。默认文件严格只含三个训练字段；内部联调需要题号、题型和知识点时可加 `--include-metadata`。也可校验队员2扩展后的任意 JSONL：
+
+```powershell
+& "D:\LabSource\tiaozhanbei\.venv310\Scripts\python.exe" scripts\prepare_finetune_dataset.py --source data\finetune\expanded.jsonl --input-format jsonl --output data\finetune\expanded.cleaned.jsonl --report data\finetune\expanded.report.json
+```
