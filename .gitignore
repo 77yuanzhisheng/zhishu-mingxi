@@ -39,6 +39,12 @@ scripts/*.pid
 # Local Git worktrees used for isolated feature development
 .worktrees/
 
+# 调试中间产物（一次性的 API dump / 解析缓存 / 预览脚本 / 服务日志）
+scripts/*_dump.json
+scripts/_*.py
+data/_*.log
+data/documents/_*.json
+
 # Web 交互式教材 2.0（54MB，导师分发，团队内部留存）
 # 通过 junction 挂载到 frontend/textbook，本地初始化：
 #   cmd> mklink /J frontend\textbook D:\挑战杯\textbook_2.0
