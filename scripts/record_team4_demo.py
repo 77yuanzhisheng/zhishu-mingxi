@@ -104,13 +104,20 @@ def api_fixture(route: Route) -> None:
             "comment": "推导完整，偶数定义与代数变形使用正确。",
             "errors": [],
         })
-    elif url.endswith("/chat"):
+    elif "/api/agent/chat" in url:
         payload = json.loads(route.request.post_data or "{}")
+        if "降级测试" in payload.get("message", ""):
+            route.fulfill(status=503, json={"detail": "Agent deployment warming up"})
+            return
         if "备课助手" in payload.get("message", ""):
             answer = "## 教学目标\n理解命题与联结词的定义，能够完成真值判断。\n\n## 课堂安排\n1. 5分钟情境导入。\n2. 15分钟讲解五种联结词。\n3. 15分钟分组完成真值表。\n4. 10分钟反馈与练习。\n\n## 检查理解\n判断“如果2是奇数，那么3是偶数”的真值。"
+        elif "等价关系" in payload.get("message", ""):
+            answer = "等价关系同时满足自反性、对称性和传递性。判断时应依次核对三条性质，其中任意一条不成立，就不是等价关系。"
         else:
             answer = "## 现在做什么\n复习联结词的真值定义。\n\n## 练几题\n完成3道等值判断题，其中至少1道写出真值表。\n\n## 完成标准\n连续答对2题，并能解释一次错误原因。"
-        route.fulfill(json={"answer": answer, "session_id": "demo-session"})
+        route.fulfill(json={"answer": answer, "session_id": "demo-session", "channel": "agent", "provider": "xfyun-agent"})
+    elif url.endswith("/chat"):
+        route.fulfill(json={"answer": "基础模型降级回答。", "session_id": "demo-session"})
     elif "/kb/learning-path" in url or "/api/learning/path" in url:
         route.fulfill(json={"path": []})
     elif "/kb/recommend" in url:
@@ -211,6 +218,46 @@ def capture_prep(browser, base_url: str, video: bool) -> None:
     close_context(context, page, video, "03-lesson-prep")
 
 
+def capture_agent(browser, base_url: str) -> None:
+    context = new_context(browser, False, "agent")
+    page = context.new_page()
+    page.goto(f"{base_url}/chat?demo=1003", wait_until="networkidle")
+    page.locator("#questionInput").fill("什么是等价关系？")
+    page.locator("#askButton").click()
+    page.locator(".message-channel.agent").wait_for()
+    page.get_by_text("自反性、对称性和传递性", exact=False).wait_for()
+    page.screenshot(path=str(OUTPUT / "05-agent-channel.png"), full_page=True)
+    page.locator("#questionInput").fill("降级测试")
+    page.locator("#askButton").click()
+    page.locator(".message-channel.fallback").wait_for()
+    page.get_by_text("基础模型降级回答", exact=False).wait_for()
+    page.screenshot(path=str(OUTPUT / "05b-qwen-fallback.png"), full_page=True)
+    close_context(context, page, False, "agent")
+
+
+def capture_compliance(browser, base_url: str) -> None:
+    context = new_context(browser, False, "compliance")
+    page = context.new_page()
+    page.goto(f"{base_url}/compliance?demo=1003", wait_until="networkidle")
+    screenshots = [
+        OUTPUT / "01-proof-steps.png",
+        OUTPUT / "02-fusion-graph.png",
+        OUTPUT / "05-agent-channel.png",
+    ]
+    for selector, screenshot in zip(
+        ("#evidenceMaas", "#evidenceAgent", "#evidenceApplication"), screenshots
+    ):
+        page.locator(selector).set_input_files(str(screenshot))
+    page.get_by_text("3 / 6", exact=True).wait_for()
+    page.screenshot(path=str(OUTPUT / "06-compliance-evidence.png"), full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.evaluate("window.scrollTo(0, 0)")
+    if page.evaluate("document.documentElement.scrollWidth") > 392:
+        raise AssertionError("compliance page has mobile horizontal overflow")
+    page.screenshot(path=str(OUTPUT / "06-compliance-mobile.png"), full_page=False)
+    close_context(context, page, False, "compliance")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:5500")
@@ -223,6 +270,8 @@ def main() -> None:
         capture_fusion(browser, args.base_url.rstrip("/"), args.video)
         capture_prep(browser, args.base_url.rstrip("/"), args.video)
         capture_companion(browser, args.base_url.rstrip("/"))
+        capture_agent(browser, args.base_url.rstrip("/"))
+        capture_compliance(browser, args.base_url.rstrip("/"))
         browser.close()
     print(f"Team 4 demo artifacts: {OUTPUT}")
 

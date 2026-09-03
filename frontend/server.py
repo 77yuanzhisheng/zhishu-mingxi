@@ -23,6 +23,7 @@ FRONTEND_ROUTES = {
     "/classes",
     "/exam",
     "/lesson-prep",
+    "/compliance",
     "/tools",
 }
 

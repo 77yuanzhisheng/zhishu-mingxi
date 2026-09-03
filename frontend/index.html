@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=43">
+  <link rel="stylesheet" href="style.css?v=44">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -115,6 +115,10 @@
           <span>Web 教材</span>
           <strong>交互式教材 2.0</strong>
         </button>
+        <button class="nav-item" data-tab="compliance">
+          <span>材料</span>
+          <strong>赛事平台合规</strong>
+        </button>
       </nav>
 
       <div class="system-card">
@@ -181,6 +185,11 @@
               <div>
                 <p class="eyebrow">推理大拿 · AI 推理引擎</p>
                 <h3>课程知识问答</h3>
+              </div>
+              <div class="assistant-channel pending" data-assistant-channel-wrap>
+                <span class="assistant-channel-dot"></span>
+                <strong data-assistant-channel>智能体优先</strong>
+                <small data-assistant-channel-detail>首次提问时检测</small>
               </div>
             </div>
 
@@ -582,7 +591,7 @@
       <section id="companion" class="panel">
         <div class="companion-layout">
           <section class="work-panel companion-main">
-            <div class="section-title"><div><h3>今日学习</h3><p class="hint">结合学情和最近练习，安排一个能完成的学习回合。</p></div></div>
+            <div class="section-title"><div><h3>今日学习</h3><p class="hint">结合学情和最近练习，安排一个能完成的学习回合。</p></div><div class="assistant-channel pending" data-assistant-channel-wrap><span class="assistant-channel-dot"></span><strong data-assistant-channel>智能体优先</strong><small data-assistant-channel-detail>首次生成时检测</small></div></div>
             <div class="companion-metrics">
               <article><span>今日学习</span><strong id="companionTodayMinutes">0 分钟</strong></article>
               <article><span>本周练习</span><strong id="companionWeeklyQuestions">0 题</strong></article>
@@ -627,7 +636,10 @@
           <section class="work-panel prep-document-panel">
             <div class="section-title">
               <div><h3 id="prepDocumentTitle">智能备课</h3><p id="prepDocumentMeta" class="hint">选择章节和小节后生成。</p></div>
-              <button id="copyLessonPrepButton" class="ghost-button" type="button" disabled>复制内容</button>
+              <div class="prep-heading-actions">
+                <div class="assistant-channel pending" data-assistant-channel-wrap><span class="assistant-channel-dot"></span><strong data-assistant-channel>智能体优先</strong><small data-assistant-channel-detail>首次生成时检测</small></div>
+                <button id="copyLessonPrepButton" class="ghost-button" type="button" disabled>复制内容</button>
+              </div>
             </div>
             <div id="lessonPrepResult" class="assistant-document prep-document" aria-live="polite">备课内容将在这里显示。</div>
           </section>
@@ -757,6 +769,60 @@
           <iframe id="textbookFrame" class="textbook-frame" src="/textbook/index.html" title="Web 交互式教材 2.0" allow="fullscreen"></iframe>
         </div>
       </section>
+
+      <section id="compliance" class="panel">
+        <div class="compliance-header">
+          <div>
+            <h3>赛事平台合规材料</h3>
+            <p>汇总星火 MaaS 微调、星辰 Agent 配置和应用调用的真实过程证据。</p>
+            <span id="complianceDemoNotice" class="compliance-demo-notice" hidden>界面演示素材，不作为正式平台证据</span>
+          </div>
+          <div class="compliance-progress" aria-live="polite">
+            <strong id="complianceProgress">0 / 6</strong>
+            <span>材料已就绪</span>
+          </div>
+        </div>
+
+        <section class="compliance-section" aria-labelledby="evidenceTitle">
+          <div class="compliance-section-title">
+            <h4 id="evidenceTitle">平台截图</h4>
+            <span>上传后仅在当前浏览器预览</span>
+          </div>
+          <div class="evidence-grid">
+            <article class="evidence-item" data-evidence-item="maas">
+              <header><span>01</span><div><strong>星火 MaaS 微调</strong><small>模型选择、训练任务与部署结果</small></div><b data-evidence-status>待提供</b></header>
+              <div class="evidence-preview" data-evidence-preview="maas"><span>选择真实平台截图</span></div>
+              <label class="evidence-upload" for="evidenceMaas">选择截图</label>
+              <input id="evidenceMaas" type="file" accept="image/*" data-evidence-file="maas" hidden>
+            </article>
+            <article class="evidence-item" data-evidence-item="agent">
+              <header><span>02</span><div><strong>星辰 Agent 配置</strong><small>智能体底座、知识库与工具配置</small></div><b data-evidence-status>待提供</b></header>
+              <div class="evidence-preview" data-evidence-preview="agent"><span>选择真实平台截图</span></div>
+              <label class="evidence-upload" for="evidenceAgent">选择截图</label>
+              <input id="evidenceAgent" type="file" accept="image/*" data-evidence-file="agent" hidden>
+            </article>
+            <article class="evidence-item" data-evidence-item="application">
+              <header><span>03</span><div><strong>应用调用结果</strong><small>平台应用中的智能体回答与通道标识</small></div><b data-evidence-status>待提供</b></header>
+              <div class="evidence-preview" data-evidence-preview="application"><span>选择真实调用截图</span></div>
+              <label class="evidence-upload" for="evidenceApplication">选择截图</label>
+              <input id="evidenceApplication" type="file" accept="image/*" data-evidence-file="application" hidden>
+            </article>
+          </div>
+        </section>
+
+        <section class="compliance-section" aria-labelledby="recordingTitle">
+          <div class="compliance-section-title">
+            <h4 id="recordingTitle">演示录屏</h4>
+            <span>微调、Agent、应用调用各一段</span>
+          </div>
+          <div class="recording-list">
+            <label><span>01</span><strong>微调流程</strong><small data-recording-name="training">尚未选择</small><b data-recording-status="training">待提供</b><input type="file" accept="video/*" data-recording-file="training" hidden></label>
+            <label><span>02</span><strong>Agent 配置</strong><small data-recording-name="agent">尚未选择</small><b data-recording-status="agent">待提供</b><input type="file" accept="video/*" data-recording-file="agent" hidden></label>
+            <label><span>03</span><strong>应用调用</strong><small data-recording-name="application">尚未选择</small><b data-recording-status="application">待提供</b><input type="file" accept="video/*" data-recording-file="application" hidden></label>
+          </div>
+          <div id="recordingPreview" class="recording-preview" hidden></div>
+        </section>
+      </section>
     </main>
   </div>
 
@@ -779,7 +845,7 @@
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
   <script src="grading-utils.js?v=3"></script>
-  <script src="team4-utils.js?v=1"></script>
-  <script defer src="app.js?v=51"></script>
+  <script src="team4-utils.js?v=2"></script>
+  <script defer src="app.js?v=52"></script>
 </body>
 </html>

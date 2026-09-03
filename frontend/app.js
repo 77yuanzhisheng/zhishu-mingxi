@@ -5,6 +5,7 @@ const KB_API_BASE_URL = API_BASE_URL;
 const DEFAULT_USER_ID = 1;
 const DEFAULT_NODE_ID = "rel_02";
 const AUTH_TOKEN_KEY = "dm_auth_token";
+const AGENT_CHAT_PATH = "/api/agent/chat";
 
 function resolveApiBaseUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -27,6 +28,7 @@ const tabRoutes = {
   classes: "/classes",
   exam: "/exam",
   lessonPrep: "/lesson-prep",
+  compliance: "/compliance",
   tools: "/tools",
   textbook: "/textbook",
 };
@@ -42,6 +44,7 @@ const titles = {
   classes: "班级管理",
   exam: "在线考试",
   lessonPrep: "教师智能备课",
+  compliance: "赛事平台合规材料",
   textbook: "Web 交互式教材 2.0",
 };
 
@@ -77,6 +80,7 @@ const gradingState = {
   ocrFile: null, submitting: false, proofSteps: [], explanationSteps: [], explanationIndex: 0,
 };
 const chatState = { sessionId: null };
+const agentState = { available: null, channel: "pending", fallbackReason: "" };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
@@ -84,6 +88,7 @@ const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
 const companionState = { kind: "today", loading: false };
 const lessonPrepState = { loading: false, resultText: "" };
+const complianceState = { evidence: {}, recordings: {}, objectUrls: {} };
 
 const practiceState = {
   filter: "all",
@@ -428,6 +433,12 @@ document.getElementById("prepChapterSelect").addEventListener("change", syncPrep
 document.getElementById("prepSectionSelect").addEventListener("change", updatePrepDocumentMeta);
 document.getElementById("generateLessonPrepButton").addEventListener("click", generateLessonPrep);
 document.getElementById("copyLessonPrepButton").addEventListener("click", copyLessonPrep);
+document.querySelectorAll("[data-evidence-file]").forEach((input) => {
+  input.addEventListener("change", () => handleEvidenceFile(input.dataset.evidenceFile, input.files?.[0]));
+});
+document.querySelectorAll("[data-recording-file]").forEach((input) => {
+  input.addEventListener("change", () => handleRecordingFile(input.dataset.recordingFile, input.files?.[0]));
+});
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
 document.getElementById("shareRequestForm").addEventListener("submit", requestLearningShare);
@@ -474,6 +485,8 @@ async function bootstrapApp() {
       name: demoUserId === 1003 ? "张鹤轩" : `演示用户 ${demoUserId}`,
       role: demoParams.get("demoRole") === "teacher" ? "teacher" : "student",
     };
+    const complianceNotice = document.getElementById("complianceDemoNotice");
+    if (complianceNotice) complianceNotice.hidden = false;
     await startAuthenticatedApp();
     // 演示/截图模式：?ask=问题 自动在 RAG 问答中发送（真实问答，用于截图）
     const askQuestion = demoParams.get("ask");
@@ -709,6 +722,7 @@ function switchTab(tabName, updateHistory = true) {
   if (tabName === "classes") loadClassWorkspace();
   if (tabName === "exam") loadExamWorkspace();
   if (tabName === "lessonPrep") loadLessonPrepWorkspace();
+  if (tabName === "compliance") updateComplianceProgress();
 }
 
 function getTabFromLocation() {
@@ -759,7 +773,7 @@ async function handleAsk() {
 
   const loading = addMessage("正在检索知识库并生成回答...", "assistant");
   try {
-    const data = await requestStreamingChat({
+    const data = await requestPreferredAssistant({
       message: question,
       user_id: getCurrentUserId(),
       session_id: chatState.sessionId,
@@ -767,10 +781,83 @@ async function handleAsk() {
     }, loading);
     chatState.sessionId = data.session_id || chatState.sessionId;
 
-    updateMessage(loading, data.answer);
+    updateMessage(loading, data.answer, data.assistantChannel);
   } catch (error) {
     updateMessage(loading, `${error.message}。当前后端：${API_BASE_URL}；请检查后端状态和模型网络连接。`);
   }
+}
+
+async function requestAgentChat(payload) {
+  const response = await postJson(AGENT_CHAT_PATH, payload);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(readApiError(data, response.status === 404 ? "智能体接口尚未接通" : "智能体暂时不可用"));
+    error.status = response.status;
+    throw error;
+  }
+  const answer = window.Team4Utils.normalizeAgentAnswer(data);
+  if (!answer) throw new Error("智能体没有返回有效回答");
+  agentState.available = true;
+  return { ...data, answer };
+}
+
+async function requestPreferredAssistant(payload, message = null) {
+  let fallbackReason = "智能体接口尚未接通";
+  if (agentState.available !== false) {
+    try {
+      const data = await requestAgentChat(payload);
+      const channel = window.Team4Utils.resolveAssistantChannel({ ...data, channel: data.channel || "agent" });
+      updateAssistantChannelUI(channel);
+      if (message) {
+        const writer = createTypewriter(message);
+        writer.enqueue(data.answer);
+        await writer.drain();
+      }
+      return { ...data, assistantChannel: channel };
+    } catch (error) {
+      fallbackReason = formatAgentFallbackReason(error);
+      if (error.status === 404 || error.status === 501) agentState.available = false;
+    }
+  }
+
+  const data = message
+    ? await requestStreamingChat(payload, message)
+    : await requestBasicAssistant(payload);
+  const channel = window.Team4Utils.resolveAssistantChannel(data, fallbackReason);
+  updateAssistantChannelUI(channel);
+  return { ...data, assistantChannel: channel };
+}
+
+function formatAgentFallbackReason(error) {
+  if (error?.status === 404 || error?.status === 501) return "智能体接口尚未接通";
+  if (error?.status === 429) return "智能体请求繁忙，已切换基础模型";
+  if (Number(error?.status) >= 500) return "智能体暂时不可用，已切换基础模型";
+  if (/timeout|timed out|超时/i.test(error?.message || "")) return "智能体响应超时，已切换基础模型";
+  return error?.message || "智能体暂时不可用";
+}
+
+async function requestBasicAssistant(payload) {
+  const response = await postJson("/chat", payload);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readApiError(data, "基础模型暂时无法响应"));
+  const answer = window.Team4Utils.normalizeAgentAnswer(data);
+  if (!answer) throw new Error("基础模型没有返回有效回答");
+  chatState.sessionId = data.session_id || chatState.sessionId;
+  return { ...data, answer };
+}
+
+function updateAssistantChannelUI(channel) {
+  agentState.channel = channel.kind;
+  agentState.fallbackReason = channel.detail;
+  document.querySelectorAll("[data-assistant-channel-wrap]").forEach((element) => {
+    element.className = `assistant-channel ${channel.kind}`;
+  });
+  document.querySelectorAll("[data-assistant-channel]").forEach((element) => {
+    element.textContent = channel.label;
+  });
+  document.querySelectorAll("[data-assistant-channel-detail]").forEach((element) => {
+    element.textContent = channel.detail;
+  });
 }
 
 async function requestStreamingChat(payload, message) {
@@ -1335,8 +1422,16 @@ function addMessage(text, type) {
   return message;
 }
 
-function updateMessage(message, text) {
+function updateMessage(message, text, channel = null) {
   message.innerHTML = "";
+
+  if (channel) {
+    const meta = document.createElement("div");
+    meta.className = `message-channel ${channel.kind}`;
+    meta.innerHTML = `<span></span><strong>${escapeHtml(channel.label)}</strong>`;
+    meta.title = channel.detail;
+    message.appendChild(meta);
+  }
 
   const content = document.createElement("div");
   content.className = "message-content";
@@ -3605,16 +3700,14 @@ function setCompanionKind(kind) {
 }
 
 async function requestAssistantText(prompt) {
-  const response = await postJson("/chat", {
+  const data = await requestPreferredAssistant({
     message: prompt,
     user_id: getCurrentUserId(),
     session_id: chatState.sessionId,
     node_id: learningState.currentNodeId,
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(readApiError(data, "智能助手暂时无法响应"));
   chatState.sessionId = data.session_id || chatState.sessionId;
-  return String(data.answer || data.content || "").trim();
+  return data.answer;
 }
 
 async function generateCompanionAdvice() {
@@ -3722,6 +3815,69 @@ async function copyLessonPrep() {
   const button = document.getElementById("copyLessonPrepButton");
   button.textContent = "已复制";
   setTimeout(() => { button.textContent = "复制内容"; }, 1200);
+}
+
+function replaceComplianceObjectUrl(key, file) {
+  if (complianceState.objectUrls[key]) URL.revokeObjectURL(complianceState.objectUrls[key]);
+  const url = URL.createObjectURL(file);
+  complianceState.objectUrls[key] = url;
+  return url;
+}
+
+function handleEvidenceFile(kind, file) {
+  if (!kind || !file) return;
+  const item = document.querySelector(`[data-evidence-item="${kind}"]`);
+  const preview = document.querySelector(`[data-evidence-preview="${kind}"]`);
+  if (!item || !preview) return;
+  if (!file.type.startsWith("image/")) {
+    preview.innerHTML = "<span>请选择图片文件</span>";
+    return;
+  }
+  const url = replaceComplianceObjectUrl(`image-${kind}`, file);
+  complianceState.evidence[kind] = file.name;
+  preview.innerHTML = "";
+  const image = document.createElement("img");
+  image.src = url;
+  image.alt = `${item.querySelector("strong")?.textContent || "平台"}截图预览`;
+  preview.appendChild(image);
+  item.classList.add("ready");
+  item.querySelector("[data-evidence-status]").textContent = "已就绪";
+  updateComplianceProgress();
+}
+
+function handleRecordingFile(kind, file) {
+  if (!kind || !file) return;
+  const name = document.querySelector(`[data-recording-name="${kind}"]`);
+  const status = document.querySelector(`[data-recording-status="${kind}"]`);
+  const preview = document.getElementById("recordingPreview");
+  if (!file.type.startsWith("video/")) {
+    name.textContent = "请选择视频文件";
+    return;
+  }
+  const url = replaceComplianceObjectUrl(`video-${kind}`, file);
+  complianceState.recordings[kind] = file.name;
+  name.textContent = file.name;
+  status.textContent = "已就绪";
+  status.closest("label").classList.add("ready");
+  preview.hidden = false;
+  preview.innerHTML = "";
+  const video = document.createElement("video");
+  video.src = url;
+  video.controls = true;
+  video.preload = "metadata";
+  preview.appendChild(video);
+  updateComplianceProgress();
+}
+
+function updateComplianceProgress() {
+  const target = document.getElementById("complianceProgress");
+  if (!target) return;
+  const progress = window.Team4Utils.countReadyMaterials(
+    complianceState.evidence,
+    complianceState.recordings,
+  );
+  target.textContent = `${progress.ready} / ${progress.total}`;
+  target.parentElement.classList.toggle("complete", progress.ready === progress.total);
 }
 
 function updateRoleInterface() {

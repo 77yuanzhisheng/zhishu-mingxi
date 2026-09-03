@@ -56,5 +56,51 @@
     ].join("\n");
   }
 
-  return { splitProofSteps, buildCompanionPrompt, buildLessonPrompt };
+  function normalizeAgentAnswer(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    const candidates = [
+      payload.answer,
+      payload.content,
+      payload.output,
+      payload.result?.answer,
+      payload.data?.answer,
+      payload.data?.content,
+    ];
+    return String(candidates.find((value) => typeof value === "string" && value.trim()) || "").trim();
+  }
+
+  function resolveAssistantChannel(payload, fallbackReason = "") {
+    const marker = [
+      payload?.channel,
+      payload?.provider,
+      payload?.source,
+      payload?.agent_status,
+      payload?.route,
+    ].filter(Boolean).join(" ").toLowerCase();
+    const reason = String(fallbackReason || payload?.fallback_reason || "").trim();
+    const isAgent = /agent|星辰|xfyun/.test(marker) && !/fallback|degraded|降级/.test(marker);
+    if (isAgent && !reason) {
+      return { kind: "agent", label: "星辰 Agent", detail: "智能体通道正常" };
+    }
+    return {
+      kind: "fallback",
+      label: "Qwen3 降级",
+      detail: reason || "当前回答由基础模型生成",
+    };
+  }
+
+  function countReadyMaterials(evidence, recordings) {
+    const screenshotCount = Object.values(evidence || {}).filter(Boolean).length;
+    const recordingCount = Object.values(recordings || {}).filter(Boolean).length;
+    return { ready: screenshotCount + recordingCount, total: 6 };
+  }
+
+  return {
+    splitProofSteps,
+    buildCompanionPrompt,
+    buildLessonPrompt,
+    normalizeAgentAnswer,
+    resolveAssistantChannel,
+    countReadyMaterials,
+  };
 });

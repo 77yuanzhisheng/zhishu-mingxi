@@ -27,4 +27,18 @@ const lesson = utils.buildLessonPrompt({
 assert(lesson.includes("45 分钟"));
 assert(lesson.includes("联结词"));
 
+assert.strictEqual(utils.normalizeAgentAnswer({ data: { content: "智能体回答" } }), "智能体回答");
+assert.deepStrictEqual(
+  utils.resolveAssistantChannel({ provider: "xfyun-agent", channel: "agent" }),
+  { kind: "agent", label: "星辰 Agent", detail: "智能体通道正常" },
+);
+assert.deepStrictEqual(
+  utils.resolveAssistantChannel({}, "智能体接口尚未接通"),
+  { kind: "fallback", label: "Qwen3 降级", detail: "智能体接口尚未接通" },
+);
+assert.deepStrictEqual(
+  utils.countReadyMaterials({ maas: "a.png", agent: "b.png" }, { application: "c.webm" }),
+  { ready: 3, total: 6 },
+);
+
 console.log("team4-utils tests passed");
