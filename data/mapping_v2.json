@@ -1,6 +1,9 @@
 {
  "generated": "2026-08-31",
+ "version": 2,
  "count": 150,
+ "auto": 150,
+ "human_calibrated": 29,
  "mapping": {
   "K010101": {
    "platform_node_id": "st_01_01",

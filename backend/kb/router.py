@@ -731,3 +731,87 @@ def get_teacher_graph():
                 k["platform_node_id"] = entry["platform_node_id"] if entry else ""
                 k["mapping_kind"] = entry.get("kind", "") if entry else ""
     return kg
+
+
+# ==================== 教师教材图谱 · 动态追加/删除 ====================
+
+async def _read_teacher_kg() -> dict:
+    try:
+        return json.load(open(_WEB_RESOURCE_DIR / "teacher_kg.json", encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"teacher_kg.json 未就绪: {exc}")
+
+
+def _find_kg_container(kg: dict, parent_id: str):
+    """返回 (list 容器, 父级 dict 或 None)：parent_id 为空→chapters；否则按层级查找。"""
+    if not parent_id:
+        return kg.setdefault("chapters", []), None
+    for ch in kg.get("chapters", []):
+        if ch.get("id") == parent_id:
+            return ch.setdefault("sections", []), ch
+        for sec in ch.get("sections", []):
+            if sec.get("id") == parent_id:
+                return sec.setdefault("kps", []), sec
+            for k in sec.get("kps", []):
+                if k.get("id") == parent_id:
+                    return k.setdefault("points", []), k
+    raise HTTPException(status_code=404, detail=f"父节点 {parent_id} 不存在")
+
+
+@router.post("/teacher-graph/node", summary="动态追加：章节/节/知识点/要点")
+async def add_teacher_node(
+    node_type: str = Query(..., pattern="^(chapter|section|kp|point)$"),
+    parent_id: str = Query(None),
+    title: str = Query(..., min_length=1, max_length=100),
+    node_id: str = Query(None, max_length=20),
+):
+    import os as _os
+    kg = await _read_teacher_kg()
+    container, parent = _find_kg_container(kg, parent_id)
+    prefix = {"chapter": "C", "section": "S", "kp": "K", "point": "P"}[node_type]
+    if not node_id:
+        n = len(container) + 1
+        node_id = f"{prefix}9{int(_os.times()[4]) % 10000:02d}{n:02d}"
+    # 去重
+    if any(x.get("id") == node_id for x in container):
+        raise HTTPException(status_code=409, detail=f"节点 {node_id} 已存在")
+    node = {"id": node_id, "title": title}
+    if node_type in ("chapter", "section"):
+        node["no"] = len(container) + 1
+        node["page"] = [0, 0]
+    if node_type == "chapter":
+        node["part"] = "动态追加"
+        node["sections"] = []
+        node["points"] = []
+    if node_type == "section":
+        node["kps"] = []
+    container.append(node)
+    tmp = _WEB_RESOURCE_DIR / "teacher_kg.json.tmp"
+    tmp.write_text(json.dumps(kg, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_WEB_RESOURCE_DIR / "teacher_kg.json")
+    return {"ok": True, "id": node_id, "node_type": node_type, "parent_id": parent_id or "root"}
+
+
+@router.delete("/teacher-graph/node/{node_id}", summary="删除节点（含子级）")
+async def delete_teacher_node(node_id: str):
+    kg = await _read_teacher_kg()
+    deleted = False
+
+    def drop(container):
+        nonlocal deleted
+        for i, item in enumerate(container):
+            if item.get("id") == node_id:
+                container.pop(i)
+                return True
+            for sub in ("sections", "kps", "points"):
+                if sub in item and drop(item[sub]):
+                    return True
+        return False
+
+    deleted = drop(kg.setdefault("chapters", []))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"节点 {node_id} 不存在")
+    tmp = _WEB_RESOURCE_DIR / "teacher_kg.json.tmp"
+    tmp.write_text(json.dumps(kg, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_WEB_RESOURCE_DIR / "teacher_kg.json")
+    return {"ok": True, "deleted": node_id}

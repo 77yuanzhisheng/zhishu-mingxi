@@ -335,6 +335,7 @@
               </div>
               <button class="ghost-button" id="refreshGraphButton">刷新图谱</button>
               <button class="ghost-button" id="resetGraphButton">收起全部</button>
+              <button class="ghost-button" id="teacherManageButton" hidden>＋ 管理教材图谱</button>
               <div class="graph-legend" aria-label="图例">
                 <strong class="graph-legend-title">掌握状态</strong>
                 <span class="mastered">已掌握</span>
@@ -697,6 +698,38 @@
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
   <script src="grading-utils.js?v=3"></script>
-  <script defer src="app.js?v=50"></script>
+  <script defer src="app.js?v=52"></script>
+
+  <!-- 教材图谱 · 动态追加管理弹窗 -->
+  <div id="teacherManageModal" class="modal-mask" style="display:none" role="dialog" aria-label="管理教材图谱">
+    <div class="modal-box">
+      <h4>管理教材图谱（动态追加 / 删除）</h4>
+      <div class="study-card" style="margin-top:10px">
+        <label style="display:block;font-size:13px;margin-bottom:4px">节点类型</label>
+        <select id="tgType" style="width:100%;padding:6px">
+          <option value="chapter">章</option>
+          <option value="section">节（父=章 id，如 C01）</option>
+          <option value="kp" selected>知识点（父=节 id，如 S0101）</option>
+          <option value="point">要点（父=知识点 id，如 K010101）</option>
+        </select>
+        <label style="display:block;font-size:13px;margin:8px 0 4px">父节点 id（根层级留空）</label>
+        <input id="tgParentId" type="text" placeholder="如 S0101" style="width:100%;padding:6px">
+        <label style="display:block;font-size:13px;margin:8px 0 4px">标题</label>
+        <input id="tgTitle" type="text" placeholder="新节点名称" style="width:100%;padding:6px">
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button id="tgAddButton" type="button">追加节点</button>
+          <button id="tgCancelButton" type="button" class="ghost-button">关闭</button>
+        </div>
+      </div>
+      <div class="study-card" style="margin-top:10px">
+        <label style="display:block;font-size:13px;margin-bottom:4px">删除节点（输入节点 id）</label>
+        <input id="tgDeleteId" type="text" placeholder="如 P02010101" style="width:100%;padding:6px">
+        <div style="margin-top:10px">
+          <button id="tgDeleteButton" type="button">删除</button>
+        </div>
+      </div>
+      <p id="tgStatus" style="font-size:12px;color:#627186;margin-top:10px"></p>
+    </div>
+  </div>
 </body>
 </html>

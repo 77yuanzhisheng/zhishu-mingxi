@@ -389,6 +389,11 @@ document.getElementById("loadOrderSample").addEventListener("click", () => loadM
 document.getElementById("loadEquivalenceSample").addEventListener("click", () => loadMatrixSample("equivalence"));
 document.getElementById("refreshGraphButton").addEventListener("click", () => loadKnowledgeGraph(true));
 document.getElementById("resetGraphButton").addEventListener("click", resetKnowledgeGraph);
+// 教材图谱 · 动态追加/删除（队员2 任务④）
+document.getElementById("teacherManageButton")?.addEventListener("click", openTeacherManage);
+document.getElementById("tgAddButton")?.addEventListener("click", addTeacherNode);
+document.getElementById("tgDeleteButton")?.addEventListener("click", deleteTeacherNode);
+document.getElementById("tgCancelButton")?.addEventListener("click", closeTeacherManage);
 document.getElementById("loadGraphRecommendationsButton").addEventListener("click", loadSelectedGraphRecommendations);
 document.getElementById("refreshLearningButton").addEventListener("click", loadLearningReport);
 document.getElementById("reloadGradingQuestionsButton").addEventListener("click", loadGradingQuestions);
@@ -2111,10 +2116,85 @@ function setGraphView(view) {
       ? "教材图谱按 章→节→知识点→要点 四层展示；颜色表示对应知识点的掌握状态（映射到平台学情）。"
       : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
   document.querySelector(".graph-legend .dependency").hidden = view !== "force";
+  const manageButton = document.getElementById("teacherManageButton");
+  if (manageButton) manageButton.hidden = view !== "teacher";
   renderKnowledgeGraph();
 }
 
 // ============ 教材图谱（教师四层结构 · 映射联动学情） ============
+function openTeacherManage() {
+  document.getElementById("teacherManageModal").style.display = "block";
+}
+
+function closeTeacherManage() {
+  document.getElementById("teacherManageModal").style.display = "none";
+  document.getElementById("tgStatus").textContent = "";
+}
+
+async function refreshTeacherGraph() {
+  graphState.teacherLoaded = false;
+  const container = document.getElementById("knowledgeGraphChart");
+  if (container) container.dataset.renderer = "";
+  renderKnowledgeGraph();
+}
+
+async function tgRequest(method, url) {
+  const response = await fetch(url, { method }).catch(() => null);
+  if (!response) return { error: "接口不可用（后端未启动？）" };
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    return { error: body.detail || `HTTP ${response.status}` };
+  }
+  return { data: await response.json() };
+}
+
+async function addTeacherNode() {
+  const typeEl = document.getElementById("tgType");
+  const parentId = document.getElementById("tgParentId").value.trim();
+  const title = document.getElementById("tgTitle").value.trim();
+  const statusEl = document.getElementById("tgStatus");
+  if (!title) {
+    statusEl.textContent = "请先填写节点标题";
+    return;
+  }
+  if (typeEl.value !== "chapter" && !parentId) {
+    statusEl.textContent = `请填写父节点 id（${typeEl.value === "section" ? "如 C01" : "如 S0101"}）`;
+    return;
+  }
+  const typeName = typeEl.options[typeEl.selectedIndex]?.textContent || typeEl.value;
+  if (!confirm(`确定追加：${typeName}「${title}」${parentId ? `（父节点 ${parentId}）` : ""}？`)) return;
+  const params = new URLSearchParams({ node_type: typeEl.value, title });
+  if (parentId) params.set("parent_id", parentId);
+  statusEl.textContent = "追加中…";
+  const result = await tgRequest("POST", `${KB_API_BASE_URL}/kb/teacher-graph/node?${params}`);
+  if (result.error) {
+    statusEl.textContent = `追加失败：${result.error}`;
+    return;
+  }
+  document.getElementById("tgTitle").value = "";
+  statusEl.textContent = `✅ 已追加 ${result.data.id}（${result.data.node_type}）`;
+  refreshTeacherGraph();
+}
+
+async function deleteTeacherNode() {
+  const nodeId = document.getElementById("tgDeleteId").value.trim();
+  const statusEl = document.getElementById("tgStatus");
+  if (!nodeId) {
+    statusEl.textContent = "请先输入要删除的节点 id";
+    return;
+  }
+  if (!confirm(`确定删除节点 ${nodeId}（其全部下级将一并删除）？`)) return;
+  statusEl.textContent = "删除中…";
+  const result = await tgRequest("DELETE", `${KB_API_BASE_URL}/kb/teacher-graph/node/${encodeURIComponent(nodeId)}`);
+  if (result.error) {
+    statusEl.textContent = `删除失败：${result.error}`;
+    return;
+  }
+  document.getElementById("tgDeleteId").value = "";
+  statusEl.textContent = `✅ 已删除 ${result.data.deleted}`;
+  refreshTeacherGraph();
+}
+
 async function loadTeacherGraph() {
   if (graphState.teacherLoaded) return graphState.teacherGraph;
   const response = await fetch(`${KB_API_BASE_URL}/kb/teacher-graph`).catch(() => null);
