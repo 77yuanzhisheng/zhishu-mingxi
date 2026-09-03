@@ -35,6 +35,10 @@ class OpenAICompatibleLLM:
         self.max_tokens = 1024
         self.max_retries = 2
         self.enable_thinking: bool | None = None
+        self.fallback_api_key = ""
+        self.fallback_base_url = ""
+        self.fallback_model = ""
+        self._fallback_active = False
         self._refresh_config()
 
     def _refresh_config(self) -> None:
@@ -55,6 +59,12 @@ class OpenAICompatibleLLM:
             if thinking_setting
             else None
         )
+        self.fallback_api_key = os.getenv("SPARK_API_KEY", "").strip()
+        self.fallback_base_url = os.getenv(
+            "SPARK_BASE_URL", "https://spark-api-open.xf-yun.com/v1"
+        ).strip().rstrip("/")
+        self.fallback_model = os.getenv("SPARK_CHAT_MODEL", "4.0Ultra").strip()
+        self._fallback_active = False
         logger.info(
             "LLM config: base_url=%s model=%s key_exists=%s key_length=%d key_prefix=%s",
             self.base_url,
@@ -62,6 +72,12 @@ class OpenAICompatibleLLM:
             bool(self.api_key),
             len(self.api_key),
             self.api_key[:6] if self.api_key else "",
+        )
+        logger.info(
+            "LLM fallback(讯飞星火): ready=%s base_url=%s model=%s",
+            self._fallback_ready(),
+            self.fallback_base_url,
+            self.fallback_model,
         )
 
     def ensure_available(self) -> None:
@@ -71,8 +87,44 @@ class OpenAICompatibleLLM:
                 "LLM 尚未配置：请设置 OPENAI_BASE_URL 和 OPENAI_CHAT_MODEL"
             )
 
+    def _fallback_ready(self) -> bool:
+        """讯飞星火备用通道是否已配置（仅需 SPARK_API_KEY）。"""
+
+        return bool(
+            self.fallback_api_key
+            and self.fallback_api_key != "your_api_key_here"
+            and self.fallback_base_url
+            and self.fallback_model
+        )
+
+    def _activate_fallback(self) -> None:
+        self.api_key = self.fallback_api_key
+        self.base_url = self.fallback_base_url
+        self.model = self.fallback_model
+        self._fallback_active = True
+        logger.warning(
+            "LLM 主通道失败，已切换讯飞星火备用通道: base_url=%s model=%s",
+            self.base_url,
+            self.model,
+        )
+
     def generate(self, messages: list[dict[str, str]]) -> str:
-        self.ensure_available()
+        """生成回答；主通道失败时自动切换到讯飞星火备用通道（如已配置 SPARK_API_KEY）。"""
+
+        self._refresh_config()
+        if not self.base_url or not self.model:
+            raise LLMUnavailableError(
+                "LLM 尚未配置：请设置 OPENAI_BASE_URL 和 OPENAI_CHAT_MODEL"
+            )
+        try:
+            return self._generate_once(messages)
+        except LLMUnavailableError:
+            if not self._fallback_ready():
+                raise
+            self._activate_fallback()
+            return self._generate_once(messages)
+
+    def _generate_once(self, messages: list[dict[str, str]]) -> str:
         headers = self._headers()
         payload = self._payload(messages)
         answer = None
@@ -113,9 +165,27 @@ class OpenAICompatibleLLM:
         return answer.strip()
 
     def stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        """流式生成；主通道失败且未产出任何内容时，切换到讯飞星火备用通道。"""
+
+        self._refresh_config()
+        if not self.base_url or not self.model:
+            raise LLMUnavailableError(
+                "LLM 尚未配置：请设置 OPENAI_BASE_URL 和 OPENAI_CHAT_MODEL"
+            )
+        produced: list[str] = []
+        try:
+            for chunk in self._stream_once(messages):
+                produced.append(chunk)
+                yield chunk
+        except LLMUnavailableError:
+            if produced or not self._fallback_ready():
+                raise
+            self._activate_fallback()
+            yield from self._stream_once(messages)
+
+    def _stream_once(self, messages: list[dict[str, str]]) -> Iterator[str]:
         """Yield content deltas from an OpenAI-compatible SSE response."""
 
-        self.ensure_available()
         headers = self._headers()
         payload = self._payload(messages)
         payload["stream"] = True
@@ -192,7 +262,8 @@ class OpenAICompatibleLLM:
             "temperature": 0.3,
             "max_tokens": self.max_tokens,
         }
-        if self.enable_thinking is not None:
+        # chat_template_kwargs 是 SiliconFlow 专有参数，星火备用通道不发送
+        if self.enable_thinking is not None and not self._fallback_active:
             payload["chat_template_kwargs"] = {
                 "enable_thinking": self.enable_thinking,
             }
