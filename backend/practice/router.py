@@ -51,42 +51,89 @@ CHAPTER_MODULE = {
     "数学归纳法": ("induction", "数学归纳法", "mi_01_01"),
 }
 
-# 老师训练题库 kp → (module, moduleName, node_id)
+# 老师训练题库 kp → (module, moduleName, node_id) 兜底层级（细粒度取题级映射 _kp_node）
 KP_NODE = {
     # 命题逻辑
     "prop-logic": ("propositional_logic", "命题逻辑", "pl_01_02"),
-    "normal-form": ("propositional_logic", "命题逻辑", "pl_03_01"),
+    "normal-form": ("propositional_logic", "命题逻辑", "pl_03_02"),
     "inference": ("propositional_logic", "命题逻辑", "pl_03_05"),
     # 谓词逻辑
     "pred-logic": ("predicate_logic", "谓词逻辑", "fl_01_02"),
     # 集合论
     "set-ops": ("set_theory", "集合论", "st_02_01"),
-    "function": ("set_theory", "集合论", "st_01_01"),
-    "cardinality": ("set_theory", "集合论", "st_01_03"),
-    "ie-set": ("set_theory", "集合论", "st_02_05"),
+    "function": ("set_theory", "集合论", "st_05_01"),
+    "cardinality": ("set_theory", "集合论", "st_06_01"),
+    "ie-set": ("set_theory", "集合论", "st_04_01"),
     # 关系
-    "relation": ("relations", "关系", "rel_02_01"),
+    "relation": ("relations", "关系", "rel_01_01"),
     # 图论
     "graph-basic": ("graph_theory", "图论", "gt_01_01"),
-    "connectivity": ("graph_theory", "图论", "gt_02_04"),
-    "planar": ("graph_theory", "图论", "gt_01_01"),
+    "connectivity": ("graph_theory", "图论", "gt_02_03"),
+    "planar": ("graph_theory", "图论", "gt_05_01"),
     "hamilton": ("graph_theory", "图论", "gt_04_02"),
     "spanning-tree": ("graph_theory", "图论", "gt_04_04"),
-    "coloring": ("graph_theory", "图论", "gt_04_03"),
+    "coloring": ("graph_theory", "图论", "gt_06_09"),
     "digraph": ("graph_theory", "图论", "gt_01_01"),
-    # 扩展专题（数论/组合/代数）— 独立类别，与知识图谱 6 大模块并列
-    "gcd": ("number_theory", "初等数论", "nt_01_01"),
-    "congruence": ("number_theory", "初等数论", "nt_02_01"),
+    # 数论/组合/代数 —— 已并入知识图谱 9 模块
+    "gcd": ("number_theory", "初等数论", "nt_02_01"),
+    "congruence": ("number_theory", "初等数论", "nt_03_01"),
     "combinatorics": ("combinatorics", "组合数学", "cm_01_01"),
-    "inclusion-exclusion": ("combinatorics", "组合数学", "cm_02_01"),
-    "gen-func": ("combinatorics", "组合数学", "cm_03_01"),
-    "recurrence": ("combinatorics", "组合数学", "cm_04_01"),
-    "polya": ("combinatorics", "组合数学", "cm_05_01"),
-    "algebra": ("algebraic_structure", "代数结构", "ag_01_01"),
-    "group": ("algebraic_structure", "代数结构", "ag_02_01"),
-    "semigroup": ("algebraic_structure", "代数结构", "ag_03_01"),
-    "homomorphism": ("algebraic_structure", "代数结构", "ag_04_01"),
+    "inclusion-exclusion": ("set_theory", "集合论", "st_04_01"),
+    "gen-func": ("combinatorics", "组合数学", "cm_06_01"),
+    "recurrence": ("combinatorics", "组合数学", "cm_05_01"),
+    "polya": ("algebraic_structure", "代数结构", "ag_06_02"),
+    "algebra": ("algebraic_structure", "代数结构", "ag_02_01"),
+    "group": ("algebraic_structure", "代数结构", "ag_04_02"),
+    "semigroup": ("algebraic_structure", "代数结构", "ag_04_01"),
+    "homomorphism": ("algebraic_structure", "代数结构", "ag_03_01"),
 }
+
+# node_id 前缀 → 平台模块（与 backend/kb/router.py KG_DATA 9 模块一致）
+NODE_PREFIX_MODULE = {
+    "pl": ("propositional_logic", "命题逻辑"),
+    "fl": ("predicate_logic", "谓词逻辑"),
+    "st": ("set_theory", "集合论"),
+    "mi": ("induction", "数学归纳法"),
+    "rel": ("relations", "关系"),
+    "gt": ("graph_theory", "图论"),
+    "nt": ("number_theory", "初等数论"),
+    "cm": ("combinatorics", "组合数学"),
+    "ag": ("algebraic_structure", "代数结构"),
+}
+
+_NODE_MAP_CACHE: Optional[Dict[str, str]] = None
+
+
+def _teacher_node_map() -> Dict[str, str]:
+    """112 题级 node_id 映射（scripts/build_question_node_mapping.py 生成，语义层挂载）。
+
+    键: f"{exam_id}-{kind}-{序号}"，值: 平台节点 node_id。
+    """
+    global _NODE_MAP_CACHE
+    if _NODE_MAP_CACHE is not None:
+        return _NODE_MAP_CACHE
+    _NODE_MAP_CACHE = {}
+    path = os.path.join(DOCS_DIR, "老师训练题库_node_id.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _NODE_MAP_CACHE = {k: v["node_id"] for k, v in data["questions"].items()}
+        except Exception as exc:
+            logger.warning("老师训练题库 node 映射加载失败: %s", exc)
+    else:
+        logger.warning("老师训练题库_node_id.json 不存在，回退 kp→节点")
+    return _NODE_MAP_CACHE
+
+
+def _kp_node(kp: str, qid: Optional[str] = None):
+    """题目节点：优先题级映射（细粒度），回退 kp→模块内节点。"""
+    if qid:
+        node_id = _teacher_node_map().get(qid)
+        if node_id:
+            mod, mod_name = NODE_PREFIX_MODULE.get(node_id.split("_")[0], ("other", "其他"))
+            return mod, mod_name, node_id
+    return KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
 
 
 def _clean_math(s: str) -> str:
@@ -192,7 +239,7 @@ def load_teacher_fill_questions() -> List[Dict]:
             kp = item.get("kp", "")
             if not q_text or not correct:
                 continue
-            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            mod, mod_name, node_id = _kp_node(kp, f"{exam.get('id', '?')}-fill-{idx}")
 
             # 干扰项：从答案池抽 3 个不同项
             distractors = random.sample(
@@ -360,7 +407,7 @@ def get_proof_questions(limit: int = 16) -> Dict:
     for exam in _load_teacher_exams():
         for idx, item in enumerate(exam.get("proof", []), 1):
             kp = item.get("kp", "")
-            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            mod, mod_name, node_id = _kp_node(kp, f"{exam['id']}-proof-{idx}")
             questions.append({
                 "id": f"e{exam['id']}_proof_{idx}",
                 "question": item["q"],
@@ -382,7 +429,7 @@ def get_calc_questions(limit: int = 16) -> Dict:
     for exam in _load_teacher_exams():
         for idx, item in enumerate(exam.get("calc", []), 1):
             kp = item.get("kp", "")
-            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            mod, mod_name, node_id = _kp_node(kp, f"{exam['id']}-calc-{idx}")
             questions.append({
                 "id": f"e{exam['id']}_calc_{idx}",
                 "question": item["q"],
@@ -404,7 +451,7 @@ def get_fill_questions(limit: int = 28) -> Dict:
     for exam in _load_teacher_exams():
         for idx, item in enumerate(exam.get("fill", []), 1):
             kp = item.get("kp", "")
-            mod, mod_name, node_id = KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
+            mod, mod_name, node_id = _kp_node(kp, f"{exam['id']}-fill-{idx}")
             questions.append({
                 "id": f"e{exam['id']}_fill_{idx}",
                 "question": item["q"],
