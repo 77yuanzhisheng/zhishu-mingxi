@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
-  <link rel="stylesheet" href="style.css?v=43">
+  <link rel="stylesheet" href="style.css?v=44">
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -335,6 +335,8 @@
               </div>
               <button class="ghost-button" id="refreshGraphButton">刷新图谱</button>
               <button class="ghost-button" id="resetGraphButton">收起全部</button>
+              <button class="ghost-button" id="graphHistoryBackButton" type="button" disabled>← 上一步</button>
+              <button class="ghost-button" id="graphHistoryForwardButton" type="button" disabled>下一步 →</button>
               <button class="ghost-button" id="teacherManageButton" hidden>＋ 管理教材图谱</button>
               <div class="graph-legend" aria-label="图例">
                 <strong class="graph-legend-title">掌握状态</strong>
@@ -353,7 +355,7 @@
             </div>
           </section>
 
-          <aside class="insight-panel graph-detail-panel">
+          <aside class="insight-panel graph-detail-panel" id="graphDetailPanel">
             <div class="graph-detail-heading">
               <h3 id="graphDetailTitle">知识图谱</h3>
               <p id="graphDetailPrereq" class="hint" hidden></p>
@@ -698,7 +700,7 @@
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
   <script src="grading-utils.js?v=3"></script>
-  <script defer src="app.js?v=52"></script>
+  <script defer src="app.js?v=53"></script>
 
   <!-- 教材图谱 · 动态追加管理弹窗 -->
   <div id="teacherManageModal" class="modal-mask" style="display:none" role="dialog" aria-label="管理教材图谱">

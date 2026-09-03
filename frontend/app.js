@@ -55,6 +55,9 @@ const graphState = {
   masteryByNode: new Map(),
   recommendedPath: [],
   selectedNode: null,
+  // ⑤ 图谱布局重构：点节点聚焦 + 浏览历史栈（上一步/下一步）
+  nodeHistory: [],
+  historyIndex: -1,
 };
 
 const learningState = {
@@ -394,6 +397,9 @@ document.getElementById("teacherManageButton")?.addEventListener("click", openTe
 document.getElementById("tgAddButton")?.addEventListener("click", addTeacherNode);
 document.getElementById("tgDeleteButton")?.addEventListener("click", deleteTeacherNode);
 document.getElementById("tgCancelButton")?.addEventListener("click", closeTeacherManage);
+// 图谱浏览历史（队员2 任务⑤：上一步/下一步）
+document.getElementById("graphHistoryBackButton")?.addEventListener("click", () => gotoGraphHistoryStep(-1));
+document.getElementById("graphHistoryForwardButton")?.addEventListener("click", () => gotoGraphHistoryStep(1));
 document.getElementById("loadGraphRecommendationsButton").addEventListener("click", loadSelectedGraphRecommendations);
 document.getElementById("refreshLearningButton").addEventListener("click", loadLearningReport);
 document.getElementById("reloadGradingQuestionsButton").addEventListener("click", loadGradingQuestions);
@@ -2053,6 +2059,117 @@ function buildDependencyLink(dependency) {
   };
 }
 
+// ============ 图谱浏览历史（上一步/下一步 · 节点聚焦） ============
+function pickNodeForHistory(node) {
+  if (!node) return null;
+  // 只保留展示所需字段（避免整棵 children 树进入历史）
+  return {
+    id: node.id,
+    nodeId: node.nodeId,
+    name: node.name,
+    type: node.type,
+    level: node.level,
+    text: node.text,
+    description: node.description,
+    chapter: node.chapter,
+    mappingKind: node.mappingKind,
+  };
+}
+
+function sameHistoryNode(a, b) {
+  if (!a || !b) return false;
+  const keyA = a.nodeId || a.id || "";
+  const keyB = b.nodeId || b.id || "";
+  return keyA === keyB && a.name === b.name;
+}
+
+function pushNodeHistory(node, dataIndex) {
+  if (!node || node.level === "overview") return;
+  const record = pickNodeForHistory(node);
+  record.__dataIndex = Number.isFinite(dataIndex) ? dataIndex : NaN;
+  node.__dataIndex = record.__dataIndex; // 同步回当前节点，供聚焦使用
+  if (sameHistoryNode(graphState.nodeHistory[graphState.historyIndex], record)) {
+    // 重复点击当前节点：只刷新焦点，不入栈
+    graphState.nodeHistory[graphState.historyIndex].__dataIndex = record.__dataIndex;
+    return;
+  }
+  graphState.nodeHistory.splice(graphState.historyIndex + 1);
+  graphState.nodeHistory.push(record);
+  if (graphState.nodeHistory.length > 100) {
+    graphState.nodeHistory.shift();
+  }
+  graphState.historyIndex = graphState.nodeHistory.length - 1;
+  updateGraphHistoryButtons();
+}
+
+function updateGraphHistoryButtons() {
+  const back = document.getElementById("graphHistoryBackButton");
+  const forward = document.getElementById("graphHistoryForwardButton");
+  if (!back) return;
+  back.disabled = graphState.historyIndex <= 0;
+  forward.disabled = !graphState.nodeHistory.length || graphState.historyIndex >= graphState.nodeHistory.length - 1;
+}
+
+function gotoGraphHistoryStep(step) {
+  const next = graphState.historyIndex + step;
+  if (next < 0 || next >= graphState.nodeHistory.length) return;
+  graphState.historyIndex = next;
+  updateGraphHistoryButtons();
+  displayNodeInGraph(graphState.nodeHistory[next], { record: false });
+}
+
+function displayNodeInGraph(node, options = {}) {
+  if (!node) return;
+  graphState.selectedNode = node;
+  setCurrentLearningNode(node);
+  showGraphNodeDetail(node);
+  loadGraphNodeKnowledge(node);
+  // 推荐题仅在用于平台映射节点时触发（与 handleTeacherGraphClick 的伪节点逻辑对齐）
+  if (node.nodeId && node.mappingKind !== "module_fallback") {
+    loadRecommendedQuestions(node);
+  }
+  if (options.focus !== false) {
+    focusGraphNode(node, node.__dataIndex);
+  }
+  scrollGraphDetailIntoView();
+}
+
+function focusGraphNode(node, dataIndex) {
+  const chart = graphState.chart;
+  if (!chart || !node) return;
+  dataIndex = typeof dataIndex === "number" ? dataIndex : NaN;
+  try {
+    if (Number.isFinite(dataIndex)) {
+      chart.dispatchAction({
+        type: "treeUnfoldAndScrollTo",
+        seriesIndex: 0,
+        dataIndex,
+      });
+      chart.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex });
+      return;
+    }
+  } catch (error) {
+    // 视图重渲染后 dataIndex 可能失效，退化为高亮 + 滚动详情
+  }
+  try {
+    chart.dispatchAction({ type: "highlight", seriesIndex: 0 });
+  } catch (error) {
+    // 关系图视图无 highlight：忽略
+  }
+}
+
+function scrollGraphDetailIntoView() {
+  const panel = document.getElementById("graphDetailPanel");
+  if (!panel) return;
+  const rect = panel.getBoundingClientRect();
+  if (rect.top > window.innerHeight * 0.85 || rect.top < -rect.height) {
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  panel.classList.remove("detail-flash");
+  void panel.offsetWidth; // 重新触发动画
+  panel.classList.add("detail-flash");
+}
+
 function handleGraphClick(params) {
   if (params.dataType === "edge") {
     return;
@@ -2060,7 +2177,7 @@ function handleGraphClick(params) {
 
   // 教材图谱（教师四层结构）视图：点击 K 知识点 → 走平台映射后的行为链
   if (graphState.view === "teacher") {
-    handleTeacherGraphClick(params.data);
+    handleTeacherGraphClick(params.data, params.dataIndex);
     return;
   }
 
@@ -2095,6 +2212,10 @@ function handleGraphClick(params) {
   showGraphNodeDetail(node);
   loadGraphNodeKnowledge(node);
   loadRecommendedQuestions(node);
+  // ⑤ 浏览历史：入栈 + 节点聚焦 + 详情面板跟随
+  pushNodeHistory(node, params.dataIndex);
+  focusGraphNode(node, params.dataIndex);
+  scrollGraphDetailIntoView();
   recordLearningEvent(node);
 }
 
@@ -2206,7 +2327,7 @@ async function loadTeacherGraph() {
   return graphState.teacherGraph;
 }
 
-function handleTeacherGraphClick(data) {
+function handleTeacherGraphClick(data, dataIndex) {
   if (!data || data.kpId) {
     // K 知识点节点
     const platformNodeId = data.platform || "";
@@ -2220,14 +2341,10 @@ function handleTeacherGraphClick(data) {
       type: nodeId ? "item" : "module",
       description: `（来自教材图谱）${data.name}\n章节：${data.chapter || ""}`,
       text: "",
+      mappingKind: kind,
     };
-    graphState.selectedNode = pseudo;
-    setCurrentLearningNode(pseudo);
-    showGraphNodeDetail(pseudo);
-    loadGraphNodeKnowledge(pseudo);
-    if (nodeId && kind !== "module_fallback") {
-      loadRecommendedQuestions(pseudo);
-    }
+    pushNodeHistory(pseudo, dataIndex);
+    displayNodeInGraph(pseudo);
     recordLearningEvent(pseudo);
     return;
   }
@@ -4522,6 +4639,10 @@ function resetKnowledgeGraph() {
   const container = document.getElementById("knowledgeGraphChart");
   container.dataset.renderer = "";
   graphState.teacherLoaded = false;
+  // 收起全部时同步清空浏览历史
+  graphState.nodeHistory = [];
+  graphState.historyIndex = -1;
+  updateGraphHistoryButtons();
   renderKnowledgeGraph();
   showGraphNodeDetail({
     name: "知识图谱",
@@ -4863,3 +4984,15 @@ function showError(target, message) {
 function formatBool(value) {
   return value ? "真" : "假";
 }
+
+// 图谱浏览历史 · 调试钩子（浏览器控制台/自动化测试也可用）
+window.__graphDebug = {
+  state: graphState,
+  clickNode: (id, dataIndex) => {
+    const node = graphState.nodeIndex.get(id);
+    if (node) handleGraphClick({ dataType: "node", data: node, dataIndex: dataIndex ?? 0 });
+    else throw new Error(`node not found: ${id}`);
+  },
+  clickTeacher: (data, dataIndex) => handleTeacherGraphClick(data, dataIndex),
+  history: () => graphState.nodeHistory.map((n) => ({ id: n.id, name: n.name })),
+};
