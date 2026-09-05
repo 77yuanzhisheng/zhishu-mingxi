@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.chat.agent import XingchenAgentClient
 from backend.chat.llm import LLMClient
 from backend.chat.exceptions import ChatSessionAccessError
 from backend.chat.models import ChatRequest
@@ -49,6 +50,7 @@ def build_service(database_path):
         repository=ChatRepository(database_path),
         llm=llm,
         rag=EmptyRAG(),
+        agent=XingchenAgentClient(enabled=False),
     )
     return service, llm
 

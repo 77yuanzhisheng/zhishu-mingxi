@@ -46,6 +46,6 @@ def test_env_file_overrides_stale_process_key_and_builds_bearer_header(
     assert captured["json"]["max_tokens"] == 1024
     assert "enable_thinking" not in captured["json"]
     assert "sk-current-secret-value" not in caplog.text
-    assert "key_exists=True" in caplog.text
-    assert "key_length=23" in caplog.text
-    assert "key_prefix=sk-cur" in caplog.text
+    assert "configured=True" in caplog.text
+    assert "key_prefix" not in caplog.text
+    assert "key_length" not in caplog.text

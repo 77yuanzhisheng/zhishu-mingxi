@@ -50,6 +50,8 @@ MODULE_NODE_TOTALS = {
 
 PRACTICE_TARGET = 10
 MIN_GRADED_FOR_NODE_STATUS = 3
+AGENT_CONTEXT_ITEMS_PER_SECTION = 4
+AGENT_CONTEXT_MAX_CHARS = 1200
 
 
 class UserNotFoundError(LookupError):
@@ -781,3 +783,60 @@ def get_learning_report(
         ],
         recent_chat_nodes=_recent_chat_nodes(node_insights),
     )
+
+
+def build_agent_learning_context(
+    user_id: int,
+    database_path: str | Path | None = None,
+) -> str:
+    """Build a compact, read-only learning summary for prompt personalization.
+
+    Objective accuracy comes exclusively from graded answer evidence. Chat
+    activity is represented only as recent attention or repeated questions and
+    never changes mastery or accuracy.
+    """
+
+    report = get_learning_report(user_id, database_path)
+    insights = report.node_insights
+    lines: list[str] = []
+
+    def add_nodes(label: str, node_ids: list[str]) -> None:
+        if node_ids:
+            lines.append(
+                f"{label}：{'、'.join(node_ids[:AGENT_CONTEXT_ITEMS_PER_SECTION])}"
+            )
+
+    add_nodes("薄弱知识点", report.weak_nodes)
+    add_nodes("理解中", report.understanding_nodes)
+    add_nodes("已掌握", report.mastered_nodes)
+    add_nodes("近期关注", report.recent_chat_nodes)
+
+    repeated_nodes = [
+        item.node_id
+        for item in sorted(
+            (item for item in insights if item.repeated_chat_count > 0),
+            key=lambda item: item.last_chat_at.timestamp() if item.last_chat_at else 0,
+            reverse=True,
+        )
+    ]
+    add_nodes("近期重复追问", repeated_nodes)
+
+    module_evidence: dict[str, list[int]] = {}
+    for insight in insights:
+        if insight.graded_question_count <= 0:
+            continue
+        totals = module_evidence.setdefault(insight.module, [0, 0])
+        totals[0] += insight.correct_count
+        totals[1] += insight.graded_question_count
+    for module, (correct_count, graded_count) in list(module_evidence.items())[
+        :AGENT_CONTEXT_ITEMS_PER_SECTION
+    ]:
+        accuracy = round(correct_count / graded_count * 100)
+        lines.append(f"{module}已判定做题正确率：{accuracy}%（{graded_count}题）")
+
+    if not lines:
+        return ""
+    context = "\n".join(["【当前学生学情】", *lines])
+    if len(context) <= AGENT_CONTEXT_MAX_CHARS:
+        return context
+    return f"{context[: AGENT_CONTEXT_MAX_CHARS - 1]}…"

@@ -49,12 +49,10 @@ class OpenAICompatibleLLM:
             else None
         )
         logger.info(
-            "LLM config: base_url=%s model=%s key_exists=%s key_length=%d key_prefix=%s",
+            "LLM config: base_url=%s model=%s configured=%s",
             self.base_url,
             self.model,
-            bool(self.api_key),
-            len(self.api_key),
-            self.api_key[:6] if self.api_key else "",
+            bool(self.base_url and self.model),
         )
 
     def ensure_available(self) -> None:

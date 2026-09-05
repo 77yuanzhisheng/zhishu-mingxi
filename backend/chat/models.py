@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -60,3 +60,5 @@ class ChatResponse(BaseModel):
     node_ids: list[str] = Field(default_factory=list)
     topic_switch_hint: str | None = None
     context: ContextStatus
+    provider: Literal["agent", "fallback"]
+    fallback_reason: str | None = None
