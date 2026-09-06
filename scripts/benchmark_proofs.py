@@ -3,7 +3,7 @@
 benchmark_proofs.py — 老师训练题库 112 题大模型推理能力评测基线
 ================================================================
 流程（每道题）:
-    1. 作答：把题面发给 LLM（Qwen3-8B），要求给出完整推理/证明过程
+    1. 作答：把题面发给 LLM（当前配置的 LLM），要求给出完整推理/证明过程
     2. 评分：LLM-as-judge，按 5 维（结论/关键步骤/严密性/术语/表达）对照标准答案打分
     3. 汇总：按题型与知识点模块统计得分率、平均分、耗时、超时率、错误类型
 
@@ -44,6 +44,14 @@ RESULTS_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_results.json")
 REPORT_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_report.md")
 PROGRESS_FILE = os.path.join(BASE_DIR, "scripts", "benchmark_progress.json")
 LLM_TIMEOUT = 120.0  # 单次调用超时（秒），限流时快速失败记 0 分
+
+
+def configured_model_label() -> str:
+    """Return the provider/model pair actually selected by the current environment."""
+    provider = os.getenv("LLM_PROVIDER", "openai").strip() or "openai"
+    model_var = "SPARK_MODEL" if provider.lower() == "spark" else "OPENAI_CHAT_MODEL"
+    model = os.getenv(model_var, "").strip() or "not-configured"
+    return f"{provider}/{model}"
 
 TYPE_NAMES = {"fill": "填空题", "calc": "计算与简答题", "proof": "证明题", "app": "应用题"}
 
@@ -249,7 +257,7 @@ def write_report(results: list[dict], types: list[str]) -> None:
         "",
         f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M')}",
         f"> 题型：{', '.join(TYPE_NAMES[t] for t in types)}",
-        f"> 作答模型：SiliconFlow Qwen3-8B（详见 .env OPENAI_CHAT_MODEL）",
+        f"> \u4f5c\u7b54\u6a21\u578b\uff1a{configured_model_label()}\uff08\u8bfb\u53d6\u5f53\u524d .env \u914d\u7f6e\uff09",
         "",
     ]
     if not scored:
