@@ -7,10 +7,7 @@
 import sys
 import os
 import tempfile
-import io
 
-# UTF-8 输出
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
