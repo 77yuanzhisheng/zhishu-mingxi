@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -254,7 +254,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     report = inspect_training_sources(args.json_source, args.markdown_dir)
-    rendered = json.dumps(report, ensure_ascii=False, indent=2)
+    rendered = json.dumps(report, ensure_ascii=True, indent=2)
     print(rendered)
     if args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
