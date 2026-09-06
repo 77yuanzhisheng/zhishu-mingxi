@@ -1,0 +1,199 @@
+{
+  "generated_at": "2026-09-06",
+  "comparison_type": "historical_baseline_vs_current_finetuned_candidate",
+  "baseline": {
+    "label": "Pre-finetuning historical baseline (SiliconFlow Qwen3-8B)",
+    "source_commit": "7dc62e4",
+    "note": "Historical result has 108 questions and excludes 4 application questions; comparison uses the same 108-question subset.",
+    "metrics": {
+      "questions": 108,
+      "average_score_10": 8.75,
+      "normalized_accuracy_percent": 87.5,
+      "pass_rate_score_ge_6_percent": 96.3,
+      "high_correctness_score_ge_9_5_percent": 48.15,
+      "answer_success_percent": 100.0,
+      "latency_average_seconds": 53.23,
+      "latency_median_seconds": 35.35,
+      "latency_p95_seconds": 112.5,
+      "latency_max_seconds": 118.2,
+      "within_30_seconds_percent": 45.37
+    },
+    "by_type": {
+      "proof": {
+        "questions": 16,
+        "average_score_10": 8.1875,
+        "normalized_accuracy_percent": 81.88,
+        "pass_rate_score_ge_6_percent": 93.75,
+        "high_correctness_score_ge_9_5_percent": 25.0,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 61.05,
+        "latency_median_seconds": 50.35,
+        "latency_p95_seconds": 106.3,
+        "latency_max_seconds": 112.2,
+        "within_30_seconds_percent": 37.5
+      },
+      "calc": {
+        "questions": 36,
+        "average_score_10": 8.875,
+        "normalized_accuracy_percent": 88.75,
+        "pass_rate_score_ge_6_percent": 97.22,
+        "high_correctness_score_ge_9_5_percent": 50.0,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 51.6,
+        "latency_median_seconds": 32.65,
+        "latency_p95_seconds": 113.0,
+        "latency_max_seconds": 115.7,
+        "within_30_seconds_percent": 44.44
+      },
+      "fill": {
+        "questions": 56,
+        "average_score_10": 8.8304,
+        "normalized_accuracy_percent": 88.3,
+        "pass_rate_score_ge_6_percent": 96.43,
+        "high_correctness_score_ge_9_5_percent": 53.57,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 52.04,
+        "latency_median_seconds": 35.35,
+        "latency_p95_seconds": 109.8,
+        "latency_max_seconds": 118.2,
+        "within_30_seconds_percent": 48.21
+      }
+    }
+  },
+  "finetuned_candidate": {
+    "label": "Current post-finetuning service (Spark MaaS xop3qwen32b)",
+    "source": "scripts/benchmark_results.json",
+    "metrics_108_same_questions": {
+      "questions": 108,
+      "average_score_10": 8.2685,
+      "normalized_accuracy_percent": 82.69,
+      "pass_rate_score_ge_6_percent": 89.81,
+      "high_correctness_score_ge_9_5_percent": 46.3,
+      "answer_success_percent": 100.0,
+      "latency_average_seconds": 11.94,
+      "latency_median_seconds": 12.4,
+      "latency_p95_seconds": 13.1,
+      "latency_max_seconds": 15.8,
+      "within_30_seconds_percent": 100.0
+    },
+    "metrics_112_full": {
+      "questions": 112,
+      "average_score_10": 8.25,
+      "normalized_accuracy_percent": 82.5,
+      "pass_rate_score_ge_6_percent": 89.29,
+      "high_correctness_score_ge_9_5_percent": 45.54,
+      "answer_success_percent": 100.0,
+      "latency_average_seconds": 11.96,
+      "latency_median_seconds": 12.4,
+      "latency_p95_seconds": 13.1,
+      "latency_max_seconds": 15.8,
+      "within_30_seconds_percent": 100.0
+    },
+    "by_type_112": {
+      "proof": {
+        "questions": 16,
+        "average_score_10": 8.5625,
+        "normalized_accuracy_percent": 85.62,
+        "pass_rate_score_ge_6_percent": 93.75,
+        "high_correctness_score_ge_9_5_percent": 43.75,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 12.58,
+        "latency_median_seconds": 12.8,
+        "latency_p95_seconds": 13.1,
+        "latency_max_seconds": 13.9,
+        "within_30_seconds_percent": 100.0
+      },
+      "calc": {
+        "questions": 36,
+        "average_score_10": 7.4722,
+        "normalized_accuracy_percent": 74.72,
+        "pass_rate_score_ge_6_percent": 80.56,
+        "high_correctness_score_ge_9_5_percent": 30.56,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 12.56,
+        "latency_median_seconds": 12.55,
+        "latency_p95_seconds": 13.9,
+        "latency_max_seconds": 15.8,
+        "within_30_seconds_percent": 100.0
+      },
+      "fill": {
+        "questions": 56,
+        "average_score_10": 8.6964,
+        "normalized_accuracy_percent": 86.96,
+        "pass_rate_score_ge_6_percent": 94.64,
+        "high_correctness_score_ge_9_5_percent": 57.14,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 11.36,
+        "latency_median_seconds": 12.25,
+        "latency_p95_seconds": 13.0,
+        "latency_max_seconds": 13.4,
+        "within_30_seconds_percent": 100.0
+      },
+      "app": {
+        "questions": 4,
+        "average_score_10": 7.75,
+        "normalized_accuracy_percent": 77.5,
+        "pass_rate_score_ge_6_percent": 75.0,
+        "high_correctness_score_ge_9_5_percent": 25.0,
+        "answer_success_percent": 100.0,
+        "latency_average_seconds": 12.45,
+        "latency_median_seconds": 12.35,
+        "latency_p95_seconds": 12.9,
+        "latency_max_seconds": 12.9,
+        "within_30_seconds_percent": 100.0
+      }
+    }
+  },
+  "delta_same_108": {
+    "average_score_10": -0.4815,
+    "normalized_accuracy_percent": -4.81,
+    "pass_rate_score_ge_6_percent": -6.49,
+    "latency_average_seconds": -41.29,
+    "latency_median_seconds": -22.95,
+    "latency_p95_seconds": -99.4,
+    "within_30_seconds_percent": 54.63
+  },
+  "speedup_factor_average_latency": 4.46,
+  "targeted_complex_and_four_color": {
+    "chinese_output_file": "data/evaluation/targeted_chinese_plain.json",
+    "english_control_file": "data/evaluation/targeted_complex_proofs_en.json",
+    "metrics": {
+      "cases": 3,
+      "average_latency_seconds": 12.42,
+      "within_30_seconds_percent": 100.0,
+      "manual_review_average_score_10": 9.0,
+      "manual_review": {
+        "zh_plain": {
+          "score_10": 10.0,
+          "decision": "pass",
+          "reason": "Complete two-way subset proof using arbitrary-element method."
+        },
+        "zh_graph_plain": {
+          "score_10": 8.5,
+          "decision": "mostly pass",
+          "reason": "Correct conclusion and main argument; the claim that each path equals a component is imprecise and should be tightened."
+        },
+        "zh_four_plain": {
+          "score_10": 8.5,
+          "decision": "mostly pass",
+          "reason": "The theorem statement and K4 coloring are correct; an edge-count upper bound alone does not prove K4 is planar."
+        }
+      }
+    },
+    "notes": [
+      "Three Chinese targeted tests completed; all responses were under 30 seconds.",
+      "Manual scores cover the targeted sample only and are not a fabricated full-dataset annotation.",
+      "The Four Color Theorem check validates statement, map/planar-graph equivalence, and a concrete K4 coloring; it does not treat a model response as a proof of the theorem."
+    ]
+  },
+  "limitations": [
+    "The reproducible pre-finetuning result is a different service/model, not the same base model without SFT; score differences cannot be attributed solely to finetuning.",
+    "Full-dataset scores are existing LLM-as-judge results; no fake 112-question human MAE/Kappa is reported.",
+    "Human review is complete for the targeted proof/Four Color sample, while full 112-question human annotation remains to be collected."
+  ],
+  "artifacts": [
+    "data/evaluation/finetune_vs_baseline.json",
+    "data/evaluation/targeted_chinese_plain.json",
+    "data/evaluation/targeted_complex_proofs_en.json"
+  ]
+}
