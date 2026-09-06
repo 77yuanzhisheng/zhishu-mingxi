@@ -58,7 +58,8 @@ def port_open(port: int) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             return True
-    except OSError:
+    except (OSError, SystemError):
+        # Windows may surface a stale/invalid PID lookup as SystemError.
         return False
 
 
@@ -68,7 +69,8 @@ def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except (OSError, SystemError):
+        # Windows may surface a stale/invalid PID lookup as SystemError.
         return False
 
 

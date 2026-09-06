@@ -620,3 +620,14 @@ def test_natural_deduction_rejects_invalid_conclusion_from_positive_q():
 
     assert result.checked is True
     assert result.passed is False
+
+def test_symbol_fidelity_accepts_common_latex_operator_aliases():
+    from backend.chat.reasoning import check_symbol_fidelity
+
+    question = "???P?Q ? ?P?Q ???"
+    answer = r"$P \rightarrow Q$ ? $\neg P \vee Q$ ???"
+
+    result = check_symbol_fidelity(answer, question)
+
+    assert result.passed is True
+    assert result.missing_symbols == ()

@@ -6,7 +6,18 @@
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $venvPy = Join-Path $repo ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) { $venvPy = "python" }
+$pythonPrefix = @()
+if (-not (Test-Path $venvPy)) {
+    # Prefer the project-supported Python version when no virtualenv exists.
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) {
+        $venvPy = $launcher.Source
+        $pythonPrefix = @("-3.11")
+    } else {
+        $python = Get-Command python.exe -ErrorAction Stop
+        $venvPy = $python.Source
+    }
+}
 
 # 端口占用检查
 $busy = netstat -ano | Select-String "LISTENING" | Select-String ":8000\s|:5500\s"
@@ -16,9 +27,11 @@ if ($busy) {
 }
 
 $logDir = Join-Path $repo "scripts"
-Start-Process -FilePath $venvPy -ArgumentList @(
-    (Join-Path $repo "scripts\watchdog.py")
-) -WorkingDirectory $repo -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "watchdog.out.log") -RedirectStandardError (Join-Path $logDir "watchdog.err.log")
+$watchdog = Join-Path $repo "scripts\watchdog.py"
+# Start-Process receives one command-line string; quote paths because the workspace path contains spaces.
+$watchdogArgs = "-u `"$watchdog`""
+if ($pythonPrefix.Count -gt 0) { $watchdogArgs = (($pythonPrefix -join " ") + " " + $watchdogArgs) }
+Start-Process -FilePath $venvPy -ArgumentList $watchdogArgs -WorkingDirectory $repo -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDir "watchdog.out.log") -RedirectStandardError (Join-Path $logDir "watchdog.err.log")
 
 Write-Host "watchdog 已启动（后台），正在拉起 8000(后端)/5500(前端)..."
 Write-Host "查看状态: Get-Content scripts\services.log -Tail 20"
