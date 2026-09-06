@@ -575,3 +575,48 @@ def test_sat_checker_detail_names_z3_backend_when_available():
     assert result.valid is True
     assert "backend=z3" in result.evidence
     assert "z3" in result.detail
+
+
+def test_quantifier_proof_detects_rewritten_given_formulas():
+    from backend.chat.reasoning import check_symbol_fidelity, evaluate_answer
+    from backend.reasoning.service import QuestionType, detect_question_type
+
+    question = "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c(\u2203x)\u00acR(x)\uff0c\u63a8\u51fa (\u2203x)\u00acP(x)\u3002"
+    rewritten_answer = (
+        "\u5df2\u77e5\uff1a(\u2200x)(P(x)\u2192Q(x))\uff0c(\u2200x)(Q(x)\u2192R(x))\uff0c(\u2203x)\u00acR(x)\u3002"
+        "\u56e0\u6b64 (\u2203x)\u00acP(x)\u3002\u8bc1\u6bd5\u3002"
+    )
+
+    assert detect_question_type(question) == QuestionType.PROOF
+    fidelity = check_symbol_fidelity(rewritten_answer, question)
+    assert fidelity.checked is True
+    assert fidelity.passed is False
+    assert "\u2228" in fidelity.missing_symbols
+    assert evaluate_answer(rewritten_answer, question)["symbol_fidelity"]["passed"] is False
+
+def test_symbol_fidelity_accepts_parenthesized_latex_quantifier_formulas():
+    from backend.chat.reasoning import check_symbol_fidelity
+
+    question = "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c(\u2203x)\u00acR(x)\uff0c\u63a8\u51fa (\u2203x)\u00acP(x)\u3002"
+    latex_answer = r"""
+    \((\forall x)(P(x) \rightarrow \neg Q(x))\)
+    \((\forall x)(Q(x) \lor R(x))\)
+    \((\exists x)\neg R(x)\)
+    \((\exists x)\neg P(x)\)
+    """
+
+    result = check_symbol_fidelity(latex_answer, question)
+
+    assert result.checked is True
+    assert result.passed is True
+
+def test_natural_deduction_rejects_invalid_conclusion_from_positive_q():
+    from backend.chat.reasoning import check_natural_deduction_validity
+
+    question = "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c(\u2203x)\u00acR(x)\uff0c\u63a8\u51fa (\u2203x)\u00acP(x)\u3002"
+    answer = "由 Q(c) 成立，根据 P(c)→¬Q(c)，可得 ¬P(c)，所以 (∃x)¬P(x)。"
+
+    result = check_natural_deduction_validity(answer, question)
+
+    assert result.checked is True
+    assert result.passed is False

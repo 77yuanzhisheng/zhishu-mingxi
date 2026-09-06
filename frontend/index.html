@@ -178,7 +178,7 @@
 
             <div id="chatMessages" class="chat-messages">
               <article class="message assistant">
-                <p>你好，我是离散数学问答助手。请输入课程问题，我会检索知识库、调用 Qwen 生成回答。</p>
+                <p>你好，我是离散数学问答助手。请输入课程问题，我会检索知识库，并调用星火 MaaS 上发布的 Qwen3-32B 生成回答。</p>
               </article>
             </div>
 
@@ -673,7 +673,7 @@
             </div>
           </header>
           <div class="textbook-hint">
-            每个知识点右上角的 🤖 走 <code>/chat</code>（Qwen3-8B + bge 检索），训练题库的 ✍️ AI 评阅走 <code>/api/grading</code>（五维评分）。
+            每个知识点右上角的 🤖 走 <code>/chat</code>（星火 MaaS + Qwen3-32B 文本问答），图片题目和手写答案可由 Qwen3-VL-32B 视觉识别后再进入问答或批阅；训练题库的 ✍️ AI 评阅走 <code>/api/grading</code>（五维评分）。
           </div>
           <iframe id="textbookFrame" class="textbook-frame" src="/textbook/index.html" title="Web 交互式教材 2.0" allow="fullscreen"></iframe>
         </div>

@@ -349,7 +349,7 @@ const extendedToolConfigs = {
     fields: [
       { name: "problem", label: "完整题目", type: "textarea", rows: 6, value: "给定带权图 A-B 权重为 2，A-C 权重为 7，B-C 权重为 1，请用 Dijkstra 算法求 A 到 C 的最短路径并输出路径和距离。" },
       { name: "language", label: "编程语言", type: "select", value: "python", options: [["python", "Python"], ["c", "C"]] },
-      { name: "use_llm", label: "使用 Qwen 按完整题意生成", type: "checkbox", value: true },
+      { name: "use_llm", label: "使用星火 Qwen3-32B 按完整题意生成", type: "checkbox", value: true },
     ],
   },
 };
@@ -378,6 +378,9 @@ document.querySelectorAll(".prompt-button").forEach((button) => {
 });
 
 document.getElementById("askButton").addEventListener("click", handleAsk);
+document.getElementById("chatPhotoInput")?.addEventListener("change", (event) => {
+  handleChatPhoto(event.target.files[0]);
+});
 document.getElementById("questionInput").addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     handleAsk();
@@ -812,6 +815,9 @@ async function requestStreamingChat(payload, message) {
       const content = event.content || "";
       streamedAnswer += content;
       writer.enqueue(content);
+    } else if (event.type === "replace") {
+      streamedAnswer = event.content || "";
+      writer.replace(streamedAnswer);
     } else if (event.type === "done") {
       result = event;
     } else if (event.type === "error") {
@@ -859,6 +865,11 @@ function createTypewriter(message) {
     enqueue(text) {
       pending.push(...Array.from(String(text || "")));
       if (!timer && pending.length) tick();
+    },
+    replace(text) {
+      pending.length = 0;
+      displayed = String(text || "");
+      updateStreamingMessage(message, displayed);
     },
     drain() {
       if (!timer && !pending.length) return Promise.resolve();
@@ -1299,7 +1310,7 @@ function formatHasseRelationType(type) {
 }
 
 function formatGenerationMode(mode) {
-  return mode === "qwen" ? "Qwen 按题生成" : "离线模板回退";
+  return mode === "qwen" ? "星火 Qwen3-32B 按题生成" : "离线模板回退";
 }
 
 function addMessage(text, type) {
@@ -2987,17 +2998,14 @@ async function handleCalcPhoto(questionId, file) {
   if (!status || !box || !textarea) return;
   status.textContent = "识别中…";
   try {
-    const base64 = await readFileAsBase64(file);
-    const response = await postJson("/api/practice/ocr", { image_base64: base64, filename: file.name || "photo.png" });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || data.detail || "OCR 失败");
-    textarea.value = data.text || "";
+    const data = await parseVisionImage(file);
+    textarea.value = selectVisionText(data, "student_answer");
     practiceState.calcTexts.set(questionId, textarea.value);
     practiceState.calcStartedAt.set(questionId, Date.now());
     box.hidden = false;
-    status.textContent = `识别完成（${data.seconds || "?"}s）`;
+    status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}`;
   } catch (error) {
-    status.textContent = "";
+    status.textContent = `识别失败：${error.message}`;
     window.alert(`识别失败：${error.message}`);
   }
 }
@@ -3097,17 +3105,32 @@ function renderProofList(target) {
   typesetMath(target);
 }
 
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
+async function parseVisionImage(file) {
+  const form = new FormData();
+  form.append("file", file, file.name || "image.png");
+  const response = await authenticatedFetch("/api/vision/parse", {
+    method: "POST",
+    body: form,
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readApiError(data, `图片识别失败（${response.status}）`));
+  return data;
+}
+
+function selectVisionText(data, preferredField) {
+  const preferred = String(data?.[preferredField] || "").trim();
+  const fallbackField = preferredField === "student_answer" ? "question_text" : "student_answer";
+  return preferred || String(data?.[fallbackField] || "").trim();
+}
+
+function describeVisionResult(data) {
+  const parts = [];
+  const confidence = Number(data?.confidence);
+  const elapsed = Number(data?.elapsed_ms);
+  if (Number.isFinite(confidence)) parts.push(`置信度 ${Math.round(confidence * 100)}%`);
+  if (Number.isFinite(elapsed) && elapsed > 0) parts.push(`耗时 ${(elapsed / 1000).toFixed(1)} 秒`);
+  if (Array.isArray(data?.warnings) && data.warnings.length) parts.push(`提示：${data.warnings.join("；")}`);
+  return parts.join(" · ");
 }
 
 async function handleProofPhoto(questionId, file) {
@@ -3118,21 +3141,13 @@ async function handleProofPhoto(questionId, file) {
   if (!status || !box || !textarea) return;
   status.textContent = "识别中…";
   try {
-    const base64 = await readFileAsBase64(file);
-    const response = await postJson("/api/practice/ocr", {
-      image_base64: base64,
-      filename: file.name || "photo.png",
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || data.detail || "OCR 失败");
-    }
-    textarea.value = data.text || "";
+    const data = await parseVisionImage(file);
+    textarea.value = selectVisionText(data, "student_answer");
     practiceState.proofTexts.set(questionId, textarea.value);
     box.hidden = false;
-    status.textContent = `识别完成（${data.seconds || "?"}s）`;
+    status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}`;
   } catch (error) {
-    status.textContent = "";
+    status.textContent = `识别失败：${error.message}`;
     window.alert(`识别失败：${error.message}`);
   }
 }
@@ -3836,7 +3851,13 @@ async function postJson(path, payload) {
 
 function authenticatedFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (
+    options.body &&
+    !(options.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
   if (authState.token) headers.set("Authorization", `Bearer ${authState.token}`);
   return fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 }
@@ -4158,24 +4179,17 @@ async function handleGradingPhoto(file) {
   if (status) status.textContent = "正在识别图片...";
   if (recheck) recheck.disabled = true;
   try {
-    const base64 = await readFileAsBase64(file);
-    const response = await postJson("/api/practice/ocr", {
-      image_base64: base64,
-      filename: file.name || "photo.png",
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || data.detail || "OCR 识别失败");
+    const data = await parseVisionImage(file);
+    document.getElementById("gradingStudentAnswer").value = selectVisionText(data, "student_answer");
+    if (status) {
+      status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}，可修改后提交`;
     }
-    document.getElementById("gradingStudentAnswer").value = data.text || "";
-    if (status) status.textContent = `识别完成${data.seconds ? `（${data.seconds} 秒）` : ""}，可修改后提交`;
   } catch (error) {
     if (status) status.textContent = `识别失败：${error.message}`;
   } finally {
     if (recheck) recheck.disabled = false;
   }
 }
-
 async function submitForGrading(event) {
   event.preventDefault();
   const button = document.getElementById("submitGradingButton");

@@ -14,7 +14,12 @@ import pytest
 from backend.chat.llm import LLMClient
 from backend.chat.models import ChatReference, ChatRequest
 from backend.chat.rag import RAGAdapter
-from backend.chat.reasoning import build_reasoning_enhancements, build_check_note
+from backend.chat.reasoning import (
+    build_check_note,
+    build_reasoning_enhancements,
+    check_natural_deduction_validity,
+    check_symbol_fidelity,
+)
 from backend.chat.repository import ChatRepository
 from backend.chat.service import ChatService
 from backend.learning.service import create_user
@@ -46,6 +51,19 @@ class RecordingLLM(LLMClient):
             "结论：¬(P∧Q) ⇔ ¬P∨¬Q 成立。\n"
             "证毕"
         )
+
+
+class SequencedLLM(LLMClient):
+    def __init__(self, answers: list[str]):
+        self.answers = answers
+        self.calls: list[list[dict[str, str]]] = []
+
+    def ensure_available(self) -> None:
+        return None
+
+    def generate(self, messages: list[dict[str, str]]) -> str:
+        self.calls.append(messages)
+        return self.answers[len(self.calls) - 1]
 
 
 class FakeRAG(RAGAdapter):
@@ -137,6 +155,22 @@ def test_chat_service_injects_check_note_and_returns_reasoning(tmp_path):
     assert response.reasoning["evaluation"]["passed"] is True
 
 
+
+def test_chat_service_injects_check_note_without_references(tmp_path):
+    """无知识库命中时，程序侧符号校验仍必须进入模型上下文。"""
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("学生丙", database_path=database_path)
+    llm = RecordingLLM()
+    service = ChatService(
+        repository=ChatRepository(database_path),
+        llm=llm,
+        rag=FakeRAG(with_references=False),
+    )
+
+    service.chat(ChatRequest(user_id=user_id, message=PROOF_QUESTION))
+
+    assert any("程序侧符号校验结果" in message["content"] for message in llm.calls[0])
+
 def test_chat_service_general_question_has_no_reasoning(tmp_path):
     """概念题：reasoning 为空，不增加评估负担。"""
     database_path = tmp_path / "chat.db"
@@ -149,3 +183,160 @@ def test_chat_service_general_question_has_no_reasoning(tmp_path):
     response = service.chat(ChatRequest(user_id=user_id, message=GENERAL_QUESTION))
 
     assert response.reasoning is None
+
+def test_natural_deduction_rejects_unsupported_negation_from_q_of_a():
+    question = (
+        "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(P(x)\u2192\u00acQ(x))\uff0c"
+        "(\u2200x)(Q(x)\u2228R(x))\uff0c(\u2203x)\u00acR(x)\u3002"
+        "\u8bc1\u660e\uff1a(\u2203x)\u00acP(x)"
+    )
+    invalid_answer = (
+        "\u5df2\u77e5\uff1a(\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c"
+        "(\u2203x)\u00acR(x)\u3002\n"
+        "\u63a8\u5bfc\uff1a\u6b65\u9aa46\uff1aQ(a)\uff1b\u4f9d\u636e\uff1aQ(a)\u2228R(a) \u4e0e \u00acR(a)\u3002\n"
+        "\u6b65\u9aa49\uff1a\u00acQ(a)\uff1b\u4f9d\u636e\uff1a\u6b65\u9aa46\u7684\u5426\u5b9a\u3002\n"
+        "\u7ed3\u8bba\uff1a(\u2203x)\u00acP(x)\u3002\u8bc1\u6bd5"
+    )
+
+    validity = check_natural_deduction_validity(invalid_answer, question)
+
+    assert validity.checked is True
+    assert validity.passed is False
+    assert "Q(a)" in validity.detail
+    assert "\u00acQ(a)" in validity.detail
+
+
+def test_chat_service_retries_once_for_invalid_quantifier_natural_deduction(tmp_path):
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("natural-deduction-retry", database_path=database_path)
+    question = (
+        "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(P(x)\u2192\u00acQ(x))\uff0c"
+        "(\u2200x)(Q(x)\u2228R(x))\uff0c(\u2203x)\u00acR(x)\u3002"
+        "\u8bc1\u660e\uff1a(\u2203x)\u00acP(x)"
+    )
+    llm = SequencedLLM([
+        "\u5df2\u77e5\uff1a(\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c"
+        "(\u2203x)\u00acR(x)\u3002\n"
+        "\u63a8\u5bfc\uff1a\u6b65\u9aa46\uff1aQ(a)\uff1b\u4f9d\u636e\uff1aQ(a)\u2228R(a) \u4e0e \u00acR(a)\u3002\n"
+        "\u6b65\u9aa49\uff1a\u00acQ(a)\uff1b\u4f9d\u636e\uff1a\u6b65\u9aa46\u7684\u5426\u5b9a\u3002\n"
+        "\u7ed3\u8bba\uff1a(\u2203x)\u00acP(x)\u3002\u8bc1\u6bd5",
+        "\u5df2\u77e5\uff1a(\u2200x)(P(x)\u2192\u00acQ(x))\uff0c(\u2200x)(Q(x)\u2228R(x))\uff0c"
+        "(\u2203x)\u00acR(x)\u3002\n"
+        "\u63a8\u5bfc\uff1a\u53d6 a \u4f7f \u00acR(a)\u3002\u7531 Q(a)\u2228R(a) \u4e0e \u00acR(a) \u5f97 Q(a)\u3002"
+        "\u53cd\u8bbe P(a)\uff0c\u5219\u7531 P(a)\u2192\u00acQ(a) \u5f97 \u00acQ(a)\uff0c\u4e0e Q(a) \u77db\u76fe\uff0c"
+        "\u6545 \u00acP(a)\uff0c\u4ece\u800c (\u2203x)\u00acP(x)\u3002\u8bc1\u6bd5",
+    ])
+    service = ChatService(
+        repository=ChatRepository(database_path),
+        llm=llm,
+        rag=FakeRAG(with_references=False),
+    )
+
+    response = service.chat(ChatRequest(user_id=user_id, message=question))
+
+    assert len(llm.calls) == 2
+    assert "\u65e0\u6548\u81ea\u7136\u6f14\u7ece" in llm.calls[1][-1]["content"]
+    assert "\u00acP(a)" in response.answer
+
+
+def test_symbol_fidelity_rejects_operator_substitution():
+    question = "证明：已知 (∀x)(F(x)∨G(x))，推出 (∀x)F(x)"
+    wrong = "已知：(∀x)(F(x)→G(x))。结论：(∀x)F(x)。"
+    correct = "已知：(∀x)(F(x)∨G(x))。结论：(∀x)F(x)。"
+
+    rejected = check_symbol_fidelity(wrong, question)
+    accepted = check_symbol_fidelity(correct, question)
+
+    assert rejected.passed is False
+    assert "∨" in rejected.missing_symbols
+    assert accepted.passed is True
+
+def test_symbol_fidelity_rejects_rewritten_quantifier_premises():
+    question = (
+        "证明：(∀x)(P(x)→¬Q(x))，(∀x)(Q(x)∨R(x))，(∃x)¬R(x)，"
+        "推出 (∃x)¬P(x)"
+    )
+    wrong = (
+        "已知：(∀x)(P(x)→Q(x))，(∀x)(Q(x)→R(x))，(∃x)¬R(x)。"
+        "结论：(∃x)¬P(x)。"
+    )
+    correct = (
+        "已知：(∀x)(P(x)→¬Q(x))，(∀x)(Q(x)∨R(x))，(∃x)¬R(x)。"
+        "结论：(∃x)¬P(x)。"
+    )
+
+    rejected = check_symbol_fidelity(wrong, question)
+    accepted = check_symbol_fidelity(correct, question)
+
+    assert rejected.passed is False
+    assert accepted.passed is True
+
+
+def test_symbol_fidelity_rejects_changed_formula_structure_even_when_symbols_remain():
+    question = "证明：(∀x)(P(x)→¬Q(x))，(∀x)(Q(x)∨R(x))，(∃x)¬R(x)，推出 (∃x)¬P(x)"
+    wrong = "已知：(∀x)(P(x)→Q(x))，(∀x)(Q(x)∨R(x))，(∃x)¬R(x)。结论：(∃x)¬P(x)。"
+
+    rejected = check_symbol_fidelity(wrong, question)
+
+    assert rejected.passed is False
+    assert "公式结构" in rejected.detail
+
+def test_symbol_fidelity_instruction_is_present_without_rag():
+    question = "证明：已知 (∀x)(F(x)∨G(x))，推出 (∀x)F(x)"
+
+    enhancements = build_reasoning_enhancements(question, BASE_SYSTEM_PROMPT)
+
+    assert "题设符号锁定" in enhancements.system_prompt
+    assert "∨" in enhancements.system_prompt
+
+
+def test_chat_service_retries_once_when_a_required_operator_is_missing(tmp_path):
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("symbol-retry", database_path=database_path)
+    question = "证明：已知 (∀x)(F(x)∨G(x))，推出 (∀x)F(x)"
+    llm = SequencedLLM([
+        "已知：(∀x)(F(x)→G(x))。结论：(∀x)F(x)。",
+        "已知：(∀x)(F(x)∨G(x))。结论：(∀x)F(x)。证毕。",
+    ])
+    service = ChatService(repository=ChatRepository(database_path), llm=llm, rag=FakeRAG(with_references=False))
+
+    response = service.chat(ChatRequest(user_id=user_id, message=question))
+
+    assert len(llm.calls) == 2
+    assert "上一版证明未通过题设符号保真检查" in llm.calls[1][-1]["content"]
+    assert response.reasoning["symbol_fidelity"]["passed"] is True
+
+
+def test_chat_service_stops_after_one_symbol_fidelity_retry(tmp_path):
+    database_path = tmp_path / "chat.db"
+    user_id = create_user("symbol-retry-limit", database_path=database_path)
+    question = "证明：已知 (∀x)(F(x)∨G(x))，推出 (∀x)F(x)"
+    llm = SequencedLLM([
+        "已知：(∀x)(F(x)→G(x))。",
+        "已知：(∀x)(F(x)→G(x))。",
+    ])
+    service = ChatService(repository=ChatRepository(database_path), llm=llm, rag=FakeRAG(with_references=False))
+
+    response = service.chat(ChatRequest(user_id=user_id, message=question))
+
+    assert len(llm.calls) == 2
+    assert response.reasoning["symbol_fidelity"]["passed"] is False
+
+
+def test_reasoning_enhancements_enable_for_real_utf8_proof_question():
+    question = "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(F(x)\u2228G(x))\uff0c\u63a8\u51fa (\u2200x)F(x)"
+
+    enhancements = build_reasoning_enhancements(question, BASE_SYSTEM_PROMPT)
+
+    assert enhancements.enabled is True
+    assert enhancements.question_type == "proof"
+    assert "\u9898\u8bbe\u7b26\u53f7\u9501\u5b9a" in enhancements.system_prompt
+
+
+def test_symbol_fidelity_accepts_single_backslash_latex_operators():
+    question = "\u8bc1\u660e\uff1a\u5df2\u77e5 (\u2200x)(F(x)\u2228G(x))\uff0c\u63a8\u51fa (\u2200x)F(x)"
+    answer = r"\u5df2\u77e5\uff1a\forall x(F(x)\lor G(x))\u3002\u7ed3\u8bba\uff1a\forall xF(x)\u3002"
+
+    fidelity = check_symbol_fidelity(answer, question)
+
+    assert fidelity.passed is True

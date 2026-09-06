@@ -368,3 +368,41 @@ def test_stream_chat_emits_meta_deltas_done_and_persists_answer(tmp_path):
     messages = service.repository.get_messages(events[0]["session_id"])
     assert messages[-1]["role"] == "assistant"
     assert messages[-1]["content"] == "回答：什么是图？"
+
+def test_stream_chat_replaces_invalid_proof_with_repaired_answer(tmp_path):
+    database_path = tmp_path / "stream-repair.db"
+    user_id = create_user("stream-repair", database_path=database_path)
+    question = "证明：已知 (∀x)(F(x)∨G(x))，推出 (∀x)F(x)"
+
+    class RepairingStreamLLM(LLMClient):
+        def __init__(self):
+            self.calls: list[list[dict[str, str]]] = []
+
+        def ensure_available(self) -> None:
+            return None
+
+        def stream(self, messages: list[dict[str, str]]):
+            self.calls.append(messages)
+            yield "已知：(∀x)(F(x)→G(x))。结论：(∀x)F(x)。"
+
+        def generate(self, messages: list[dict[str, str]]) -> str:
+            self.calls.append(messages)
+            return "已知：(∀x)(F(x)∨G(x))。结论：(∀x)F(x)。证毕。"
+
+    llm = RepairingStreamLLM()
+    service = ChatService(
+        repository=ChatRepository(database_path),
+        llm=llm,
+        rag=EmptyRAG(),
+    )
+
+    events = list(service.stream_chat(ChatRequest(user_id=user_id, message=question)))
+
+    assert [event["type"] for event in events] == ["meta", "delta", "replace", "done"]
+    assert len(llm.calls) == 2
+    assert "符号保真检查" in llm.calls[1][-1]["content"]
+    assert events[-2]["content"] == "已知：(∀x)(F(x)∨G(x))。结论：(∀x)F(x)。证毕。"
+    assert events[-1]["answer"] == events[-2]["content"]
+    assert events[-1]["reasoning"]["symbol_fidelity"]["passed"] is True
+    messages = service.repository.get_messages(events[0]["session_id"])
+    assert messages[-1]["content"] == events[-2]["content"]

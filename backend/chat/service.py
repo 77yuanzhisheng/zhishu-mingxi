@@ -8,7 +8,12 @@ from backend.chat.context import prepare_context
 from backend.chat.llm import LLMClient, OpenAICompatibleLLM
 from backend.chat.models import ChatRequest, ChatResponse, ContextStatus
 from backend.chat.rag import RAGAdapter
-from backend.chat.reasoning import build_reasoning_enhancements, evaluate_answer
+from backend.chat.reasoning import (
+    build_reasoning_enhancements,
+    check_natural_deduction_validity,
+    check_symbol_fidelity,
+    evaluate_answer,
+)
 from backend.chat.repository import ChatRepository
 
 
@@ -36,7 +41,39 @@ class ChatService:
     def chat(self, request: ChatRequest) -> ChatResponse:
         work = self._prepare_chat(request)
         answer = self.llm.generate(work["llm_messages"])
+        fidelity = check_symbol_fidelity(answer, request.message.strip())
+        validity = check_natural_deduction_validity(answer, request.message.strip())
+        if (fidelity.checked and not fidelity.passed) or (
+            validity.checked and not validity.passed
+        ):
+            answer = self.llm.generate(self._repair_messages(work, fidelity, validity))
         return self._complete_chat(work, answer)
+
+    @staticmethod
+    def _repair_messages(work: dict, fidelity, validity) -> list[dict[str, str]]:
+        question = work["request"].message.strip()
+        required = "、".join(fidelity.required_symbols)
+        missing = "、".join(fidelity.missing_symbols)
+        if validity.checked and not validity.passed:
+            repair_prompt = (
+                "上一版证明存在无效自然演绎。请重新完整回答，不要解释修改过程。\n"
+                f"错误说明：{validity.detail}\n"
+                f"原题：{question}\n"
+                "禁止从 Q(a) 直接推出 ¬Q(a)。当已有 P(a)→¬Q(a) 与 Q(a) 时，"
+                "应反设 P(a)，得到 ¬Q(a)，与 Q(a) 矛盾后推出 ¬P(a)；最后再用存在量词引入。"
+            )
+        else:
+            repair_prompt = (
+                "上一版证明未通过题设符号保真检查。请重新完整回答，不要解释修改过程。\n"
+                f"原题必须保留的关键符号：{required}。\n"
+                f"上一版缺失的符号：{missing}。\n"
+                f"原题：{question}\n"
+                "请在‘已知’部分原样抄写题设公式，再按自然演绎逐步证明；禁止把 ∨ 改成 →，"
+                "禁止改变任何量词、否定、合取或析取结构。"
+            )
+        messages = list(work["llm_messages"])
+        messages.append({"role": "user", "content": repair_prompt})
+        return messages
 
     def stream_chat(self, request: ChatRequest) -> Iterator[dict]:
         """Stream answer deltas while preserving the same RAG and history flow."""
@@ -51,7 +88,17 @@ class ChatService:
         for content in self.llm.stream(work["llm_messages"]):
             chunks.append(content)
             yield {"type": "delta", "content": content}
-        response = self._complete_chat(work, "".join(chunks).strip())
+
+        answer = "".join(chunks).strip()
+        fidelity = check_symbol_fidelity(answer, request.message.strip())
+        validity = check_natural_deduction_validity(answer, request.message.strip())
+        if (fidelity.checked and not fidelity.passed) or (
+            validity.checked and not validity.passed
+        ):
+            answer = self.llm.generate(self._repair_messages(work, fidelity, validity))
+            yield {"type": "replace", "content": answer}
+
+        response = self._complete_chat(work, answer)
         yield {"type": "done", **response.model_dump()}
 
     def _prepare_chat(self, request: ChatRequest) -> dict:
@@ -89,6 +136,8 @@ class ChatService:
             if renh.check_note:
                 knowledge_note += f"\n\n{renh.check_note}"
             llm_messages.append({"role": "system", "content": knowledge_note})
+        elif renh.check_note:
+            llm_messages.append({"role": "system", "content": renh.check_note})
         llm_messages.extend(prepared.messages)
         return {
             "request": request,

@@ -87,7 +87,7 @@ app = FastAPI(
 | **知识库** `/kb` | 队员2 | 文档解析、分块、向量存储、语义检索 |
 | **RAG 问答** `/rag` | 队员3 | 检索增强生成问答 |
 | **算法工具** `/tools` | 队员5 | 真值表、关系性质判断等 |
-| **LLM** | 队员1 | Qwen 本地部署，OpenAI 兼容 API |
+| **LLM** | 队员1 | 星火 MaaS：Qwen3-32B 文本模型 / Qwen3-VL-32B 视觉模型 |
 
 ### 队员3 接口契约
 
@@ -181,3 +181,7 @@ async def health():
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
     }
+
+# Vision image parsing boundary (Qwen3-VL through configurable provider API).
+from backend.vision.router import router as vision_router
+app.include_router(vision_router)

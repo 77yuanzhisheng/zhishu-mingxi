@@ -1,0 +1,253 @@
+{
+  "version": "discrete-math-symbols-v1",
+  "symbols": [
+    {
+      "symbol": "∀",
+      "meaning": "任意、对所有",
+      "examples": [
+        "∀x∈A"
+      ],
+      "latex": "\\forall",
+      "category": "logic"
+    },
+    {
+      "symbol": "∃",
+      "meaning": "存在",
+      "examples": [
+        "∃x∈A"
+      ],
+      "latex": "\\exists",
+      "category": "logic"
+    },
+    {
+      "symbol": "¬",
+      "meaning": "非、否定",
+      "examples": [
+        "¬P"
+      ],
+      "latex": "\\neg",
+      "category": "logic"
+    },
+    {
+      "symbol": "∧",
+      "meaning": "且、合取",
+      "examples": [
+        "P∧Q"
+      ],
+      "latex": "\\land",
+      "category": "logic"
+    },
+    {
+      "symbol": "∨",
+      "meaning": "或、析取",
+      "examples": [
+        "P∨Q"
+      ],
+      "latex": "\\lor",
+      "category": "logic"
+    },
+    {
+      "symbol": "→",
+      "meaning": "推出、蕴含",
+      "examples": [
+        "P→Q"
+      ],
+      "latex": "\\to",
+      "category": "logic"
+    },
+    {
+      "symbol": "↔",
+      "meaning": "当且仅当、等价",
+      "examples": [
+        "P↔Q"
+      ],
+      "latex": "\\leftrightarrow",
+      "category": "logic"
+    },
+    {
+      "symbol": "∈",
+      "meaning": "属于",
+      "examples": [
+        "x∈A"
+      ],
+      "latex": "\\in",
+      "category": "set"
+    },
+    {
+      "symbol": "∉",
+      "meaning": "不属于",
+      "examples": [
+        "x∉A"
+      ],
+      "latex": "\\notin",
+      "category": "set"
+    },
+    {
+      "symbol": "⊆",
+      "meaning": "子集、包含于",
+      "examples": [
+        "A⊆B"
+      ],
+      "latex": "\\subseteq",
+      "category": "set"
+    },
+    {
+      "symbol": "⊂",
+      "meaning": "真子集",
+      "examples": [
+        "A⊂B"
+      ],
+      "latex": "\\subset",
+      "category": "set"
+    },
+    {
+      "symbol": "∪",
+      "meaning": "并集",
+      "examples": [
+        "A∪B"
+      ],
+      "latex": "\\cup",
+      "category": "set"
+    },
+    {
+      "symbol": "∩",
+      "meaning": "交集",
+      "examples": [
+        "A∩B"
+      ],
+      "latex": "\\cap",
+      "category": "set"
+    },
+    {
+      "symbol": "\\",
+      "meaning": "集合差",
+      "examples": [
+        "A\\B"
+      ],
+      "latex": "\\setminus",
+      "category": "set"
+    },
+    {
+      "symbol": "ᶜ",
+      "meaning": "补集",
+      "examples": [
+        "Aᶜ"
+      ],
+      "latex": "^c",
+      "category": "set"
+    },
+    {
+      "symbol": "R",
+      "meaning": "二元关系",
+      "examples": [
+        "aRb"
+      ],
+      "latex": "R",
+      "category": "relation"
+    },
+    {
+      "symbol": "aRb",
+      "meaning": "a 与 b 满足关系 R",
+      "examples": [
+        "aRb"
+      ],
+      "latex": "aRb",
+      "category": "relation"
+    },
+    {
+      "symbol": "f: A → B",
+      "meaning": "从 A 到 B 的函数 f",
+      "examples": [
+        "f: A → B"
+      ],
+      "latex": "f: A \\to B",
+      "category": "function"
+    },
+    {
+      "symbol": "V",
+      "meaning": "图的顶点集",
+      "examples": [
+        "G=(V,E)"
+      ],
+      "latex": "V",
+      "category": "graph"
+    },
+    {
+      "symbol": "E",
+      "meaning": "图的边集",
+      "examples": [
+        "G=(V,E)"
+      ],
+      "latex": "E",
+      "category": "graph"
+    },
+    {
+      "symbol": "deg(v)",
+      "meaning": "顶点 v 的度数",
+      "examples": [
+        "deg(v)"
+      ],
+      "latex": "\\deg(v)",
+      "category": "graph"
+    }
+  ],
+  "inference_rules": [
+    {
+      "name": "modus_ponens",
+      "premises": [
+        "P→Q",
+        "P"
+      ],
+      "conclusion": "Q",
+      "description": "由蕴含式和其前件推出后件"
+    },
+    {
+      "name": "universal_instantiation",
+      "premises": [
+        "∀x P(x)"
+      ],
+      "conclusion": "P(a)",
+      "description": "全称命题可对任意合法对象实例化"
+    },
+    {
+      "name": "set_membership_transitivity",
+      "premises": [
+        "x∈A",
+        "A⊆B"
+      ],
+      "conclusion": "x∈B",
+      "description": "元素属于子集且子集包含于集合时，元素属于该集合"
+    },
+    {
+      "name": "conjunction_introduction",
+      "premises": [
+        "P",
+        "Q"
+      ],
+      "conclusion": "P∧Q",
+      "description": "由两个已知命题合取"
+    },
+    {
+      "name": "conjunction_elimination_left",
+      "premises": [
+        "P∧Q"
+      ],
+      "conclusion": "P",
+      "description": "由合取命题可推出左侧分量"
+    },
+    {
+      "name": "conjunction_elimination_right",
+      "premises": [
+        "P∧Q"
+      ],
+      "conclusion": "Q",
+      "description": "由合取命题可推出右侧分量"
+    }
+  ],
+  "proof_sections": [
+    "known",
+    "definitions_or_theorems",
+    "reasoning_steps",
+    "conclusion"
+  ]
+}

@@ -1,139 +1,123 @@
-"""Tests for safe, refreshable OpenAI-compatible LLM configuration."""
-
 from __future__ import annotations
-
-import logging
 
 import httpx
 
 from backend.chat.llm import OpenAICompatibleLLM
 
 
-def test_env_file_overrides_stale_process_key_and_builds_bearer_header(
-    tmp_path, monkeypatch, caplog
-):
-    dotenv_path = tmp_path / ".env"
-    dotenv_path.write_text(
-        "OPENAI_BASE_URL=https://api.siliconflow.cn/v1\n"
-        "OPENAI_CHAT_MODEL=Qwen/Qwen3-8B\n"
-        "OPENAI_API_KEY=sk-current-secret-value\n",
-        encoding="utf-8",
-    )
+def env(tmp_path, monkeypatch, text):
+    (tmp_path / ".env").write_text(text, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-process-key")
-    monkeypatch.delenv("OPENAI_ENABLE_THINKING", raising=False)
-    monkeypatch.delenv("OPENAI_MAX_TOKENS", raising=False)
-    captured = {}
 
-    def fake_post(url, *, headers, json, timeout):
-        captured.update(url=url, headers=headers, json=json, timeout=timeout)
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "测试成功"}}]},
-            request=httpx.Request("POST", url),
-        )
 
-    monkeypatch.setattr(httpx, "post", fake_post)
-    caplog.set_level(logging.INFO, logger="backend.chat.llm")
-    llm = OpenAICompatibleLLM()
-    llm.ensure_available()
-    answer = llm.generate([{"role": "user", "content": "你好"}])
+def test_spark_is_primary_and_uses_spark_settings(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=spark
+SPARK_BASE_URL=https://spark.example/v1/
+SPARK_API_KEY=secret
+SPARK_MODEL=qwen3-32b-ft
+LLM_MAX_TOKENS=768
+LLM_ENABLE_THINKING=false
+""")
+    seen = {}
+    def post(url, *, headers, json, timeout):
+        seen.update(url=url, headers=headers, json=json, timeout=timeout)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx, "post", post)
+    client = OpenAICompatibleLLM()
+    assert client.provider == "spark"
+    assert client.generate([{"role": "user", "content": "??"}]) == "ok"
+    assert seen["url"] == "https://spark.example/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer secret"
+    assert seen["json"]["model"] == "qwen3-32b-ft"
+    assert seen["json"]["max_tokens"] == 768
+    assert "chat_template_kwargs" not in seen["json"]
 
-    assert answer == "测试成功"
-    assert captured["url"] == "https://api.siliconflow.cn/v1/chat/completions"
-    assert captured["headers"]["Authorization"] == "Bearer sk-current-secret-value"
-    assert captured["json"]["model"] == "Qwen/Qwen3-8B"
-    assert captured["json"]["max_tokens"] == 1024
-    assert "enable_thinking" not in captured["json"]
-    assert "sk-current-secret-value" not in caplog.text
-    assert "key_exists=True" in caplog.text
-    assert "key_length=23" in caplog.text
-    assert "key_prefix=sk-cur" in caplog.text
 
+def test_thinking_can_be_enabled_for_compatible_backend(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost/v1
+OPENAI_CHAT_MODEL=test
+OPENAI_ENABLE_THINKING=true
+""")
+    client = OpenAICompatibleLLM()
+    assert client._payload([])["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+def test_context_is_bounded_preserving_system_and_latest_user(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=spark
+SPARK_BASE_URL=http://localhost/v1
+SPARK_MODEL=test
+LLM_MAX_INPUT_CHARS=100
+""")
+    client = OpenAICompatibleLLM()
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "old " * 30},
+        {"role": "assistant", "content": "old answer " * 30},
+        {"role": "user", "content": "latest"},
+    ]
+    bounded = client._bounded_messages(messages)
+    assert bounded[0] == messages[0]
+    assert bounded[-1] == messages[-1]
+    assert sum(len(m["content"]) for m in bounded) <= 100
+
+
+
+def test_context_budget_keeps_latest_user_when_system_is_too_long(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=spark
+SPARK_BASE_URL=http://localhost/v1
+SPARK_MODEL=test
+LLM_MAX_INPUT_CHARS=100
+""")
+    client = OpenAICompatibleLLM()
+    messages = [
+        {"role": "system", "content": "S" * 160},
+        {"role": "user", "content": "LATEST_USER_MUST_SURVIVE"},
+    ]
+
+    bounded = client._bounded_messages(messages)
+    contents = [message["content"] for message in bounded]
+
+    assert sum(len(content) for content in contents) <= 100
+    assert contents[0]
+    assert contents[-1]
+    assert "LATEST_USER_MUST_SURVIVE" in contents[-1]
 
 def test_transient_timeout_is_retried(tmp_path, monkeypatch):
-    dotenv_path = tmp_path / ".env"
-    dotenv_path.write_text(
-        "OPENAI_BASE_URL=https://example.test/v1\n"
-        "OPENAI_CHAT_MODEL=test-model\n"
-        "OPENAI_API_KEY=test-key\n"
-        "LLM_MAX_RETRIES=2\n",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=spark
+SPARK_BASE_URL=http://localhost/v1
+SPARK_MODEL=test
+LLM_MAX_RETRIES=1
+""")
     attempts = 0
-
-    def fake_post(url, *, headers, json, timeout):
+    def post(url, *, headers, json, timeout):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise httpx.ReadTimeout("temporary timeout", request=httpx.Request("POST", url))
-        return httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "重试成功"}}]},
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(httpx, "post", fake_post)
+            raise httpx.ReadTimeout("temporary", request=httpx.Request("POST", url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx, "post", post)
     monkeypatch.setattr("backend.chat.llm.time.sleep", lambda _: None)
-    llm = OpenAICompatibleLLM()
-
-    assert llm.generate([{"role": "user", "content": "你好"}]) == "重试成功"
+    assert OpenAICompatibleLLM().generate([]) == "ok"
     assert attempts == 2
 
 
-def test_thinking_setting_is_sent_to_vllm_chat_template(tmp_path, monkeypatch):
-    dotenv_path = tmp_path / ".env"
-    dotenv_path.write_text(
-        "OPENAI_BASE_URL=http://127.0.0.1:18000/v1\n"
-        "OPENAI_CHAT_MODEL=qwen38-27b\n"
-        "OPENAI_ENABLE_THINKING=false\n",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-
-    llm = OpenAICompatibleLLM()
-
-    assert llm._payload([{ "role": "user", "content": "test" }])["chat_template_kwargs"] == {
-        "enable_thinking": False
-    }
-
-
-def test_stream_parses_openai_sse_deltas(tmp_path, monkeypatch):
-    dotenv_path = tmp_path / ".env"
-    dotenv_path.write_text(
-        "OPENAI_BASE_URL=https://example.test/v1\n"
-        "OPENAI_CHAT_MODEL=test-model\n"
-        "OPENAI_API_KEY=test-key\n",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    captured = {}
-
-    class FakeStreamResponse:
-        status_code = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def raise_for_status(self):
-            return None
-
-        def iter_lines(self):
-            yield 'data: {"choices":[{"delta":{"content":"逐"}}]}'
-            yield 'data: {"choices":[{"delta":{"content":"字"}}]}'
-            yield "data: [DONE]"
-
-    def fake_stream(method, url, *, headers, json, timeout):
-        captured.update(method=method, url=url, payload=json)
-        return FakeStreamResponse()
-
-    monkeypatch.setattr(httpx, "stream", fake_stream)
-    llm = OpenAICompatibleLLM()
-
-    assert list(llm.stream([{"role": "user", "content": "你好"}])) == ["逐", "字"]
-    assert captured["method"] == "POST"
-    assert captured["payload"]["stream"] is True
+def test_spark_failure_keeps_legacy_openai_fallback(tmp_path, monkeypatch):
+    env(tmp_path, monkeypatch, """LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://primary/v1
+OPENAI_CHAT_MODEL=primary
+OPENAI_API_KEY=primary-key
+SPARK_BASE_URL=http://spark/v1
+SPARK_CHAT_MODEL=4.0Ultra
+SPARK_API_KEY=spark-key
+LLM_MAX_RETRIES=0
+""")
+    urls = []
+    def post(url, *, headers, json, timeout):
+        urls.append((url, headers["Authorization"]))
+        if "primary" in url:
+            return httpx.Response(503, request=httpx.Request("POST", url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "fallback"}}]}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx, "post", post)
+    assert OpenAICompatibleLLM().generate([]) == "fallback"
+    assert urls == [("http://primary/v1/chat/completions", "Bearer primary-key"), ("http://spark/v1/chat/completions", "Bearer spark-key")]

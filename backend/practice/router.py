@@ -101,7 +101,8 @@ NODE_PREFIX_MODULE = {
     "ag": ("algebraic_structure", "代数结构"),
 }
 
-_NODE_MAP_CACHE: Optional[Dict[str, str]] = None
+_NODE_MAP_CACHE: Optional[Dict[str, tuple[str, str]]] = None
+_NODE_MAP_CACHE_PATH: Optional[str] = None
 
 
 def _teacher_node_map() -> Dict[str, str]:
@@ -109,16 +110,21 @@ def _teacher_node_map() -> Dict[str, str]:
 
     键: f"{exam_id}-{kind}-{序号}"，值: 平台节点 node_id。
     """
-    global _NODE_MAP_CACHE
-    if _NODE_MAP_CACHE is not None:
+    global _NODE_MAP_CACHE, _NODE_MAP_CACHE_PATH
+    path = os.path.join(DOCS_DIR, "老师训练题库_node_id.json")
+    resolved_path = os.path.abspath(path)
+    if _NODE_MAP_CACHE is not None and _NODE_MAP_CACHE_PATH == resolved_path:
         return _NODE_MAP_CACHE
     _NODE_MAP_CACHE = {}
-    path = os.path.join(DOCS_DIR, "老师训练题库_node_id.json")
+    _NODE_MAP_CACHE_PATH = resolved_path
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            _NODE_MAP_CACHE = {k: v["node_id"] for k, v in data["questions"].items()}
+            _NODE_MAP_CACHE = {
+                k: (v["node_id"], str(v.get("kp", "")))
+                for k, v in data["questions"].items()
+            }
         except Exception as exc:
             logger.warning("老师训练题库 node 映射加载失败: %s", exc)
     else:
@@ -129,10 +135,12 @@ def _teacher_node_map() -> Dict[str, str]:
 def _kp_node(kp: str, qid: Optional[str] = None):
     """题目节点：优先题级映射（细粒度），回退 kp→模块内节点。"""
     if qid:
-        node_id = _teacher_node_map().get(qid)
-        if node_id:
-            mod, mod_name = NODE_PREFIX_MODULE.get(node_id.split("_")[0], ("other", "其他"))
-            return mod, mod_name, node_id
+        mapped = _teacher_node_map().get(qid)
+        if mapped:
+            node_id, mapped_kp = mapped
+            if not mapped_kp or mapped_kp == kp:
+                mod, mod_name = NODE_PREFIX_MODULE.get(node_id.split("_")[0], ("other", ""))
+                return mod, mod_name, node_id
     return KP_NODE.get(kp, ("other", "其他", "ot_01_01"))
 
 
