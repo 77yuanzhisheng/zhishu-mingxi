@@ -38,13 +38,17 @@ def _question_bank(root: Path) -> dict[str, int]:
 
 
 def _finetune_stats(root: Path) -> dict[str, int | str]:
+    # Canonical SFT dataset ships as 知数明析_指令集.jsonl; derived samples
+    # (e.g. 队员5's teacher_questions_112.jsonl) live in the same directory but
+    # must not shadow the flagship dataset in the audit.
+    canonical = "知数明析_指令集.jsonl"
     candidates = sorted(
         path for path in (root / "data" / "finetune").glob("*.jsonl")
         if "triplet" not in path.stem
     )
     if not candidates:
         return {"file": "", "records": 0, "duplicates": 0}
-    path = candidates[0]
+    path = next((candidate for candidate in candidates if candidate.name == canonical), candidates[0])
     records: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():

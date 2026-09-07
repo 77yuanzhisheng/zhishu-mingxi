@@ -183,7 +183,10 @@ def test_build_dataset_deduplicates_before_splitting(tmp_path):
 
 
 def test_build_dataset_real_question_bank_is_90_11_11(tmp_path):
-    source = next(Path("data/documents").glob("*.json"))
+    # Pin the canonical bank instead of globbing: data/documents also holds
+    # intermediate artifacts (e.g. gitignored *_md_parsed.json) that must not
+    # be picked up as the training source.
+    source = Path("data/documents/老师训练题库.json")
     rules = Path("data/training/symbol_rules.json")
 
     summary = build_dataset(source, Path("data/documents"), rules, tmp_path / "out", seed=20260903)
