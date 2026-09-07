@@ -82,7 +82,10 @@ def build_rule_path(evidence: dict[str, Any], max_nodes: int = 8) -> tuple[list[
     scored = _score_nodes(evidence)
     if not scored:
         scored = [_default_score(node_id, index) for index, node_id in enumerate(DEFAULT_NODES)]
-    selected = _dependency_order(scored)[:max_nodes]
+    # 成员资格由优先级决定（先取 top-N），展示顺序再按模块依赖拓扑重排。
+    # 若先按模块排序再截断，靠后模块的节点永远被靠前模块的证据挤掉（路径长期不变）。
+    top_nodes = sorted(scored, key=lambda item: (-item["priority"], item["node_id"]))[:max_nodes]
+    selected = _dependency_order(top_nodes)
     stages = _group_stages(selected)
     data_quality = _data_quality(evidence, selected)
     diagnosis = {
