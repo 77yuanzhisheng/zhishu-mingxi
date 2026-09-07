@@ -1,4 +1,4 @@
-'''Auditable three-stage long-answer grading service.'''
+'''Auditable fast and strict long-answer grading service.'''
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from backend.grading.models import (
 from backend.grading.prompts import (
     PROMPT_VERSION,
     analysis_messages,
+    fast_grading_messages,
     repair_messages,
     review_messages,
     scoring_messages,
@@ -48,9 +49,34 @@ class GradingService:
             knowledge_points=request.knowledge_points,
         )
         started_at = time.perf_counter()
-        analysis, analysis_attempts = self._run_json('analysis', analysis_messages(context, request.student_answer), self._validate_analysis)
-        scoring, scoring_attempts = self._run_json('scoring', scoring_messages(context, request.student_answer, analysis), self._validate_scoring)
-        review, review_attempts = self._run_json('review', review_messages(context, request.student_answer, scoring), self._validate_review)
+        if request.grading_mode == 'fast':
+            review, scoring_attempts = self._run_json(
+                'fast_grading',
+                fast_grading_messages(context, request.student_answer, request.tolerance),
+                self._validate_fast_grading,
+            )
+            analysis = review['analysis']
+            scoring = {
+                key: review[key]
+                for key in ('dimension_scores', 'error_types', 'evidence', 'feedback')
+            }
+            analysis_attempts = 0
+            review_attempts = 0
+        else:
+            analysis, analysis_attempts = self._run_json(
+                'analysis', analysis_messages(context, request.student_answer), self._validate_analysis
+            )
+            scoring, scoring_attempts = self._run_json(
+                'scoring',
+                scoring_messages(context, request.student_answer, analysis, request.tolerance),
+                self._validate_scoring,
+            )
+            review, review_attempts = self._run_json(
+                'review',
+                review_messages(context, request.student_answer, scoring, request.tolerance),
+                self._validate_review,
+            )
+        self._apply_tolerance_calibration(review, request.tolerance)
         scores = DimensionScores(**review['dimension_scores'])
         errors = review['error_types']
         reliability = evaluate_reliability(
@@ -77,6 +103,8 @@ class GradingService:
                 llm_model=getattr(self.llm, 'model', ''),
                 latency_ms=latency_ms,
                 review_notes=review['review_notes'],
+                grading_mode=request.grading_mode,
+                tolerance=request.tolerance,
             ),
             needs_manual_review=reliability.needs_manual_review,
             review_reasons=reliability.reasons,
@@ -86,9 +114,7 @@ class GradingService:
         raw = self.llm.generate(messages)
         for attempt in (1, 2):
             try:
-                payload = json.loads(raw)
-                if not isinstance(payload, dict):
-                    raise ValueError('JSON root must be an object')
+                payload = self._decode_json_object(raw)
                 self._normalize_error_types(payload)
                 validator(payload)
                 return payload, attempt
@@ -97,6 +123,27 @@ class GradingService:
                     raise InvalidGradingOutputError(f'{stage} output failed validation after one repair: {exc}') from exc
                 raw = self.llm.generate(repair_messages(stage, raw, str(exc)))
         raise AssertionError('unreachable')
+
+    @staticmethod
+    def _decode_json_object(raw: str) -> dict:
+        text = raw.strip()
+        if text.startswith('```'):
+            lines = text.splitlines()
+            if len(lines) >= 3 and lines[-1].strip() == '```':
+                text = '\n'.join(lines[1:-1])
+                if text.lstrip().lower().startswith('json'):
+                    text = text.lstrip()[4:].lstrip()
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find('{')
+            end = text.rfind('}')
+            if start < 0 or end <= start:
+                raise
+            payload = json.loads(text[start:end + 1])
+        if not isinstance(payload, dict):
+            raise ValueError('JSON root must be an object')
+        return payload
 
     @staticmethod
     def _validate_analysis(payload: dict) -> None:
@@ -134,6 +181,28 @@ class GradingService:
         payload['error_types'] = list(dict.fromkeys(
             error for error in errors if isinstance(error, str) and error in ERROR_TYPES
         ))
+
+    @staticmethod
+    def _validate_fast_grading(payload: dict) -> None:
+        analysis = payload.get('analysis')
+        if not isinstance(analysis, dict):
+            raise ValueError('analysis must be an object')
+        GradingService._validate_analysis(analysis)
+        GradingService._validate_review(payload)
+
+    @staticmethod
+    def _apply_tolerance_calibration(payload: dict, tolerance: str) -> None:
+        if tolerance == 'strict' or 'notation_error' not in payload['error_types']:
+            return
+        severe_errors = {'conclusion_error', 'theorem_misuse', 'circular_reasoning'}
+        if severe_errors.intersection(payload['error_types']):
+            return
+        floor = 8 if tolerance == 'lenient' else 6
+        current = payload['dimension_scores']['expression_notation']
+        if current < floor:
+            payload['dimension_scores']['expression_notation'] = floor
+            payload['review_notes'] += f' Notation score calibrated to {floor} under {tolerance} tolerance.'
+
     @staticmethod
     def _validate_rubric(payload: dict) -> None:
         scores = payload.get('dimension_scores')
@@ -173,7 +242,8 @@ class GradingService:
                     scores.model_dump_json(), scores.total(), json.dumps(errors), json.dumps(evidence, ensure_ascii=False), review['feedback'],
                     json.dumps(analysis, ensure_ascii=False), json.dumps(scoring, ensure_ascii=False), json.dumps(review, ensure_ascii=False),
                     PROMPT_VERSION, self.llm.__class__.__name__, getattr(self.llm, 'model', ''), latency_ms,
-                    attempts.analysis, attempts.scoring, attempts.review,
+                    # Legacy databases require 1..2; the API still reports zero for skipped fast-mode stages.
+                    max(1, attempts.analysis), max(1, attempts.scoring), max(1, attempts.review),
                     int(reliability.needs_manual_review), json.dumps(reliability.reasons, ensure_ascii=False),
                 ),
             )

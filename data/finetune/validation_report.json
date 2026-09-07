@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "input_count": 112,
+  "valid_count": 112,
+  "output_count": 112,
+  "duplicate_count": 0,
+  "conflict_count": 0,
+  "invalid_count": 0,
+  "symbol_replacement_count": 562,
+  "errors": [],
+  "duplicates": [],
+  "conflicts": []
+}

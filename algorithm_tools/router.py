@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Union
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 
 from algorithm_tools.code_generator import generate_discrete_math_code
@@ -15,29 +15,46 @@ from algorithm_tools.truth_table import generate_truth_table
 
 router = APIRouter(prefix="/tools", tags=["Extended Tools"])
 
-TOOL_CATALOG = [
-    {"name": "truth-table", "title": "真值表生成", "category": "逻辑与关系"},
-    {"name": "relation-properties", "title": "关系矩阵判断", "category": "逻辑与关系"},
-    {"name": "formula-simplify", "title": "命题公式化简", "category": "命题逻辑"},
-    {"name": "normal-forms", "title": "主范式转换", "category": "命题逻辑"},
-    {"name": "set-operation", "title": "集合运算", "category": "集合论"},
-    {"name": "hasse-diagram", "title": "哈斯图生成", "category": "关系"},
-    {"name": "dijkstra", "title": "最短路径", "category": "图论"},
-    {"name": "bipartite", "title": "二分图判定", "category": "图论"},
-    {"name": "code-generate", "title": "Python/C 代码生成", "category": "代码生成"},
+SYMBOLIC_TOOL_CATALOG = [
+    {"name": "truth-table", "title": "真值表生成", "mode": "compute", "group": "可计算", "description": "枚举命题公式的全部真值指派"},
+    {"name": "relation-properties", "title": "关系性质判断", "mode": "compute", "group": "可计算", "description": "判断自反、对称、反对称和传递性质"},
+    {"name": "formula-simplify", "title": "命题公式化简", "mode": "compute", "group": "可计算", "description": "计算命题公式的最简等价形式"},
+    {"name": "set-operation", "title": "集合运算", "mode": "compute", "group": "可计算", "description": "计算并、交、差、补集和笛卡尔积"},
+    {"name": "dijkstra", "title": "最短路径", "mode": "compute", "group": "可计算", "description": "计算非负权图的最短路径和距离"},
+    {"name": "bipartite", "title": "二分图判定", "mode": "compute", "group": "可计算", "description": "判定图是否可二染色并返回划分"},
+    {"name": "normal-forms", "title": "主范式构造", "mode": "construct", "group": "可构造", "description": "构造主析取范式与主合取范式"},
+    {"name": "hasse-diagram", "title": "哈斯图构造", "mode": "construct", "group": "可构造", "description": "由偏序关系构造覆盖边和分层图数据"},
 ]
+
+ASSISTANT_TOOL_CATALOG = [
+    {"name": "code-generate", "title": "Python/C 代码生成", "mode": "assistant", "group": "智能辅助", "description": "按题意生成或回退到已验证的算法代码模板"},
+]
+
+TOOL_CATALOG = SYMBOLIC_TOOL_CATALOG + ASSISTANT_TOOL_CATALOG
 
 
 @router.get("", summary="获取统一算法工具目录")
-def tool_catalog() -> dict[str, Any]:
-    """Return every tool exposed by the single frontend tool center."""
+def tool_catalog(
+    mode: Literal["compute", "construct"] | None = Query(default=None, description="按可计算/可构造过滤"),
+) -> dict[str, Any]:
+    """Return eight deterministic symbolic tools grouped by their user workflow."""
+
+    selected = [item for item in SYMBOLIC_TOOL_CATALOG if mode is None or item["mode"] == mode]
 
     return {
-        "total": len(TOOL_CATALOG),
-        "groups": ["逻辑与关系", "命题逻辑", "集合论", "关系", "图论", "代码生成"],
+        "total": len(selected),
+        "symbolic_total": len(SYMBOLIC_TOOL_CATALOG),
+        "groups": [
+            {"key": "compute", "title": "可计算", "count": 6},
+            {"key": "construct", "title": "可构造", "count": 2},
+        ],
         "tools": [
-            {**item, "method": "POST", "endpoint": f"/tools/{item['name']}"}
-            for item in TOOL_CATALOG
+            {**item, "method": "POST", "endpoint": f"/tools/{item['name']}", "deterministic": True}
+            for item in selected
+        ],
+        "assistant_tools": [
+            {**item, "method": "POST", "endpoint": f"/tools/{item['name']}", "deterministic": False}
+            for item in ASSISTANT_TOOL_CATALOG
         ],
     }
 
