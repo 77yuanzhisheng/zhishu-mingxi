@@ -13,6 +13,9 @@ MODULE_DEPENDENCIES = {
     "induction": ["propositional_logic"],
     "relations": ["set_theory", "predicate_logic"],
     "graph_theory": ["relations", "set_theory"],
+    "number_theory": ["set_theory"],
+    "combinatorics": ["set_theory", "number_theory", "graph_theory"],
+    "algebraic_structure": ["set_theory", "number_theory"],
 }
 
 NODE_MODULE_MAP = {
@@ -22,6 +25,9 @@ NODE_MODULE_MAP = {
     "mi": "induction",
     "rel": "relations",
     "gt": "graph_theory",
+    "nt": "number_theory",
+    "cm": "combinatorics",
+    "ag": "algebraic_structure",
 }
 
 MODULE_TITLES = {
@@ -31,17 +37,23 @@ MODULE_TITLES = {
     "induction": "数学归纳法",
     "relations": "关系",
     "graph_theory": "图论",
+    "number_theory": "初等数论",
+    "combinatorics": "组合数学",
+    "algebraic_structure": "代数结构",
 }
 
 DEFAULT_NODES = ["pl_01_01", "fl_01_01", "st_01_01", "mi_01_01", "rel_01_01", "gt_01_01"]
 
 KEYWORD_RULES = [
-    (re.compile(r"graph|tree|path|图|树|路径|连通"), "gt_01_01"),
-    (re.compile(r"relation|equivalence|partial order|关系|等价|偏序"), "rel_01_01"),
-    (re.compile(r"set|集合|交集|并集|补集"), "st_01_01"),
+    (re.compile(r"graph|tree|path|图|树|路径|连通|平面图|欧拉|哈密顿"), "gt_01_01"),
+    (re.compile(r"relation|equivalence|partial order|关系|等价|偏序|函数|映射"), "rel_01_01"),
+    (re.compile(r"set|集合|交集|并集|补集|容斥|基数"), "st_01_01"),
     (re.compile(r"predicate|quantifier|谓词|量词"), "fl_01_01"),
     (re.compile(r"induction|归纳"), "mi_01_01"),
     (re.compile(r"proposition|logic|命题|逻辑|真值"), "pl_01_01"),
+    (re.compile(r"数论|整除|同余|素数|最大公约数|最小公倍数"), "nt_01_01"),
+    (re.compile(r"组合|排列|卡特兰|鸽巢|二项式"), "cm_01_01"),
+    (re.compile(r"群|环|域|代数|布尔格|格"), "ag_01_01"),
 ]
 
 STAGE_TITLES = {
@@ -62,7 +74,8 @@ def module_for_node(node_id: str) -> str:
 
 
 def valid_node_id(node_id: str) -> bool:
-    return bool(re.fullmatch(r"(pl|fl|st|mi|rel|gt)_\d{2}_\d{2}", node_id.strip()))
+    # 平台图谱 id：两段式=概念（pl_01），三段式=条目（pl_01_01）
+    return bool(re.fullmatch(r"(pl|fl|st|mi|rel|gt|nt|cm|ag)(?:_\d{2}){1,2}", node_id.strip()))
 
 
 def build_rule_path(evidence: dict[str, Any], max_nodes: int = 8) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
