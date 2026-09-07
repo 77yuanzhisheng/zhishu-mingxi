@@ -5,6 +5,7 @@ const KB_API_BASE_URL = API_BASE_URL;
 const DEFAULT_USER_ID = 1;
 const DEFAULT_NODE_ID = "rel_02";
 const AUTH_TOKEN_KEY = "dm_auth_token";
+const AGENT_CHAT_PATH = "/api/agent/chat";
 
 function resolveApiBaseUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -23,8 +24,11 @@ const tabRoutes = {
   graph: "/knowledge-graph",
   practice: "/practice",
   learning: "/learning",
+  companion: "/companion",
   classes: "/classes",
   exam: "/exam",
+  lessonPrep: "/lesson-prep",
+  compliance: "/compliance",
   tools: "/tools",
   textbook: "/textbook",
 };
@@ -36,8 +40,11 @@ const titles = {
   graph: "离散数学知识图谱",
   practice: "自测练习",
   learning: "学情分析",
+  companion: "学习陪伴",
   classes: "班级管理",
   exam: "在线考试",
+  lessonPrep: "教师智能备课",
+  compliance: "赛事平台合规材料",
   textbook: "Web 交互式教材 2.0",
 };
 
@@ -56,6 +63,11 @@ const graphState = {
   // ⑤ 图谱布局重构：点节点聚焦 + 浏览历史栈（上一步/下一步）
   nodeHistory: [],
   historyIndex: -1,
+  fusionChapterIndex: 0,
+  fusionSectionIndex: 0,
+  fusionHistory: [],
+  // 融合导航数据缓存（仅数据，教师四层树视图不回退恢复）
+  teacherGraph: null,
 };
 
 const learningState = {
@@ -66,13 +78,20 @@ const learningState = {
 };
 
 const dashboardState = { chart: null };
-const gradingState = { questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false, ocrFile: null, submitting: false };
+const gradingState = {
+  questions: [], selectedQuestion: null, startedAt: Date.now(), loaded: false,
+  ocrFile: null, submitting: false, proofSteps: [], explanationSteps: [], explanationIndex: 0,
+};
 const chatState = { sessionId: null };
+const agentState = { available: null, channel: "pending", fallbackReason: "" };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
+const companionState = { kind: "today", loading: false };
+const lessonPrepState = { loading: false, resultText: "" };
+const complianceState = { evidence: {}, recordings: {}, objectUrls: {} };
 
 const practiceState = {
   filter: "all",
@@ -584,7 +603,27 @@ document.getElementById("gradingPhotoInput").addEventListener("change", (event) 
 document.getElementById("gradingRecheckButton").addEventListener("click", () => {
   if (gradingState.ocrFile) handleGradingPhoto(gradingState.ocrFile);
 });
+document.getElementById("addProofStepButton").addEventListener("click", addProofStep);
+document.getElementById("undoProofStepButton").addEventListener("click", undoProofStep);
+document.getElementById("finishProofButton").addEventListener("click", finishProof);
+document.getElementById("nextProofExplanationButton").addEventListener("click", revealNextProofExplanation);
 document.getElementById("continueLearningButton").addEventListener("click", continueLearning);
+document.getElementById("generateCompanionButton").addEventListener("click", generateCompanionAdvice);
+document.getElementById("companionPracticeButton").addEventListener("click", () => switchTab("practice"));
+document.getElementById("companionPathButton").addEventListener("click", () => switchTab("learning"));
+document.querySelectorAll(".companion-kind").forEach((button) => {
+  button.addEventListener("click", () => setCompanionKind(button.dataset.companionKind));
+});
+document.getElementById("prepChapterSelect").addEventListener("change", syncPrepSections);
+document.getElementById("prepSectionSelect").addEventListener("change", updatePrepDocumentMeta);
+document.getElementById("generateLessonPrepButton").addEventListener("click", generateLessonPrep);
+document.getElementById("copyLessonPrepButton").addEventListener("click", copyLessonPrep);
+document.querySelectorAll("[data-evidence-file]").forEach((input) => {
+  input.addEventListener("change", () => handleEvidenceFile(input.dataset.evidenceFile, input.files?.[0]));
+});
+document.querySelectorAll("[data-recording-file]").forEach((input) => {
+  input.addEventListener("change", () => handleRecordingFile(input.dataset.recordingFile, input.files?.[0]));
+});
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
 document.getElementById("shareRequestForm").addEventListener("submit", requestLearningShare);
@@ -629,8 +668,10 @@ async function bootstrapApp() {
     authState.user = {
       user_id: demoUserId,
       name: demoUserId === 1003 ? "张鹤轩" : `演示用户 ${demoUserId}`,
-      role: "student",
+      role: demoParams.get("demoRole") === "teacher" ? "teacher" : "student",
     };
+    const complianceNotice = document.getElementById("complianceDemoNotice");
+    if (complianceNotice) complianceNotice.hidden = false;
     await startAuthenticatedApp();
     // 演示/截图模式：?ask=问题 自动在 RAG 问答中发送（真实问答，用于截图）
     const askQuestion = demoParams.get("ask");
@@ -849,6 +890,7 @@ function switchTab(tabName, updateHistory = true) {
     loadAiSummary();
     setTimeout(() => learningState.chart?.resize(), 0);
   }
+  if (tabName === "companion") loadCompanionWorkspace();
   if (tabName === "practice") {
     syncPracticeModePanels();
     if (practiceState.mode === "grading") {
@@ -860,6 +902,8 @@ function switchTab(tabName, updateHistory = true) {
   if (tabName === "tools") selectUnifiedTool(unifiedToolState.current);
   if (tabName === "classes") loadClassWorkspace();
   if (tabName === "exam") loadExamWorkspace();
+  if (tabName === "lessonPrep") loadLessonPrepWorkspace();
+  if (tabName === "compliance") updateComplianceProgress();
 }
 
 function getTabFromLocation() {
@@ -910,7 +954,7 @@ async function handleAsk() {
 
   const loading = addMessage("正在检索知识库并生成回答...", "assistant");
   try {
-    const data = await requestStreamingChat({
+    const data = await requestPreferredAssistant({
       message: question,
       user_id: getCurrentUserId(),
       session_id: chatState.sessionId,
@@ -918,10 +962,83 @@ async function handleAsk() {
     }, loading);
     chatState.sessionId = data.session_id || chatState.sessionId;
 
-    updateMessage(loading, data.answer);
+    updateMessage(loading, data.answer, data.assistantChannel);
   } catch (error) {
     updateMessage(loading, `${error.message}。当前后端：${API_BASE_URL}；请检查后端状态和模型网络连接。`);
   }
+}
+
+async function requestAgentChat(payload) {
+  const response = await postJson(AGENT_CHAT_PATH, payload);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(readApiError(data, response.status === 404 ? "智能体接口尚未接通" : "智能体暂时不可用"));
+    error.status = response.status;
+    throw error;
+  }
+  const answer = window.Team4Utils.normalizeAgentAnswer(data);
+  if (!answer) throw new Error("智能体没有返回有效回答");
+  agentState.available = true;
+  return { ...data, answer };
+}
+
+async function requestPreferredAssistant(payload, message = null) {
+  let fallbackReason = "智能体接口尚未接通";
+  if (agentState.available !== false) {
+    try {
+      const data = await requestAgentChat(payload);
+      const channel = window.Team4Utils.resolveAssistantChannel({ ...data, channel: data.channel || "agent" });
+      updateAssistantChannelUI(channel);
+      if (message) {
+        const writer = createTypewriter(message);
+        writer.enqueue(data.answer);
+        await writer.drain();
+      }
+      return { ...data, assistantChannel: channel };
+    } catch (error) {
+      fallbackReason = formatAgentFallbackReason(error);
+      if (error.status === 404 || error.status === 501) agentState.available = false;
+    }
+  }
+
+  const data = message
+    ? await requestStreamingChat(payload, message)
+    : await requestBasicAssistant(payload);
+  const channel = window.Team4Utils.resolveAssistantChannel(data, fallbackReason);
+  updateAssistantChannelUI(channel);
+  return { ...data, assistantChannel: channel };
+}
+
+function formatAgentFallbackReason(error) {
+  if (error?.status === 404 || error?.status === 501) return "智能体接口尚未接通";
+  if (error?.status === 429) return "智能体请求繁忙，已切换基础模型";
+  if (Number(error?.status) >= 500) return "智能体暂时不可用，已切换基础模型";
+  if (/timeout|timed out|超时/i.test(error?.message || "")) return "智能体响应超时，已切换基础模型";
+  return error?.message || "智能体暂时不可用";
+}
+
+async function requestBasicAssistant(payload) {
+  const response = await postJson("/chat", payload);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readApiError(data, "基础模型暂时无法响应"));
+  const answer = window.Team4Utils.normalizeAgentAnswer(data);
+  if (!answer) throw new Error("基础模型没有返回有效回答");
+  chatState.sessionId = data.session_id || chatState.sessionId;
+  return { ...data, answer };
+}
+
+function updateAssistantChannelUI(channel) {
+  agentState.channel = channel.kind;
+  agentState.fallbackReason = channel.detail;
+  document.querySelectorAll("[data-assistant-channel-wrap]").forEach((element) => {
+    element.className = `assistant-channel ${channel.kind}`;
+  });
+  document.querySelectorAll("[data-assistant-channel]").forEach((element) => {
+    element.textContent = channel.label;
+  });
+  document.querySelectorAll("[data-assistant-channel-detail]").forEach((element) => {
+    element.textContent = channel.detail;
+  });
 }
 
 async function requestStreamingChat(payload, message) {
@@ -1494,8 +1611,16 @@ function addMessage(text, type) {
   return message;
 }
 
-function updateMessage(message, text) {
+function updateMessage(message, text, channel = null) {
   message.innerHTML = "";
+
+  if (channel) {
+    const meta = document.createElement("div");
+    meta.className = `message-channel ${channel.kind}`;
+    meta.innerHTML = `<span></span><strong>${escapeHtml(channel.label)}</strong>`;
+    meta.title = channel.detail;
+    message.appendChild(meta);
+  }
 
   const content = document.createElement("div");
   content.className = "message-content";
@@ -1641,6 +1766,7 @@ function buildRelationExplanation(data) {
 
 async function loadKnowledgeGraph(forceReload = false) {
   const container = document.getElementById("knowledgeGraphChart");
+  let timeoutId;
 
   if (graphState.loaded && !forceReload) {
     renderKnowledgeGraph();
@@ -1659,12 +1785,12 @@ async function loadKnowledgeGraph(forceReload = false) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    timeoutId = setTimeout(() => controller.abort(), 15000);
     const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`, {
       signal: controller.signal,
     });
     const data = await response.json();
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
     if (!response.ok) {
       throw new Error(data.detail || "知识图谱接口请求失败");
     }
@@ -1851,7 +1977,22 @@ function normalizeKnowledgeItem(item, itemIndex, parentId, parentNodeId, parentN
 }
 
 function renderKnowledgeGraph() {
+  // 融合导航视图：教材章节/知识点与平台学情融合浏览（队员4）
+  if (graphState.view === "fusion") {
+    renderFusionGraph();
+    return;
+  }
+
   const container = document.getElementById("knowledgeGraphChart");
+  if (container.dataset.renderer) {
+    container.innerHTML = "";
+    delete container.dataset.renderer;
+    if (graphState.chart) {
+      graphState.chart.dispose();
+      graphState.chart = null;
+    }
+  }
+  if (graphState.chart?.isDisposed?.()) graphState.chart = null;
   if (!graphState.chart) {
     container.innerHTML = "";
     graphState.chart = echarts.init(container);
@@ -2384,7 +2525,7 @@ function handleGraphClick(params) {
 }
 
 function setGraphView(view) {
-  if (!['tree', 'force'].includes(view) || graphState.view === view) {
+  if (!['tree', 'force', 'fusion'].includes(view) || graphState.view === view) {
     return;
   }
   graphState.view = view;
@@ -2397,11 +2538,137 @@ function setGraphView(view) {
   const hint = document.getElementById("graphViewHint");
   hint.textContent = view === "tree"
     ? "思维导图按课程顺序展示层级；点击模块或子概念可继续展开。"
-    : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
+    : view === "fusion"
+      ? "按章节逐级聚焦教材知识点，并同步显示平台掌握状态；选择知识点后可查看内容与推荐练习。"
+      : "关系图采用固定分层布局；填充色表示内容类型，边框色表示掌握状态，橙色虚线表示前置知识流向。";
   document.querySelector(".graph-legend .dependency").hidden = view !== "force";
   renderKnowledgeGraph();
 }
 
+
+async function loadTeacherGraph() {
+  // 融合导航数据源：/kb/teacher-graph 教材图谱数据（仅数据接口，不渲染教师四层树视图）
+  if (graphState.teacherGraph) return graphState.teacherGraph;
+  const response = await fetch(`${KB_API_BASE_URL}/kb/teacher-graph`).catch(() => null);
+  if (!response || !response.ok) {
+    throw new Error("教材图谱接口暂不可用");
+  }
+  graphState.teacherGraph = await response.json();
+  return graphState.teacherGraph;
+}
+
+function handleTeacherGraphClick(data) {
+  // 融合导航：教材知识点点击 → 映射到平台节点详情与推荐题（不渲染教师四层树）
+  if (!data || data.kpId) {
+    const platformNodeId = data.platform || "";
+    const kind = data.mappingKind || "";
+    const nodeId = platformNodeId || "";
+    const name = nodeId ? findNodeName(nodeId) : data.name;
+    const pseudo = {
+      id: `teacher-kp-${data.kpId || data.name}`,
+      nodeId,
+      name,
+      type: nodeId ? "item" : "module",
+      description: `（来自教材图谱）${data.name}\n章节：${data.chapter || ""}`,
+      text: "",
+    };
+    graphState.selectedNode = pseudo;
+    setCurrentLearningNode(pseudo);
+    showGraphNodeDetail(pseudo);
+    loadGraphNodeKnowledge(pseudo);
+    if (nodeId && kind !== "module_fallback") {
+      loadRecommendedQuestions(pseudo);
+    }
+    recordLearningEvent(pseudo);
+  }
+}
+
+async function renderFusionGraph() {
+  const container = document.getElementById("knowledgeGraphChart");
+  let teacher;
+  try {
+    teacher = await loadTeacherGraph();
+  } catch (error) {
+    container.innerHTML = `<p class="error-state">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  if (graphState.chart) {
+    graphState.chart.dispose();
+    graphState.chart = null;
+  }
+  container.dataset.renderer = "fusion";
+  container.style.height = "auto";
+  const chapters = teacher.chapters || [];
+  graphState.fusionChapterIndex = Math.min(graphState.fusionChapterIndex, Math.max(0, chapters.length - 1));
+  const chapter = chapters[graphState.fusionChapterIndex] || { sections: [] };
+  const sections = chapter.sections || [];
+  graphState.fusionSectionIndex = Math.min(graphState.fusionSectionIndex, Math.max(0, sections.length - 1));
+  const section = sections[graphState.fusionSectionIndex] || { kps: [] };
+
+  const chapterButtons = chapters.map((item, index) => `
+    <button type="button" class="fusion-list-button ${index === graphState.fusionChapterIndex ? "active" : ""}" data-fusion-chapter="${index}">
+      <span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(item.title || item.id)}</strong>
+    </button>`).join("");
+  const sectionButtons = sections.map((item, index) => `
+    <button type="button" class="fusion-list-button ${index === graphState.fusionSectionIndex ? "active" : ""}" data-fusion-section="${index}">
+      <strong>${escapeHtml(item.title || item.id)}</strong><span>${(item.kps || []).length} 个知识点</span>
+    </button>`).join("");
+  const knowledgeButtons = (section.kps || []).map((item) => {
+    const platformNode = item.platform_node_id
+      ? { nodeId: item.platform_node_id, type: "concept", children: [], items: [] }
+      : null;
+    const mastery = platformNode ? getNodeMastery(platformNode) : null;
+    const status = platformNode ? getMasteryStatus(mastery) : "unlearned";
+    const level = Number(mastery?.level ?? mastery?.mastery_level ?? 0);
+    const points = (item.points || []).map((point) => point.title).filter(Boolean);
+    return `
+      <button type="button" class="fusion-kp-card ${status}" data-fusion-kp="${escapeHtml(item.id)}">
+        <span class="fusion-status-dot"></span>
+        <span class="fusion-kp-copy"><strong>${escapeHtml(item.title || item.id)}</strong><small>${escapeHtml(points.slice(0, 3).join(" · ") || "教材知识点")}</small></span>
+        <span class="mastery-badge ${status}">${escapeHtml(getMasteryLabel(status, level))}</span>
+      </button>`;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="fusion-focus-bar">
+      <span>当前定位</span><strong>${escapeHtml(chapter.title || "请选择章节")}</strong><span>›</span><strong>${escapeHtml(section.title || "请选择小节")}</strong>
+    </div>
+    <div class="fusion-browser">
+      <section class="fusion-column fusion-chapters"><header><strong>章节</strong><span>${chapters.length}</span></header><div>${chapterButtons}</div></section>
+      <section class="fusion-column fusion-sections"><header><strong>小节</strong><span>${sections.length}</span></header><div>${sectionButtons || '<p class="empty-state">本章暂无小节</p>'}</div></section>
+      <section class="fusion-column fusion-kps"><header><strong>教材知识点与平台学情</strong><span>${(section.kps || []).length}</span></header><div>${knowledgeButtons || '<p class="empty-state">本节暂无知识点</p>'}</div></section>
+    </div>`;
+
+  container.querySelectorAll("[data-fusion-chapter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      graphState.fusionChapterIndex = Number(button.dataset.fusionChapter);
+      graphState.fusionSectionIndex = 0;
+      renderFusionGraph();
+    });
+  });
+  container.querySelectorAll("[data-fusion-section]").forEach((button) => {
+    button.addEventListener("click", () => {
+      graphState.fusionSectionIndex = Number(button.dataset.fusionSection);
+      renderFusionGraph();
+    });
+  });
+  container.querySelectorAll("[data-fusion-kp]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = (section.kps || []).find((kp) => kp.id === button.dataset.fusionKp);
+      if (!item) return;
+      container.querySelectorAll(".fusion-kp-card").forEach((node) => node.classList.remove("selected"));
+      button.classList.add("selected");
+      handleTeacherGraphClick({
+        name: item.title || item.id,
+        kpId: item.id,
+        platform: item.platform_node_id || "",
+        mappingKind: item.mapping_kind || "",
+        chapter: `${chapter.title || ""} · ${section.title || ""}`,
+      });
+      document.querySelector("#graph .graph-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+}
 
 function showGraphNodeDetail(node) {
   document.getElementById("graphDetailTitle").textContent = node.name || "知识图谱";
@@ -3602,9 +3869,229 @@ function continueLearning() {
   document.getElementById("questionInput").focus();
 }
 
+function getLearningSnapshot() {
+  const events = parseLocalLearningEvents();
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - 6);
+  weekStart.setHours(0, 0, 0, 0);
+  const recent = events.filter((event) => new Date(event.timestamp || 0) >= weekStart);
+  const todayKey = formatDateKey(now);
+  const today = recent.filter((event) => formatDateKey(new Date(event.timestamp)) === todayKey);
+  return {
+    todayMinutes: Math.min(120, new Set(today.map((event) => String(event.timestamp).slice(0, 13))).size * 8),
+    weeklyQuestions: recent.filter((event) => event.event_type === "answer").length,
+    weakNodes: (learningState.report?.weak || []).map((item) => shortenNodeName(item.name || item.node_name || findNodeName(item.node_id))),
+    currentNode: learningState.currentNodeName,
+  };
+}
+
+function loadCompanionWorkspace() {
+  const snapshot = getLearningSnapshot();
+  document.getElementById("companionTodayMinutes").textContent = `${snapshot.todayMinutes} 分钟`;
+  document.getElementById("companionWeeklyQuestions").textContent = `${snapshot.weeklyQuestions} 题`;
+  document.getElementById("companionWeakCount").textContent = `${snapshot.weakNodes.length} 项`;
+  document.getElementById("companionCurrentNode").textContent = snapshot.currentNode || "尚未选择知识点";
+  const weakTarget = document.getElementById("companionWeakNodes");
+  weakTarget.innerHTML = snapshot.weakNodes.length
+    ? snapshot.weakNodes.slice(0, 6).map((name) => `<span>${escapeHtml(name)}</span>`).join("")
+    : '<p class="muted-line">当前没有待巩固知识点。</p>';
+}
+
+function setCompanionKind(kind) {
+  companionState.kind = ["today", "mistakes", "duration"].includes(kind) ? kind : "today";
+  document.querySelectorAll(".companion-kind").forEach((button) => {
+    button.classList.toggle("active", button.dataset.companionKind === companionState.kind);
+  });
+}
+
+async function requestAssistantText(prompt) {
+  const data = await requestPreferredAssistant({
+    message: prompt,
+    user_id: getCurrentUserId(),
+    session_id: chatState.sessionId,
+    node_id: learningState.currentNodeId,
+  });
+  chatState.sessionId = data.session_id || chatState.sessionId;
+  return data.answer;
+}
+
+async function generateCompanionAdvice() {
+  if (companionState.loading) return;
+  const target = document.getElementById("companionAdvice");
+  const button = document.getElementById("generateCompanionButton");
+  companionState.loading = true;
+  button.disabled = true;
+  button.textContent = "正在生成";
+  target.className = "assistant-document loading-state";
+  target.textContent = "正在结合学情和练习记录安排本次学习...";
+  try {
+    const prompt = window.Team4Utils.buildCompanionPrompt(companionState.kind, getLearningSnapshot());
+    const answer = await requestAssistantText(prompt);
+    target.className = "assistant-document";
+    target.innerHTML = formatAnswerHtml(answer);
+    typesetMath(target);
+  } catch (error) {
+    target.className = "assistant-document error-state";
+    target.textContent = `学习建议生成失败：${error.message}`;
+  } finally {
+    companionState.loading = false;
+    button.disabled = false;
+    button.textContent = "重新生成";
+  }
+}
+
+async function loadLessonPrepWorkspace() {
+  const chapterSelect = document.getElementById("prepChapterSelect");
+  if (chapterSelect.options.length) return;
+  chapterSelect.innerHTML = '<option value="">正在读取教材章节...</option>';
+  try {
+    const teacher = await loadTeacherGraph();
+    chapterSelect.innerHTML = (teacher.chapters || []).map((chapter, index) =>
+      `<option value="${index}">${escapeHtml(chapter.title || chapter.id)}</option>`).join("");
+    syncPrepSections();
+  } catch (error) {
+    chapterSelect.innerHTML = `<option value="">${escapeHtml(error.message)}</option>`;
+  }
+}
+
+function getSelectedPrepContext() {
+  const chapters = graphState.teacherGraph?.chapters || [];
+  const chapter = chapters[Number(document.getElementById("prepChapterSelect").value)] || null;
+  const section = chapter?.sections?.[Number(document.getElementById("prepSectionSelect").value)] || null;
+  return { chapter, section };
+}
+
+function syncPrepSections() {
+  const sectionSelect = document.getElementById("prepSectionSelect");
+  const chapters = graphState.teacherGraph?.chapters || [];
+  const chapter = chapters[Number(document.getElementById("prepChapterSelect").value)];
+  sectionSelect.innerHTML = (chapter?.sections || []).map((section, index) =>
+    `<option value="${index}">${escapeHtml(section.title || section.id)}</option>`).join("");
+  updatePrepDocumentMeta();
+}
+
+function updatePrepDocumentMeta() {
+  const { chapter, section } = getSelectedPrepContext();
+  document.getElementById("prepDocumentMeta").textContent = chapter && section
+    ? `${chapter.title} · ${section.title} · ${(section.kps || []).length} 个知识点`
+    : "选择章节和小节后生成。";
+}
+
+async function generateLessonPrep() {
+  if (lessonPrepState.loading) return;
+  const { chapter, section } = getSelectedPrepContext();
+  if (!chapter || !section) return;
+  const target = document.getElementById("lessonPrepResult");
+  const button = document.getElementById("generateLessonPrepButton");
+  const outputType = document.getElementById("prepOutputSelect").value;
+  lessonPrepState.loading = true;
+  button.disabled = true;
+  button.textContent = "正在生成";
+  target.className = "assistant-document prep-document loading-state";
+  target.textContent = "正在整理教材知识点和课堂节奏...";
+  const prompt = window.Team4Utils.buildLessonPrompt({
+    chapter: chapter.title,
+    section: section.title,
+    audience: document.getElementById("prepAudienceSelect").value,
+    duration: document.getElementById("prepDurationInput").value,
+    outputType,
+    points: (section.kps || []).map((item) => item.title),
+  });
+  try {
+    lessonPrepState.resultText = await requestAssistantText(prompt);
+    document.getElementById("prepDocumentTitle").textContent = `${section.title} · ${outputType}`;
+    target.className = "assistant-document prep-document";
+    target.innerHTML = formatAnswerHtml(lessonPrepState.resultText);
+    document.getElementById("copyLessonPrepButton").disabled = false;
+    typesetMath(target);
+  } catch (error) {
+    target.className = "assistant-document prep-document error-state";
+    target.textContent = `备课内容生成失败：${error.message}`;
+  } finally {
+    lessonPrepState.loading = false;
+    button.disabled = false;
+    button.textContent = "生成备课内容";
+  }
+}
+
+async function copyLessonPrep() {
+  if (!lessonPrepState.resultText) return;
+  await navigator.clipboard.writeText(lessonPrepState.resultText);
+  const button = document.getElementById("copyLessonPrepButton");
+  button.textContent = "已复制";
+  setTimeout(() => { button.textContent = "复制内容"; }, 1200);
+}
+
+function replaceComplianceObjectUrl(key, file) {
+  if (complianceState.objectUrls[key]) URL.revokeObjectURL(complianceState.objectUrls[key]);
+  const url = URL.createObjectURL(file);
+  complianceState.objectUrls[key] = url;
+  return url;
+}
+
+function handleEvidenceFile(kind, file) {
+  if (!kind || !file) return;
+  const item = document.querySelector(`[data-evidence-item="${kind}"]`);
+  const preview = document.querySelector(`[data-evidence-preview="${kind}"]`);
+  if (!item || !preview) return;
+  if (!file.type.startsWith("image/")) {
+    preview.innerHTML = "<span>请选择图片文件</span>";
+    return;
+  }
+  const url = replaceComplianceObjectUrl(`image-${kind}`, file);
+  complianceState.evidence[kind] = file.name;
+  preview.innerHTML = "";
+  const image = document.createElement("img");
+  image.src = url;
+  image.alt = `${item.querySelector("strong")?.textContent || "平台"}截图预览`;
+  preview.appendChild(image);
+  item.classList.add("ready");
+  item.querySelector("[data-evidence-status]").textContent = "已就绪";
+  updateComplianceProgress();
+}
+
+function handleRecordingFile(kind, file) {
+  if (!kind || !file) return;
+  const name = document.querySelector(`[data-recording-name="${kind}"]`);
+  const status = document.querySelector(`[data-recording-status="${kind}"]`);
+  const preview = document.getElementById("recordingPreview");
+  if (!file.type.startsWith("video/")) {
+    name.textContent = "请选择视频文件";
+    return;
+  }
+  const url = replaceComplianceObjectUrl(`video-${kind}`, file);
+  complianceState.recordings[kind] = file.name;
+  name.textContent = file.name;
+  status.textContent = "已就绪";
+  status.closest("label").classList.add("ready");
+  preview.hidden = false;
+  preview.innerHTML = "";
+  const video = document.createElement("video");
+  video.src = url;
+  video.controls = true;
+  video.preload = "metadata";
+  preview.appendChild(video);
+  updateComplianceProgress();
+}
+
+function updateComplianceProgress() {
+  const target = document.getElementById("complianceProgress");
+  if (!target) return;
+  const progress = window.Team4Utils.countReadyMaterials(
+    complianceState.evidence,
+    complianceState.recordings,
+  );
+  target.textContent = `${progress.ready} / ${progress.total}`;
+  target.parentElement.classList.toggle("complete", progress.ready === progress.total);
+}
+
 function updateRoleInterface() {
   classState.role = ["teacher", "admin"].includes(authState.user?.role) ? "teacher" : "student";
   const roleName = formatRole(classState.role);
+  document.querySelectorAll("[data-role-only]").forEach((element) => {
+    element.hidden = element.dataset.roleOnly !== classState.role;
+  });
   document.getElementById("classRoleName").textContent = `${roleName} · ${authState.user?.name || "--"}`;
   document.getElementById("studentClassView").hidden = classState.role !== "student";
   document.getElementById("teacherClassView").hidden = classState.role !== "teacher";
@@ -4060,8 +4547,108 @@ function formatDateTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function syncProofStepMode() {
+  const isProof = document.getElementById("gradingQuestionType").value === "proof";
+  document.getElementById("proofStepWorkspace").hidden = !isProof;
+  document.getElementById("gradingStudentAnswer").hidden = isProof;
+  document.querySelector('label[for="gradingStudentAnswer"]').hidden = isProof;
+  document.getElementById("submitGradingButton").hidden = isProof;
+  renderProofSteps();
+}
+
+function resetProofCoach() {
+  gradingState.proofSteps = [];
+  gradingState.explanationSteps = [];
+  gradingState.explanationIndex = 0;
+  const draft = document.getElementById("proofStepInput");
+  if (draft) draft.value = "";
+  const panel = document.getElementById("proofExplanationPanel");
+  if (panel) panel.hidden = true;
+  renderProofSteps();
+}
+
+function addProofStep() {
+  const input = document.getElementById("proofStepInput");
+  const step = input.value.trim();
+  if (!step) {
+    input.focus();
+    return false;
+  }
+  gradingState.proofSteps.push(step);
+  input.value = "";
+  renderProofSteps();
+  input.focus();
+  return true;
+}
+
+function undoProofStep() {
+  const previous = gradingState.proofSteps.pop();
+  if (previous) document.getElementById("proofStepInput").value = previous;
+  renderProofSteps();
+}
+
+function renderProofSteps() {
+  const list = document.getElementById("proofStepList");
+  if (!list) return;
+  list.innerHTML = gradingState.proofSteps.length
+    ? gradingState.proofSteps.map((step, index) => `<li><span>${index + 1}</span><p>${escapeHtml(step)}</p></li>`).join("")
+    : '<li class="proof-step-empty">从“已知”或题设条件开始，逐步记录你的推导。</li>';
+  document.getElementById("proofStepProgress").textContent = gradingState.proofSteps.length
+    ? `已记录 ${gradingState.proofSteps.length} 步`
+    : "尚未记录步骤";
+  document.getElementById("undoProofStepButton").disabled = !gradingState.proofSteps.length;
+  typesetMath(list);
+}
+
+function finishProof() {
+  const draft = document.getElementById("proofStepInput").value.trim();
+  if (draft) addProofStep();
+  if (gradingState.proofSteps.length < 2) {
+    document.getElementById("proofStepInput").focus();
+    document.getElementById("gradingOcrStatus").textContent = "请至少记录两个推导步骤后再完成证明。";
+    return;
+  }
+  document.getElementById("gradingStudentAnswer").value = gradingState.proofSteps
+    .map((step, index) => `${index + 1}. ${step}`)
+    .join("\n");
+  document.getElementById("gradingForm").requestSubmit();
+}
+
+function prepareProofExplanation(reference) {
+  gradingState.explanationSteps = window.Team4Utils.splitProofSteps(reference);
+  gradingState.explanationIndex = 0;
+  const panel = document.getElementById("proofExplanationPanel");
+  panel.hidden = !gradingState.explanationSteps.length;
+  renderProofExplanation();
+}
+
+function revealNextProofExplanation() {
+  if (gradingState.explanationIndex < gradingState.explanationSteps.length) {
+    gradingState.explanationIndex += 1;
+    renderProofExplanation();
+  } else {
+    gradingState.explanationIndex = 0;
+    renderProofExplanation();
+  }
+}
+
+function renderProofExplanation() {
+  const total = gradingState.explanationSteps.length;
+  const shown = gradingState.explanationIndex;
+  document.getElementById("proofExplanationProgress").textContent = `${shown}/${total}`;
+  const target = document.getElementById("proofExplanationSteps");
+  target.innerHTML = gradingState.explanationSteps.slice(0, shown)
+    .map((step, index) => `<li><span>${index + 1}</span><div>${window.GradingUtils.formatGradingText(step)}</div></li>`)
+    .join("");
+  const button = document.getElementById("nextProofExplanationButton");
+  button.textContent = shown === 0 ? "展示第一步" : shown < total ? "展示下一步" : "重新讲解";
+  typesetMath(target);
+}
+
 async function loadGradingQuestions() {
   const type = document.getElementById("gradingQuestionType").value;
+  syncProofStepMode();
+  resetProofCoach();
   const select = document.getElementById("gradingQuestionSelect");
   select.innerHTML = '<option value="">正在读取结构化题库...</option>';
   try {
@@ -4098,6 +4685,8 @@ function selectGradingQuestion() {
   document.getElementById("gradingKp").value = question.kp || "general";
   document.getElementById("gradingModule").value = getGradingModule(question.kp);
   document.getElementById("gradingStudentAnswer").value = "";
+  resetProofCoach();
+  syncProofStepMode();
   resetGradingResult();
 }
 
@@ -4134,6 +4723,10 @@ async function handleGradingPhoto(file) {
   try {
     const data = await parseVisionImage(file);
     document.getElementById("gradingStudentAnswer").value = selectVisionText(data, "student_answer");
+    // 队员4：证明题分步作答——OCR 全文同时填入分步输入框
+    if (document.getElementById("gradingQuestionType").value === "proof") {
+      document.getElementById("proofStepInput").value = data.text || "";
+    }
     if (status) {
       status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}，可修改后提交`;
     }
@@ -4209,6 +4802,9 @@ function renderGradingResult(data) {
   document.getElementById("gradingErrorTypes").innerHTML = errors.length
     ? errors.map((item) => `<span>${escapeHtml(window.GradingUtils.gradingErrorLabel(item))}</span>`).join("")
     : "<span>未发现典型错误</span>";
+  if (document.getElementById("gradingQuestionType").value === "proof") {
+    prepareProofExplanation(document.getElementById("gradingReference").value);
+  }
 }
 
 async function recordGradingEvent(result, payload) {
