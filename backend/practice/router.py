@@ -307,12 +307,19 @@ def get_practice_coverage() -> Dict:
     questions = parse_quiz_bank_md() + load_teacher_fill_questions()
     by_module: Dict[str, Dict] = {}
     node_ids: List[str] = []
+    node_catalog: Dict[str, Dict] = {}
     for q in questions:
         mod = q["module"]
         bucket = by_module.setdefault(mod, {"name": q["moduleName"], "nodes": set(), "questions": 0})
         bucket["nodes"].add(q["nodeId"])
         bucket["questions"] += 1
         node_ids.append(q["nodeId"])
+        node_catalog.setdefault(q["nodeId"], {
+            "node_id": q["nodeId"],
+            "name": q.get("nodeName") or q["moduleName"],
+            "module": mod,
+            "module_name": q["moduleName"],
+        })
     modules = [
         {"module": mod, "name": b["name"], "nodes": len(b["nodes"]), "questions": b["questions"]}
         for mod, b in by_module.items()
@@ -323,6 +330,7 @@ def get_practice_coverage() -> Dict:
         "total_questions": len(questions),
         "by_module": modules,
         "node_ids": unique_nodes,
+        "nodes": [node_catalog[node_id] for node_id in unique_nodes],
     }
 
 
@@ -432,7 +440,7 @@ def get_proof_questions(limit: int = 16) -> Dict:
 
 @router.get("/calc-questions")
 def get_calc_questions(limit: int = 16) -> Dict:
-    """返回计算题，供自测中的拍照作答和自动批阅使用。"""
+    """返回教师题库中的计算题，供拍照作答和统一批阅使用。"""
     questions = []
     for exam in _load_teacher_exams():
         for idx, item in enumerate(exam.get("calc", []), 1):
