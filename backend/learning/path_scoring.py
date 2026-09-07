@@ -6,6 +6,8 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from backend.learning.node_names import node_name_map
+
 MODULE_DEPENDENCIES = {
     "propositional_logic": [],
     "predicate_logic": ["propositional_logic"],
@@ -239,17 +241,18 @@ def _confidence(item: dict[str, Any]) -> float:
 def _presentation(item: dict[str, Any]) -> dict[str, Any]:
     node_id = item["node_id"]
     module = MODULE_TITLES.get(item["module"], item["module"])
+    name = node_name_map().get(node_id) or f"{module}节点 {node_id}"
     stage = item["stage"]
     return {
-        "title": f"{module}：{node_id}",
-        "reason": _reason(item, module),
+        "title": name,
+        "reason": _reason(item, name),
         "tasks": _tasks(stage, node_id),
         "mastery_gate": _gate(stage, node_id),
         "status": "pending",
     }
 
 
-def _reason(item: dict[str, Any], module_title: str) -> str:
+def _reason(item: dict[str, Any], name: str) -> str:
     parts = []
     practice = item["evidence"].get("practice")
     mastery = item["evidence"].get("mastery")
@@ -263,7 +266,7 @@ def _reason(item: dict[str, Any], module_title: str) -> str:
         parts.append(f"问答中出现 {qa['count']} 次困惑信号")
     if grading:
         parts.append(f"证明题最近得分 {grading.get('latest_total_score')}，薄弱维度 {'、'.join(grading.get('severe_dimensions', [])) or '无'}")
-    return f"{module_title}节点优先级 {item['priority']}。" + "；".join(parts)
+    return f"{name} 优先级 {item['priority']}。" + "；".join(parts)
 
 
 def _tasks(stage: str, node_id: str) -> list[dict[str, Any]]:
