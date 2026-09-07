@@ -1,0 +1,17 @@
+﻿.git
+.worktrees
+.venv
+__pycache__
+*.py[cod]
+.env
+data/chroma
+data/chroma_bge_small
+data/chroma_bak_*
+data/learning.db
+local_models
+frontend/textbook
+tests
+docs
+scripts
+*.log
+*.tmp
