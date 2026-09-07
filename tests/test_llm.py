@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import logging
 
 from backend.chat.llm import OpenAICompatibleLLM
 
@@ -121,3 +122,46 @@ LLM_MAX_RETRIES=0
     monkeypatch.setattr(httpx, "post", post)
     assert OpenAICompatibleLLM().generate([]) == "fallback"
     assert urls == [("http://primary/v1/chat/completions", "Bearer primary-key"), ("http://spark/v1/chat/completions", "Bearer spark-key")]
+
+
+def test_env_file_overrides_stale_process_key_and_logs_config(
+    tmp_path, monkeypatch, caplog
+):
+    # 队员3：dotenv 覆盖进程内旧密钥、日志不泄露密钥并输出配置诊断
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text(
+        "LLM_PROVIDER=openai\n"
+        "OPENAI_BASE_URL=https://api.siliconflow.cn/v1\n"
+        "OPENAI_CHAT_MODEL=Qwen/Qwen3-8B\n"
+        "OPENAI_API_KEY=sk-current-secret-value\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-stale-process-key")
+    monkeypatch.delenv("OPENAI_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("LLM_ENABLE_THINKING", raising=False)
+    captured = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update(url=url, headers=headers, json=json, timeout=timeout)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "测试成功"}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    caplog.set_level(logging.INFO, logger="backend.chat.llm")
+    llm = OpenAICompatibleLLM()
+    llm.ensure_available()
+    answer = llm.generate([{"role": "user", "content": "你好"}])
+
+    assert answer == "测试成功"
+    assert captured["url"] == "https://api.siliconflow.cn/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer sk-current-secret-value"
+    assert captured["json"]["model"] == "Qwen/Qwen3-8B"
+    assert "enable_thinking" not in captured["json"]
+    assert "sk-current-secret-value" not in caplog.text
+    assert "configured=True" in caplog.text
+    assert "key_prefix" not in caplog.text
+    assert "key_length" not in caplog.text

@@ -88,6 +88,12 @@ class OpenAICompatibleLLM:
         self.api_key, self.base_url, self.model = (
             primary["api_key"], primary["base_url"], primary["model"]
         )
+        logger.info(
+            "LLM config: base_url=%s model=%s configured=%s",
+            self.base_url,
+            self.model,
+            bool(self.base_url and self.model),
+        )
         self._fallback = fallback
 
     def ensure_available(self) -> None:

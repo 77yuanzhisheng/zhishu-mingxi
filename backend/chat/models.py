@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -61,3 +61,5 @@ class ChatResponse(BaseModel):
     topic_switch_hint: str | None = None
     reasoning: dict[str, Any] | None = Field(default=None, description="符号推理元数据：题型/符号校验/证明计划/结构化评估")
     context: ContextStatus
+    provider: Literal["agent", "fallback"]
+    fallback_reason: str | None = None
