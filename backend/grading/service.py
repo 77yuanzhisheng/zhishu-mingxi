@@ -30,6 +30,7 @@ from backend.grading.prompts import (
     scoring_messages,
 )
 from backend.learning.database import connection_scope, init_database
+from backend.shared.json_extract import extract_json_object
 
 
 class InvalidGradingOutputError(RuntimeError):
@@ -114,15 +115,25 @@ class GradingService:
         raw = self.llm.generate(messages)
         for attempt in (1, 2):
             try:
-                payload = self._decode_json_object(raw)
+                payload = extract_json_object(raw)
                 self._normalize_error_types(payload)
                 validator(payload)
                 return payload, attempt
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 if attempt == 2:
+                    if stage == 'analysis':
+                        return self._fallback_analysis(), attempt
                     raise InvalidGradingOutputError(f'{stage} output failed validation after one repair: {exc}') from exc
                 raw = self.llm.generate(repair_messages(stage, raw, str(exc)))
         raise AssertionError('unreachable')
+
+    @staticmethod
+    def _fallback_analysis() -> dict[str, list[str]]:
+        return {
+            'key_steps': [],
+            'missing_steps': [],
+            'error_candidates': ['analysis_unavailable'],
+        }
 
     @staticmethod
     def _decode_json_object(raw: str) -> dict:

@@ -58,3 +58,29 @@ def test_ocr_retries_once_when_first_result_is_incomplete():
     assert result['attempts'] == 2
     assert result['text'].endswith('证毕。')
     assert any('自动复核' in warning for warning in result['warnings'])
+
+
+def test_default_runner_reuses_spark_vl_client_for_ocr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from backend.practice.ocr import _default_runner
+
+    image_path = tmp_path / "answer.png"
+    image_path.write_bytes(b"prepared-png")
+    captured: dict[str, object] = {}
+
+    class FakeVisionClient:
+        def recognize_text(self, image_bytes: bytes, content_type: str, prompt: str) -> str:
+            captured.update(image_bytes=image_bytes, content_type=content_type, prompt=prompt)
+            return "\u8bc6\u522b\u7ed3\u679c"
+
+    monkeypatch.setattr("backend.vision.spark_vl.SparkVLClient", FakeVisionClient)
+
+    result = _default_runner(str(image_path), "OCR prompt", "ignored-model")
+
+    assert result == "\u8bc6\u522b\u7ed3\u679c"
+    assert captured == {
+        "image_bytes": b"prepared-png",
+        "content_type": "image/png",
+        "prompt": "OCR prompt",
+    }

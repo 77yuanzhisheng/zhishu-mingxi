@@ -123,6 +123,38 @@ def test_grade_resolves_question_bank_guide_repairs_json_and_persists(tmp_path, 
     assert json.loads(row['dimension_scores'])['key_reasoning_steps'] == 30
     assert json.loads(row['review_json'])['approved'] is True
 
+def test_grade_accepts_json_wrapped_in_model_explanation(tmp_path):
+    llm = ScriptedLLM([
+        "Model explanation follows.\n```json\n" + json.dumps(valid_analysis()) + "\n```",
+        "Scoring payload: " + json.dumps(valid_scoring()),
+        "Review payload: " + json.dumps(valid_review()),
+    ])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer', grading_mode='strict')
+    )
+
+    assert result.total_score == 85
+    assert result.attempts.model_dump() == {'analysis': 1, 'scoring': 1, 'review': 1}
+
+
+def test_grade_uses_auditable_analysis_fallback_after_empty_repair(tmp_path):
+    llm = ScriptedLLM(['', '', valid_scoring(), valid_review()])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer', grading_mode='strict')
+    )
+
+    assert result.total_score == 85
+    assert result.attempts.analysis == 2
+    analysis_text = llm.messages[2][1]['content'].split('analysis: ', 1)[1]
+    analysis_payload, _ = json.JSONDecoder().raw_decode(analysis_text)
+    assert analysis_payload == {
+        'key_steps': [],
+        'missing_steps': [],
+        'error_candidates': ['analysis_unavailable'],
+    }
+
 
 def test_grade_normalizes_unsupported_error_types_after_review(tmp_path):
     review = valid_review()

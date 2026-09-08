@@ -1043,6 +1043,7 @@ async function requestStreamingChat(payload, message) {
     const fallbackWriter = createTypewriter(message);
     fallbackWriter.enqueue(data.answer || "");
     await fallbackWriter.drain();
+    fallbackWriter.finalize(data.answer || "");
     return data;
   }
   let response = await fetch(`${RAG_API_BASE_URL}/chat/stream`, {
@@ -1061,6 +1062,7 @@ async function requestStreamingChat(payload, message) {
     const fallbackWriter = createTypewriter(message);
     fallbackWriter.enqueue(data.answer || "");
     await fallbackWriter.drain();
+    fallbackWriter.finalize(data.answer || "");
     return data;
   }
   if (!response.ok) {
@@ -1107,45 +1109,14 @@ async function requestStreamingChat(payload, message) {
   await writer.drain();
   if (!result) throw new Error("流式回答提前结束");
   result.answer = result.answer || streamedAnswer;
+  writer.finalize(result.answer);
   return result;
 }
 
 function createTypewriter(message) {
-  const pending = [];
-  const waiters = [];
-  let displayed = "";
-  let timer = null;
-
-  const resolveWaiters = () => {
-    while (waiters.length) waiters.shift()();
-  };
-  const tick = () => {
-    const character = pending.shift();
-    if (character === undefined) {
-      timer = null;
-      resolveWaiters();
-      return;
-    }
-    displayed += character;
-    updateStreamingMessage(message, displayed);
-    timer = setTimeout(tick, 12);
-  };
-
-  return {
-    enqueue(text) {
-      pending.push(...Array.from(String(text || "")));
-      if (!timer && pending.length) tick();
-    },
-    replace(text) {
-      pending.length = 0;
-      displayed = String(text || "");
-      updateStreamingMessage(message, displayed);
-    },
-    drain() {
-      if (!timer && !pending.length) return Promise.resolve();
-      return new Promise((resolve) => waiters.push(resolve));
-    },
-  };
+  return window.ChatStreamUtils.createTypewriter({
+    render: (text) => updateStreamingMessage(message, text),
+  });
 }
 
 function updateStreamingMessage(message, text) {

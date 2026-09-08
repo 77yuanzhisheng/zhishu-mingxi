@@ -221,3 +221,34 @@ def test_api_registers_vision_route() -> None:
 
     assert "from backend.vision.router import router as vision_router" in api_source
     assert "app.include_router(vision_router)" in api_source
+
+
+def test_recognize_text_uses_configured_vision_endpoint_and_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPARK_VL_MODEL", "qwen3-vl-32b")
+    monkeypatch.setenv("SPARK_VL_BASE_URL", "https://vision.example/v1")
+    monkeypatch.setenv("SPARK_VL_API_KEY", "vision-key")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "P \u2192 Q\nP\n\u6240\u4ee5 Q"}}]}
+
+    def fake_post(url: str, *, headers: dict[str, str], json: dict[str, object], timeout: object) -> FakeResponse:
+        captured.update(url=url, headers=headers, payload=json, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.vision.spark_vl.httpx.post", fake_post)
+
+    result = SparkVLClient().recognize_text(b"fake-png", "image/png", "OCR prompt")
+
+    assert result == "P \u2192 Q\nP\n\u6240\u4ee5 Q"
+    assert captured["url"] == "https://vision.example/v1/chat/completions"
+    assert captured["headers"] == {"Content-Type": "application/json", "Authorization": "Bearer vision-key"}
+    content = captured["payload"]["messages"][0]["content"]  # type: ignore[index]
+    assert content[0] == {"type": "text", "text": "OCR prompt"}
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
