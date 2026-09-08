@@ -4877,11 +4877,13 @@ function renderMarkdownBlocks(html) {
     output.push(`<li>${content}</li>`);
   };
 
-  lines.forEach((line) => {
+  lines.forEach((line, index) => {
     const trimmed = line.trim();
     if (!trimmed) {
       flushParagraph();
-      closeList();
+      const nextContentLine = lines.slice(index + 1).find((nextLine) => nextLine.trim());
+      const continuesOrderedList = listType === "ol" && /^\s*\d+[.)]\s+/.test(nextContentLine || "");
+      if (!continuesOrderedList) closeList();
       return;
     }
 

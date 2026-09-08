@@ -52,11 +52,20 @@ class ProofPlan:
 
 def detect_question_type(question: str) -> QuestionType:
     text = question.strip()
-    if re.search(r"证明|证毕|定理", text):
+    # Method questions ask how to judge a property; they are not proof tasks.
+    if text.startswith((
+        "\u5982\u4f55\u5224\u65ad",
+        "\u600e\u4e48\u5224\u65ad",
+        "\u600e\u6837\u5224\u65ad",
+        "\u4e3a\u4f55\u5224\u65ad",
+        "\u4e3a\u4ec0\u4e48\u5224\u65ad",
+    )):
+        return QuestionType.GENERAL
+    if re.search(r"\u8bc1\u660e|\u8bc1\u6bd5|\u5b9a\u7406", text):
         return QuestionType.PROOF
-    if re.search(r"推导|等价|化简|推出|蕴含|判断.*是否|说明理由", text):
+    if re.search(r"\u63a8\u5bfc|\u7b49\u4ef7|\u5316\u7b80|\u63a8\u51fa|\u8574\u542b|\u5224\u65ad.*\u662f\u5426|\u8bf4\u660e\u7406\u7531", text):
         return QuestionType.DERIVATION
-    if re.search(r"计算|求值|等于几|[0-9]+\s*[+\-*/]\s*[0-9]+", text):
+    if re.search(r"\u8ba1\u7b97|\u6c42\u503c|\u7b49\u4e8e\u51e0|[0-9]+\s*[+\-*/]\s*[0-9]+", text):
         return QuestionType.CALCULATION
     return QuestionType.GENERAL
 
@@ -65,22 +74,34 @@ def build_reasoning_prompt(question: str) -> ReasoningPrompt:
     question_type = detect_question_type(question)
     if question_type == QuestionType.GENERAL:
         return ReasoningPrompt(False, question_type, "")
-    return ReasoningPrompt(
-        True,
-        question_type,
-        "你是离散数学教学助手。回答证明题、推导题和计算题时，必须采用教材式符号推理结构，"
-        "不得只给结论或套用模板，不得跳过关键步骤。\n"
-        "输出格式必须包含以下小节：\n"
-        "1. 已知：列出题目给定条件、符号含义、全集或变量范围，以及需要证明或计算的目标。\n"
-        "2. 分析：说明将使用的定义、定理、等价变换或计算规则，并说明证明路线。\n"
-        "3. 推导：使用步骤编号逐步写出推理过程；每一步必须包含符号式和依据，格式为"
-        "“步骤n：符号式/中间结论；依据：所用定义、定理或等价规则”。\n"
-        "4. 自检：检查每一步是否由已知条件或已列规则推出，检查最终结论是否与题目目标一致。\n"
-        "5. 结论：明确回答题目目标。\n"
-        "6. 证毕：证明题和推导题以“证毕”结束。\n"
-        "要求：证明必须完整但精炼，优先控制在4到8个关键步骤，不展开与题目目标无关的内容；"
-        "如果提供了程序侧符号校验结果或符号证据，必须优先依据该证据组织证明，不要自行生成与证据冲突的公式或表格。",
-    )
+
+    if question_type == QuestionType.PROOF:
+        system_prompt = (
+            "\u4f60\u662f\u79bb\u6563\u6570\u5b66\u6559\u5b66\u52a9\u624b\u3002\u56de\u7b54\u8bc1\u660e\u9898\u65f6\uff0c\u5fc5\u987b\u91c7\u7528\u6e05\u6670\u3001\u7cbe\u70bc\u7684\u6559\u6750\u5f0f\u63a8\u7406\u7ed3\u6784\uff0c"
+            "\u4e0d\u5f97\u53ea\u7ed9\u7ed3\u8bba\uff0c\u4e5f\u4e0d\u5f97\u5957\u7528\u4e0e\u9898\u76ee\u65e0\u5173\u7684\u6a21\u677f\u3002\n"
+            "\u8f93\u51fa\u5e94\u5305\u542b\uff1a\n"
+            "1. \u5df2\u77e5\uff1a\u9898\u8bbe\u6761\u4ef6\u3001\u7b26\u53f7\u542b\u4e49\u4e0e\u5f85\u8bc1\u76ee\u6807\u3002\n"
+            "2. \u5206\u6790\uff1a\u8bf4\u660e\u6240\u7528\u5b9a\u4e49\u3001\u5b9a\u7406\u6216\u8bc1\u660e\u8def\u7ebf\u3002\n"
+            "3. \u63a8\u5bfc\uff1a\u6309\u6b65\u9aa4\u5199\u51fa\u5173\u952e\u63a8\u7406\uff1b\u6bcf\u4e00\u6b65\u7ed9\u51fa\u516c\u5f0f\u6216\u4e2d\u95f4\u7ed3\u8bba\u53ca\u4f9d\u636e\u3002\n"
+            "4. \u7ed3\u8bba\uff1a\u660e\u786e\u56de\u7b54\u5f85\u8bc1\u76ee\u6807\u3002\n"
+            "5. \u8bc1\u6bd5\uff1a\u4ec5\u8bc1\u660e\u9898\u4ee5\u201c\u8bc1\u6bd5\u201d\u7ed3\u675f\u3002\n"
+            "\u8bc1\u660e\u5e94\u5b8c\u6574\u4f46\u7cbe\u70bc\uff0c\u4f18\u5148\u63a7\u5236\u5728 4\u20148 \u4e2a\u5173\u952e\u6b65\u9aa4\u5185\uff1b"
+            "\u82e5\u7ed9\u51fa\u7a0b\u5e8f\u4fa7\u7b26\u53f7\u6821\u9a8c\u7ed3\u679c\uff0c\u5fc5\u987b\u4f18\u5148\u4f9d\u636e\u8be5\u8bc1\u636e\u7ec4\u7ec7\u63a8\u7406\u3002"
+            "\u63a8\u5bfc\u90e8\u5206\u4f7f\u7528\u6b65\u9aa4\u7f16\u53f7\uff0c\u6bcf\u4e00\u6b65\u5305\u542b\u7b26\u53f7\u5f0f\u4e0e\u4f9d\u636e\uff0c\u5e76\u5728\u7ed3\u675f\u524d\u8fdb\u884c\u81ea\u68c0\u3002"
+        )
+    elif question_type == QuestionType.DERIVATION:
+        system_prompt = (
+            "\u4f60\u662f\u79bb\u6563\u6570\u5b66\u6559\u5b66\u52a9\u624b\u3002\u56de\u7b54\u63a8\u5bfc\u3001\u7b49\u4ef7\u53d8\u5f62\u6216\u5177\u4f53\u5224\u5b9a\u9898\u65f6\uff0c\u5148\u76f4\u63a5\u7ed9\u51fa\u5224\u65ad\u6216\u7ed3\u679c\uff0c"
+            "\u518d\u5217\u51fa\u5fc5\u8981\u7684\u5b9a\u4e49\u3001\u516c\u5f0f\u548c\u5173\u952e\u6b65\u9aa4\u3002\n"
+            "\u4f7f\u7528\u7b80\u77ed\u7684\u5c0f\u6807\u9898\u6216\u8fde\u7eed\u6b65\u9aa4\uff0c\u907f\u514d\u673a\u68b0\u5957\u7528\u8bc1\u660e\u9898\u56fa\u5b9a\u6a21\u677f\uff1b"
+            "\u7ed3\u5c3e\u76f4\u63a5\u7ed9\u51fa\u7ed3\u8bba\u3002\u6bcf\u4e00\u6b65\u6d89\u53ca\u7b26\u53f7\u53d8\u5f62\u65f6\u8bf4\u660e\u4f9d\u636e\u3002"
+        )
+    else:
+        system_prompt = (
+            "\u4f60\u662f\u79bb\u6563\u6570\u5b66\u6559\u5b66\u52a9\u624b\u3002\u56de\u7b54\u8ba1\u7b97\u9898\u65f6\uff0c\u76f4\u63a5\u5217\u51fa\u5fc5\u8981\u8ba1\u7b97\u8fc7\u7a0b\u548c\u6700\u7ec8\u7ed3\u679c\u3002\n"
+            "\u907f\u514d\u8bc1\u660e\u9898\u6a21\u677f\uff0c\u4e0d\u4f7f\u7528\u201c\u8bc1\u6bd5\u201d\uff1b\u6b65\u9aa4\u5e94\u7b80\u6d01\uff0c\u5e76\u6807\u660e\u5173\u952e\u516c\u5f0f\u6216\u8ba1\u7b97\u89c4\u5219\u3002"
+        )
+    return ReasoningPrompt(True, question_type, system_prompt)
 
 
 def merge_reasoning_prompt(base_system_prompt: str, question: str) -> str:
@@ -100,7 +121,7 @@ def build_proof_plan(question: str) -> ProofPlan:
         return ProofPlan(False, "none", "", [], [], symbolic_check)
 
     required_sections = ["已知", "分析", "推导", "自检", "结论"]
-    if question_type in {QuestionType.PROOF, QuestionType.DERIVATION}:
+    if question_type == QuestionType.PROOF:
         required_sections.append("证毕")
 
     return ProofPlan(
