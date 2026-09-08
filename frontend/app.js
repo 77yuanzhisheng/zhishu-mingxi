@@ -11,11 +11,20 @@ function resolveApiBaseUrl() {
   const params = new URLSearchParams(window.location.search);
   const requested = params.get("api")?.trim();
   let selected = "";
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isLocalPage = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(hostname);
   if (requested && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(requested)) {
     selected = requested.replace(/\/$/, "");
     localStorage.setItem("dm_api_base_url", selected);
   }
-  return (selected || localStorage.getItem("dm_api_base_url") || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const stored = localStorage.getItem("dm_api_base_url") || "";
+  if (selected || (stored && (isLocalPage || !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(stored)))) {
+    return (selected || stored).replace(/\/$/, "");
+  }
+  if (!isLocalPage && /^https?:$/.test(window.location.protocol) && window.location.origin) {
+    return window.location.origin.replace(/\/$/, "");
+  }
+  return "http://127.0.0.1:8000";
 }
 
 const tabRoutes = {
