@@ -14,7 +14,7 @@ function resolveApiBaseUrl() {
     selected = requested.replace(/\/$/, "");
     localStorage.setItem("dm_api_base_url", selected);
   }
-  return (selected || localStorage.getItem("dm_api_base_url") || "window.location.origin").replace(/\/$/, "");
+  return (selected || localStorage.getItem("dm_api_base_url") || window.location.origin).replace(/\/$/, "");
 }
 
 const tabRoutes = {
