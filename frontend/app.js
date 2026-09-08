@@ -2552,12 +2552,21 @@ function handleTeacherGraphClick(data) {
     const kind = data.mappingKind || "";
     const nodeId = platformNodeId || "";
     const name = nodeId ? findNodeName(nodeId) : data.name;
+
+    // 构建description: 优先使用知识点内容,否则显示章节来源
+    let description = "";
+    if (data.knowledgeContent) {
+      description = `${data.knowledgeContent}\n\n来源：${data.chapter || "教材图谱"}`;
+    } else {
+      description = `（来自教材图谱）${data.name}\n章节：${data.chapter || ""}`;
+    }
+
     const pseudo = {
       id: `teacher-kp-${data.kpId || data.name}`,
       nodeId,
       name,
       type: nodeId ? "item" : "module",
-      description: `（来自教材图谱）${data.name}\n章节：${data.chapter || ""}`,
+      description: description,
       text: "",
     };
     graphState.selectedNode = pseudo;
@@ -2629,15 +2638,29 @@ async function renderFusionGraph() {
 
   container.querySelectorAll("[data-fusion-chapter]").forEach((button) => {
     button.addEventListener("click", () => {
-      graphState.fusionChapterIndex = Number(button.dataset.fusionChapter);
+      const chapterIndex = Number(button.dataset.fusionChapter);
+      graphState.fusionChapterIndex = chapterIndex;
       graphState.fusionSectionIndex = 0;
       renderFusionGraph();
+
+      // 跳转到该章第一节
+      const chapter = chapters[chapterIndex];
+      if (chapter && chapter.sections && chapter.sections[0]) {
+        openTextbookSection(chapter.sections[0].id);
+      }
     });
   });
   container.querySelectorAll("[data-fusion-section]").forEach((button) => {
     button.addEventListener("click", () => {
-      graphState.fusionSectionIndex = Number(button.dataset.fusionSection);
+      const sectionIndex = Number(button.dataset.fusionSection);
+      graphState.fusionSectionIndex = sectionIndex;
       renderFusionGraph();
+
+      // 跳转到该小节
+      const section = sections[sectionIndex];
+      if (section && section.id) {
+        openTextbookSection(section.id);
+      }
     });
   });
   container.querySelectorAll("[data-fusion-kp]").forEach((button) => {
@@ -2646,12 +2669,18 @@ async function renderFusionGraph() {
       if (!item) return;
       container.querySelectorAll(".fusion-kp-card").forEach((node) => node.classList.remove("selected"));
       button.classList.add("selected");
+
+      // 格式化知识点的要点列表
+      const pointsList = (item.points || []).map(pt => `• ${pt.title}`).join('\n');
+      const knowledgeContent = pointsList || item.title || "暂无详细内容";
+
       handleTeacherGraphClick({
         name: item.title || item.id,
         kpId: item.id,
         platform: item.platform_node_id || "",
         mappingKind: item.mapping_kind || "",
         chapter: `${chapter.title || ""} · ${section.title || ""}`,
+        knowledgeContent: knowledgeContent, // 传递知识点内容
       });
       document.querySelector("#graph .graph-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -5631,18 +5660,64 @@ window.__graphDebug = {
 
 // 教材融合：全局函数，从知识图谱跳转教材指定知识点
 window.openTextbookKP = function (kpId) {
+  console.log('[主平台] openTextbookKP 调用:', kpId);
+
   // 切换到教材标签页
   const textbookTab = document.querySelector('[data-tab="textbook"]');
   if (textbookTab) {
     textbookTab.click();
   }
 
-  // 向 textbook iframe 发送导航消息
-  const textbookFrame = document.getElementById('textbookFrame');
-  if (textbookFrame && textbookFrame.contentWindow) {
-    textbookFrame.contentWindow.postMessage(
-      { type: 'navigate', kpId: kpId },
-      window.location.origin
-    );
+  // 发送导航消息的函数
+  const sendNavigateMessage = () => {
+    const textbookFrame = document.getElementById('textbookFrame');
+    if (textbookFrame && textbookFrame.contentWindow) {
+      console.log('[主平台] 发送 postMessage:', {type: 'navigate', kpId});
+      textbookFrame.contentWindow.postMessage(
+        { type: 'navigate', kpId: kpId },
+        window.location.origin
+      );
+    } else {
+      console.warn('[主平台] textbook iframe 未找到或未加载完成');
+    }
+  };
+
+  // 立即尝试发送
+  sendNavigateMessage();
+
+  // 延迟重试,确保iframe已加载完成
+  setTimeout(sendNavigateMessage, 300);
+  setTimeout(sendNavigateMessage, 800);
+};
+
+// 教材融合：跳转到指定章节
+window.openTextbookSection = function (secId) {
+  console.log('[主平台] openTextbookSection 调用:', secId);
+
+  // 切换到教材标签页
+  const textbookTab = document.querySelector('[data-tab="textbook"]');
+  if (textbookTab) {
+    textbookTab.click();
   }
+
+  // 发送导航消息
+  const sendNavigateMessage = () => {
+    const textbookFrame = document.getElementById('textbookFrame');
+    if (textbookFrame && textbookFrame.contentWindow) {
+      console.log('[主平台] 发送 postMessage:', {type: 'navigate', sectionId: secId});
+      textbookFrame.contentWindow.postMessage(
+        { type: 'navigate', sectionId: secId },
+        window.location.origin
+      );
+    } else {
+      console.warn('[主平台] textbook iframe 未找到或未加载完成');
+    }
+  };
+
+  // 立即尝试发送
+  sendNavigateMessage();
+
+  // 延迟重试,确保iframe已加载完成
+  setTimeout(sendNavigateMessage, 300);
+  setTimeout(sendNavigateMessage, 800);
 };
