@@ -28,7 +28,6 @@ const tabRoutes = {
   classes: "/classes",
   exam: "/exam",
   lessonPrep: "/lesson-prep",
-  compliance: "/compliance",
   tools: "/tools",
   textbook: "/textbook",
 };
@@ -44,7 +43,6 @@ const titles = {
   classes: "班级管理",
   exam: "在线考试",
   lessonPrep: "教师智能备课",
-  compliance: "赛事平台合规材料",
   textbook: "Web 交互式教材 2.0",
 };
 
@@ -91,7 +89,6 @@ const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
 const companionState = { kind: "today", loading: false };
 const lessonPrepState = { loading: false, resultText: "" };
-const complianceState = { evidence: {}, recordings: {}, objectUrls: {} };
 
 const practiceState = {
   filter: "all",
@@ -618,12 +615,6 @@ document.getElementById("prepChapterSelect").addEventListener("change", syncPrep
 document.getElementById("prepSectionSelect").addEventListener("change", updatePrepDocumentMeta);
 document.getElementById("generateLessonPrepButton").addEventListener("click", generateLessonPrep);
 document.getElementById("copyLessonPrepButton").addEventListener("click", copyLessonPrep);
-document.querySelectorAll("[data-evidence-file]").forEach((input) => {
-  input.addEventListener("change", () => handleEvidenceFile(input.dataset.evidenceFile, input.files?.[0]));
-});
-document.querySelectorAll("[data-recording-file]").forEach((input) => {
-  input.addEventListener("change", () => handleRecordingFile(input.dataset.recordingFile, input.files?.[0]));
-});
 document.getElementById("joinClassForm").addEventListener("submit", joinClass);
 document.getElementById("createClassForm").addEventListener("submit", createClass);
 document.getElementById("shareRequestForm").addEventListener("submit", requestLearningShare);
@@ -670,8 +661,6 @@ async function bootstrapApp() {
       name: demoUserId === 1003 ? "张鹤轩" : `演示用户 ${demoUserId}`,
       role: demoParams.get("demoRole") === "teacher" ? "teacher" : "student",
     };
-    const complianceNotice = document.getElementById("complianceDemoNotice");
-    if (complianceNotice) complianceNotice.hidden = false;
     await startAuthenticatedApp();
     // 演示/截图模式：?ask=问题 自动在 RAG 问答中发送（真实问答，用于截图）
     const askQuestion = demoParams.get("ask");
@@ -903,7 +892,6 @@ function switchTab(tabName, updateHistory = true) {
   if (tabName === "classes") loadClassWorkspace();
   if (tabName === "exam") loadExamWorkspace();
   if (tabName === "lessonPrep") loadLessonPrepWorkspace();
-  if (tabName === "compliance") updateComplianceProgress();
 }
 
 function getTabFromLocation() {
@@ -2687,6 +2675,35 @@ function showGraphNodeDetail(node) {
   linksEl.hidden = false;
   linksEl.innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
   renderGraphNodeLearning(node);
+
+  // 教材融合：查询节点对应的教材章节，有映射时显示"📖 查看教材"按钮
+  if (node.nodeId) {
+    loadTextbookMappingForNode(node.nodeId, tasksEl);
+  }
+}
+
+async function loadTextbookMappingForNode(nodeId, container) {
+  try {
+    const response = await fetch(`${KB_API_BASE_URL}/kb/node-textbook-mapping?node_id=${encodeURIComponent(nodeId)}`);
+    const mapping = await response.json();
+
+    if (mapping.found) {
+      const buttonHtml = `
+        <button class="textbook-link-button" onclick="openTextbookKP('${mapping.kpId}')">
+          📖 查看教材: ${escapeHtml(mapping.chapterTitle)}(第${escapeHtml(mapping.section)}节)
+        </button>
+      `;
+      container.innerHTML = buttonHtml;
+      container.hidden = false;
+    } else {
+      container.hidden = true;
+      container.innerHTML = "";
+    }
+  } catch (error) {
+    console.warn("查询教材映射失败:", error);
+    container.hidden = true;
+    container.innerHTML = "";
+  }
 }
 
 async function loadGraphNodeKnowledge(node) {
@@ -4021,69 +4038,6 @@ async function copyLessonPrep() {
   const button = document.getElementById("copyLessonPrepButton");
   button.textContent = "已复制";
   setTimeout(() => { button.textContent = "复制内容"; }, 1200);
-}
-
-function replaceComplianceObjectUrl(key, file) {
-  if (complianceState.objectUrls[key]) URL.revokeObjectURL(complianceState.objectUrls[key]);
-  const url = URL.createObjectURL(file);
-  complianceState.objectUrls[key] = url;
-  return url;
-}
-
-function handleEvidenceFile(kind, file) {
-  if (!kind || !file) return;
-  const item = document.querySelector(`[data-evidence-item="${kind}"]`);
-  const preview = document.querySelector(`[data-evidence-preview="${kind}"]`);
-  if (!item || !preview) return;
-  if (!file.type.startsWith("image/")) {
-    preview.innerHTML = "<span>请选择图片文件</span>";
-    return;
-  }
-  const url = replaceComplianceObjectUrl(`image-${kind}`, file);
-  complianceState.evidence[kind] = file.name;
-  preview.innerHTML = "";
-  const image = document.createElement("img");
-  image.src = url;
-  image.alt = `${item.querySelector("strong")?.textContent || "平台"}截图预览`;
-  preview.appendChild(image);
-  item.classList.add("ready");
-  item.querySelector("[data-evidence-status]").textContent = "已就绪";
-  updateComplianceProgress();
-}
-
-function handleRecordingFile(kind, file) {
-  if (!kind || !file) return;
-  const name = document.querySelector(`[data-recording-name="${kind}"]`);
-  const status = document.querySelector(`[data-recording-status="${kind}"]`);
-  const preview = document.getElementById("recordingPreview");
-  if (!file.type.startsWith("video/")) {
-    name.textContent = "请选择视频文件";
-    return;
-  }
-  const url = replaceComplianceObjectUrl(`video-${kind}`, file);
-  complianceState.recordings[kind] = file.name;
-  name.textContent = file.name;
-  status.textContent = "已就绪";
-  status.closest("label").classList.add("ready");
-  preview.hidden = false;
-  preview.innerHTML = "";
-  const video = document.createElement("video");
-  video.src = url;
-  video.controls = true;
-  video.preload = "metadata";
-  preview.appendChild(video);
-  updateComplianceProgress();
-}
-
-function updateComplianceProgress() {
-  const target = document.getElementById("complianceProgress");
-  if (!target) return;
-  const progress = window.Team4Utils.countReadyMaterials(
-    complianceState.evidence,
-    complianceState.recordings,
-  );
-  target.textContent = `${progress.ready} / ${progress.total}`;
-  target.parentElement.classList.toggle("complete", progress.ready === progress.total);
 }
 
 function updateRoleInterface() {
@@ -5556,4 +5510,22 @@ window.__graphDebug = {
     else throw new Error(`node not found: ${id}`);
   },
   history: () => graphState.nodeHistory.map((n) => ({ id: n.id, name: n.name })),
+};
+
+// 教材融合：全局函数，从知识图谱跳转教材指定知识点
+window.openTextbookKP = function (kpId) {
+  // 切换到教材标签页
+  const textbookTab = document.querySelector('[data-tab="textbook"]');
+  if (textbookTab) {
+    textbookTab.click();
+  }
+
+  // 向 textbook iframe 发送导航消息
+  const textbookFrame = document.getElementById('textbookFrame');
+  if (textbookFrame && textbookFrame.contentWindow) {
+    textbookFrame.contentWindow.postMessage(
+      { type: 'navigate', kpId: kpId },
+      window.location.origin
+    );
+  }
 };

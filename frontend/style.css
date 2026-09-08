@@ -1438,6 +1438,35 @@ button:hover,
   align-content: start;
 }
 
+/* 教材链接按钮样式 */
+.textbook-link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #157f6f 0%, #1a9980 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(21, 127, 111, 0.25);
+  margin-top: 12px;
+}
+
+.textbook-link-button:hover {
+  background: linear-gradient(135deg, #1a9980 0%, #20b899 100%);
+  box-shadow: 0 4px 12px rgba(21, 127, 111, 0.35);
+  transform: translateY(-1px);
+}
+
+.textbook-link-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(21, 127, 111, 0.3);
+}
+
 .work-panel,
 .insight-panel {
   border: 1px solid var(--line);

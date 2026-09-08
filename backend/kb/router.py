@@ -1528,3 +1528,61 @@ async def delete_teacher_node(node_id: str):
     tmp.write_text(json.dumps(kg, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(_WEB_RESOURCE_DIR / "teacher_kg.json")
     return {"ok": True, "deleted": node_id}
+
+
+# ==================== 平台节点 → 教材章节反向映射端点 ====================
+
+@router.get("/node-textbook-mapping", summary="根据平台 node_id 查询对应教材章节")
+async def get_node_textbook_mapping(node_id: str = Query(..., description="平台知识点 node_id")):
+    """
+    根据平台知识图谱的 node_id 反向查询对应的教材章节信息。
+
+    返回格式:
+    - kpId: 教材知识点ID (K010101)
+    - chapterId: 章节ID (C01, S0101)
+    - chapterTitle: 章节标题
+    - section: 章节号 (1.1)
+    - chapter: 完整章节路径 (第1章 集合 > 1.1 集合的基本概念)
+    """
+    try:
+        # 读取映射文件
+        mapping_data = json.load(open(_WEB_RESOURCE_DIR / "mapping_v1.json", encoding="utf-8"))
+        mapping = mapping_data.get("mapping", {})
+
+        # 读取教材结构
+        kg = json.load(open(_WEB_RESOURCE_DIR / "teacher_kg.json", encoding="utf-8"))
+
+        # 反向查找: platform_node_id → kpId
+        kp_id = None
+        for kp, info in mapping.items():
+            if info.get("platform_node_id") == node_id:
+                kp_id = kp
+                break
+
+        if not kp_id:
+            return {"found": False, "node_id": node_id}
+
+        # 在教材结构中查找该 kpId 的章节信息
+        for ch_idx, ch in enumerate(kg.get("chapters", []), 1):
+            for sec_idx, sec in enumerate(ch.get("sections", []), 1):
+                for kp in sec.get("kps", []):
+                    if kp.get("id") == kp_id:
+                        return {
+                            "found": True,
+                            "node_id": node_id,
+                            "kpId": kp_id,
+                            "kpTitle": kp.get("title", ""),
+                            "chapterId": ch.get("id"),
+                            "chapterTitle": ch.get("title", ""),
+                            "sectionId": sec.get("id"),
+                            "sectionTitle": sec.get("title", ""),
+                            "section": f"{ch_idx}.{sec_idx}",
+                            "chapter": f"第{ch_idx}章 {ch.get('title')} > {ch_idx}.{sec_idx} {sec.get('title')}",
+                        }
+
+        # 找到映射但未在教材结构中
+        return {"found": False, "node_id": node_id, "kpId": kp_id, "error": "映射存在但未在教材结构中找到"}
+
+    except Exception as exc:
+        logger.error(f"查询教材映射失败: {exc}")
+        return {"found": False, "node_id": node_id, "error": str(exc)}
