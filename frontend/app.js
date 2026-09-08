@@ -2676,10 +2676,41 @@ function showGraphNodeDetail(node) {
   linksEl.innerHTML = `<p class="muted-line">正在加载知识库内容…</p>`;
   renderGraphNodeLearning(node);
 
-  // 教材融合：查询节点对应的教材章节，有映射时显示"📖 查看教材"按钮
-  if (node.nodeId) {
+  // 教材融合：显示教材跳转按钮
+  // 场景1: 融合导航点击教材知识点 → node.id 包含 "teacher-kp-" 且有真实 kpId
+  // 场景2: 平台知识图谱点击 → 通过 node.nodeId 反查教材映射
+  const teacherKpMatch = node.id?.match(/^teacher-kp-(.+)$/);
+  if (teacherKpMatch) {
+    // 融合导航来源：直接从 node.id 提取 kpId
+    const kpId = teacherKpMatch[1];
+    if (kpId && kpId.match(/^[KCS]\d+$/)) {
+      // 有效的教材ID格式（K010101/C01/S0101）
+      renderTextbookButton(tasksEl, kpId, node.description || "");
+    } else {
+      tasksEl.hidden = true;
+      tasksEl.innerHTML = "";
+    }
+  } else if (node.nodeId) {
+    // 平台图谱来源：查询映射
     loadTextbookMappingForNode(node.nodeId, tasksEl);
+  } else {
+    tasksEl.hidden = true;
+    tasksEl.innerHTML = "";
   }
+}
+
+function renderTextbookButton(container, kpId, description) {
+  // 从描述中提取章节信息（融合导航格式："章节：第X章 xxx > X.X xxx"）
+  const chapterMatch = description.match(/章节：(.+?)(?:\n|$)/);
+  const chapterInfo = chapterMatch ? chapterMatch[1] : "教材详细讲解";
+
+  const buttonHtml = `
+    <button class="textbook-link-button" onclick="openTextbookKP('${kpId}')">
+      📖 打开教材详细讲解: ${escapeHtml(chapterInfo)}
+    </button>
+  `;
+  container.innerHTML = buttonHtml;
+  container.hidden = false;
 }
 
 async function loadTextbookMappingForNode(nodeId, container) {
@@ -3844,6 +3875,92 @@ function renderDashboard(report = learningState.report) {
     ? `<span>推荐知识点</span><strong>${escapeHtml(nextName || nextNodeId)}</strong><small>${escapeHtml(nextNodeId)}</small>`
     : `<span>继续上次学习</span><strong>${escapeHtml(learningState.currentNodeName)}</strong><small>${escapeHtml(learningState.currentNodeId)}</small>`;
   renderActivityChart(recentEvents);
+
+  // 教材融合：薄弱知识点推荐教材章节
+  if (weak > 0 && report?.weak) {
+    renderDashboardTextbookRecommendations(report.weak);
+  } else {
+    document.getElementById("dashboardTextbookCard").hidden = true;
+  }
+}
+
+async function renderDashboardTextbookRecommendations(weakNodes) {
+  const container = document.getElementById("dashboardTextbookRecommendations");
+  const card = document.getElementById("dashboardTextbookCard");
+
+  if (!weakNodes || weakNodes.length === 0) {
+    card.hidden = true;
+    return;
+  }
+
+  // 查询所有薄弱节点的教材映射
+  const mappingPromises = weakNodes.slice(0, 10).map(async (nodeItem) => {
+    const nodeId = typeof nodeItem === "string" ? nodeItem : nodeItem.node_id;
+    if (!nodeId) return null;
+
+    try {
+      const response = await fetch(`${KB_API_BASE_URL}/kb/node-textbook-mapping?node_id=${encodeURIComponent(nodeId)}`);
+      const mapping = await response.json();
+      if (mapping.found) {
+        return {
+          nodeId,
+          nodeName: typeof nodeItem === "string" ? findNodeName(nodeId) : nodeItem.node_name || nodeItem.name || findNodeName(nodeId),
+          ...mapping,
+        };
+      }
+    } catch (error) {
+      console.warn(`查询 ${nodeId} 教材映射失败:`, error);
+    }
+    return null;
+  });
+
+  const mappings = (await Promise.all(mappingPromises)).filter(Boolean);
+
+  if (mappings.length === 0) {
+    card.hidden = true;
+    return;
+  }
+
+  // 按章节聚合薄弱知识点
+  const chapterMap = new Map();
+  mappings.forEach((mapping) => {
+    const key = `${mapping.chapterId}`;
+    if (!chapterMap.has(key)) {
+      chapterMap.set(key, {
+        chapterId: mapping.chapterId,
+        chapterTitle: mapping.chapterTitle,
+        section: mapping.section,
+        sectionTitle: mapping.sectionTitle,
+        kpId: mapping.kpId,
+        nodes: [],
+      });
+    }
+    chapterMap.get(key).nodes.push({
+      nodeId: mapping.nodeId,
+      nodeName: mapping.nodeName,
+      kpTitle: mapping.kpTitle,
+    });
+  });
+
+  // 按薄弱知识点数量排序，取前3个章节
+  const topChapters = Array.from(chapterMap.values())
+    .sort((a, b) => b.nodes.length - a.nodes.length)
+    .slice(0, 3);
+
+  const recommendationsHtml = topChapters.map((chapter) => `
+    <div class="textbook-recommendation-item">
+      <button class="textbook-recommendation-button" onclick="openTextbookKP('${chapter.kpId}')">
+        <div class="textbook-rec-header">
+          <strong>${escapeHtml(chapter.chapterTitle)}</strong>
+          <span class="textbook-rec-badge">${chapter.nodes.length} 个薄弱点</span>
+        </div>
+        <small>第${escapeHtml(chapter.section)}节 · ${escapeHtml(chapter.sectionTitle)}</small>
+      </button>
+    </div>
+  `).join("");
+
+  container.innerHTML = recommendationsHtml;
+  card.hidden = false;
 }
 
 function renderActivityChart(events) {

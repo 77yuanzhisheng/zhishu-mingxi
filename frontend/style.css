@@ -2356,6 +2356,66 @@ th {
 .next-step-box strong { font-size: 17px; }
 .compact-card { padding: 12px; }
 
+/* Dashboard 教材推荐样式 */
+.textbook-recommendation-item {
+  margin-top: 8px;
+}
+
+.textbook-recommendation-button {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #f8fafb 0%, #ffffff 100%);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.textbook-recommendation-button:hover {
+  background: linear-gradient(135deg, #157f6f 0%, #1a9980 100%);
+  border-color: #157f6f;
+  box-shadow: 0 2px 8px rgba(21, 127, 111, 0.2);
+  transform: translateY(-1px);
+}
+
+.textbook-recommendation-button:hover strong,
+.textbook-recommendation-button:hover small {
+  color: white;
+}
+
+.textbook-rec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.textbook-rec-header strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.textbook-rec-badge {
+  padding: 2px 8px;
+  background: rgba(21, 127, 111, 0.1);
+  color: #157f6f;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.textbook-recommendation-button:hover .textbook-rec-badge {
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+}
+
+.textbook-recommendation-button small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .extended-tools-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; }
 .tool-selector { display: grid; align-content: start; gap: 7px; padding: 10px; border: 1px solid var(--line); background: #ffffff; }
 .extended-tool-button { min-height: 44px; color: var(--text); text-align: left; background: #f3f7fa; }
