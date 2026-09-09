@@ -5,7 +5,6 @@ const KB_API_BASE_URL = API_BASE_URL;
 const DEFAULT_USER_ID = 1;
 const DEFAULT_NODE_ID = "rel_02";
 const AUTH_TOKEN_KEY = "dm_auth_token";
-const AGENT_CHAT_PATH = "/api/agent/chat";
 
 function resolveApiBaseUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -81,7 +80,7 @@ const gradingState = {
   ocrFile: null, submitting: false, proofSteps: [], explanationSteps: [], explanationIndex: 0,
 };
 const chatState = { sessionId: null };
-const agentState = { available: null, channel: "pending", fallbackReason: "" };
+const agentState = { channel: "pending", fallbackReason: "" };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
@@ -956,39 +955,9 @@ async function handleAsk() {
   }
 }
 
-async function requestAgentChat(payload) {
-  const response = await postJson(AGENT_CHAT_PATH, payload);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(readApiError(data, response.status === 404 ? "智能体接口尚未接通" : "智能体暂时不可用"));
-    error.status = response.status;
-    throw error;
-  }
-  const answer = window.Team4Utils.normalizeAgentAnswer(data);
-  if (!answer) throw new Error("智能体没有返回有效回答");
-  agentState.available = true;
-  return { ...data, answer };
-}
-
 async function requestPreferredAssistant(payload, message = null) {
-  let fallbackReason = "智能体接口尚未接通";
-  if (agentState.available !== false) {
-    try {
-      const data = await requestAgentChat(payload);
-      const channel = window.Team4Utils.resolveAssistantChannel({ ...data, channel: data.channel || "agent" });
-      updateAssistantChannelUI(channel);
-      if (message) {
-        const writer = createTypewriter(message);
-        writer.enqueue(data.answer);
-        await writer.drain();
-      }
-      return { ...data, assistantChannel: channel };
-    } catch (error) {
-      fallbackReason = formatAgentFallbackReason(error);
-      if (error.status === 404 || error.status === 501) agentState.available = false;
-    }
-  }
-
+  // /chat is the only supported entry point. The backend calls Xingchen Agent
+  // first and returns the actual provider/fallback_reason for the UI.
   const data = await requestBasicAssistant(payload);
   if (message) {
     const writer = createTypewriter(message);
@@ -996,17 +965,9 @@ async function requestPreferredAssistant(payload, message = null) {
     await writer.drain();
     writer.finalize(data.answer);
   }
-  const channel = window.Team4Utils.resolveAssistantChannel(data, fallbackReason);
+  const channel = window.Team4Utils.resolveAssistantChannel(data);
   updateAssistantChannelUI(channel);
   return { ...data, assistantChannel: channel };
-}
-
-function formatAgentFallbackReason(error) {
-  if (error?.status === 404 || error?.status === 501) return "智能体接口尚未接通";
-  if (error?.status === 429) return "智能体请求繁忙，已切换基础模型";
-  if (Number(error?.status) >= 500) return "智能体暂时不可用，已切换基础模型";
-  if (/timeout|timed out|超时/i.test(error?.message || "")) return "智能体响应超时，已切换基础模型";
-  return error?.message || "智能体暂时不可用";
 }
 
 async function requestBasicAssistant(payload) {
