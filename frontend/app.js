@@ -989,9 +989,13 @@ async function requestPreferredAssistant(payload, message = null) {
     }
   }
 
-  const data = message
-    ? await requestStreamingChat(payload, message)
-    : await requestBasicAssistant(payload);
+  const data = await requestBasicAssistant(payload);
+  if (message) {
+    const writer = createTypewriter(message);
+    writer.enqueue(data.answer);
+    await writer.drain();
+    writer.finalize(data.answer);
+  }
   const channel = window.Team4Utils.resolveAssistantChannel(data, fallbackReason);
   updateAssistantChannelUI(channel);
   return { ...data, assistantChannel: channel };
