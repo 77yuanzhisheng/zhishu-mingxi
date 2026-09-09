@@ -970,7 +970,6 @@ async function requestPreferredAssistant(payload, message = null) {
     const writer = createTypewriter(message);
     writer.enqueue(data.answer);
     await writer.drain();
-    writer.finalize(data.answer);
   }
   const channel = window.Team4Utils.resolveAssistantChannel(data);
   updateAssistantChannelUI(channel);
