@@ -36,6 +36,42 @@ class InvalidGradingOutputError(RuntimeError):
     pass
 
 
+def _escape_invalid_json_backslashes(text: str) -> str:
+    """Preserve valid JSON escapes while quoting bare model-produced backslashes."""
+    escaped: list[str] = []
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character != '\\':
+            escaped.append(character)
+            index += 1
+            continue
+        if index + 1 >= len(text):
+            escaped.append('\\\\')
+            index += 1
+            continue
+        next_character = text[index + 1]
+        if next_character in {'"', '\\', '/'}:
+            escaped.append(text[index:index + 2])
+            index += 2
+            continue
+        if next_character in {'b', 'f', 'n', 'r', 't'} and (
+            index + 2 >= len(text) or not text[index + 2].isalpha()
+        ):
+            escaped.append(text[index:index + 2])
+            index += 2
+            continue
+        if next_character == 'u' and len(text[index + 2:index + 6]) == 4 and all(
+            character in '0123456789abcdefABCDEF' for character in text[index + 2:index + 6]
+        ):
+            escaped.append(text[index:index + 6])
+            index += 6
+            continue
+        escaped.append('\\\\')
+        index += 1
+    return ''.join(escaped)
+
+
 class GradingService:
     def __init__(self, llm: LLMClient | None = None, database_path: str | Path | None = None) -> None:
         self.llm = llm or OpenAICompatibleLLM()
@@ -136,11 +172,15 @@ class GradingService:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError:
-            start = text.find('{')
-            end = text.rfind('}')
-            if start < 0 or end <= start:
-                raise
-            payload = json.loads(text[start:end + 1])
+            escaped_text = _escape_invalid_json_backslashes(text)
+            try:
+                payload = json.loads(escaped_text)
+            except json.JSONDecodeError:
+                start = text.find('{')
+                end = text.rfind('}')
+                if start < 0 or end <= start:
+                    raise
+                payload = json.loads(_escape_invalid_json_backslashes(text[start:end + 1]))
         if not isinstance(payload, dict):
             raise ValueError('JSON root must be an object')
         return payload

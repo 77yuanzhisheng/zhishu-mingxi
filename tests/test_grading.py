@@ -176,6 +176,17 @@ def test_fast_mode_grades_in_one_call_and_accepts_fenced_json(tmp_path):
     assert result.audit.prompt_version == 'grading-v2.0'
 
 
+
+def test_decode_json_object_accepts_unescaped_latex_backslashes():
+    payload = valid_fast_review()
+    payload['feedback'] = r'Use \subset and \forall with correct notation.'
+    invalid_json = json.dumps(payload).replace(r'\\subset', r'\subset').replace(r'\\forall', r'\forall')
+
+    decoded = GradingService._decode_json_object(invalid_json)
+
+    assert decoded['feedback'] == r'Use \subset and \forall with correct notation.'
+
+
 def test_lenient_mode_only_calibrates_harmless_notation_error(tmp_path):
     review = valid_fast_review()
     review['error_types'] = ['notation_error']
