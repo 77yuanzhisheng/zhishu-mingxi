@@ -9,12 +9,19 @@ const AUTH_TOKEN_KEY = "dm_auth_token";
 function resolveApiBaseUrl() {
   const params = new URLSearchParams(window.location.search);
   const requested = params.get("api")?.trim();
+  const localApiPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
   let selected = "";
-  if (requested && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(requested)) {
+  if (requested && localApiPattern.test(requested)) {
     selected = requested.replace(/\/$/, "");
     localStorage.setItem("dm_api_base_url", selected);
   }
-  return (selected || localStorage.getItem("dm_api_base_url") || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const stored = localStorage.getItem("dm_api_base_url")?.trim() || "";
+  const savedLocalOverride = localApiPattern.test(stored) ? stored : "";
+  const isHttpPage = window.location.protocol === "http:" || window.location.protocol === "https:";
+  const sameOriginApi = isHttpPage && window.location.origin && window.location.origin !== "null"
+    ? window.location.origin
+    : "http://127.0.0.1:8000";
+  return (selected || savedLocalOverride || sameOriginApi).replace(/\/$/, "");
 }
 
 const tabRoutes = {
