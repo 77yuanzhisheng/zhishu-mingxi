@@ -30,9 +30,19 @@ class OCRInputError(ValueError):
 
 
 def _default_runner(image_path: str, prompt: str, model: str) -> str:
-    from scripts.vision import describe
+    """Run OCR through the configured Spark vision client.
 
-    return describe(image_path, prompt, model=model)
+    The injected runner contract retains ``model`` for tests, but production
+    model selection is owned by the shared ``SPARK_VL_MODEL`` configuration.
+    """
+    del model
+    from backend.vision.spark_vl import SparkVLClient
+
+    return SparkVLClient().recognize_text(
+        Path(image_path).read_bytes(),
+        "image/png",
+        prompt,
+    )
 
 
 def decode_image_base64(value: str) -> bytes:

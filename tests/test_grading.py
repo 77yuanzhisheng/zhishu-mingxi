@@ -223,3 +223,17 @@ def test_grade_endpoint_maps_unavailable_model_to_503(tmp_path):
 
     assert response.status_code == 503
     assert response.json()['detail'] == 'model unavailable'
+
+def test_grade_accepts_json_wrapped_in_model_explanation(tmp_path):
+    llm = ScriptedLLM([
+        "Model explanation follows.\n```json\n" + json.dumps(valid_analysis()) + "\n```",
+        "Scoring payload: " + json.dumps(valid_scoring()),
+        "Review payload: " + json.dumps(valid_review()),
+    ])
+
+    result = GradingService(llm=llm, database_path=tmp_path / "grading.db").grade(
+        GradeRequest(question="Question", reference_answer="Reference", student_answer="Answer", grading_mode="strict")
+    )
+
+    assert result.total_score == 85
+    assert result.attempts.model_dump() == {"analysis": 1, "scoring": 1, "review": 1}

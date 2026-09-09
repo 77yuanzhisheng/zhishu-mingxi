@@ -1,5 +1,6 @@
 from backend.reasoning.service import (
     QuestionType,
+    build_proof_plan,
     build_reasoning_prompt,
     detect_question_type,
     evaluate_reasoning_answer,
@@ -19,6 +20,25 @@ def test_detects_proof_derivation_and_calculation_questions():
 
 def test_detects_general_question_without_enhancement():
     assert detect_question_type("什么是集合？") == QuestionType.GENERAL
+
+
+def test_detects_method_question_as_general_question_without_proof_template():
+    question = "\u5982\u4f55\u5224\u65ad\u4e00\u4e2a\u5173\u7cfb\u662f\u5426\u5177\u6709\u4f20\u9012\u6027\uff1f"
+
+    assert detect_question_type(question) == QuestionType.GENERAL
+    prompt = build_reasoning_prompt(question)
+    assert prompt.enabled is False
+    assert prompt.system_prompt == ""
+
+
+def test_method_and_derivation_prompt_does_not_force_proof_closing():
+    prompt = build_reasoning_prompt("\u5224\u65ad\u5173\u7cfbR\u662f\u5426\u4f20\u9012\uff0c\u5e76\u8bf4\u660e\u7406\u7531")
+
+    assert prompt.question_type == QuestionType.DERIVATION
+    assert "\u8bc1\u6bd5" not in prompt.system_prompt
+
+    plan = build_proof_plan("\u5224\u65ad\u5173\u7cfbR\u662f\u5426\u4f20\u9012\uff0c\u5e76\u8bf4\u660e\u7406\u7531")
+    assert "\u8bc1\u6bd5" not in plan.required_sections
 
 
 def test_builds_textbook_style_prompt_for_proof_question():

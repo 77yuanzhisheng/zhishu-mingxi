@@ -54,6 +54,8 @@ def detect_question_type(question: str) -> QuestionType:
     text = question.strip()
     if re.search(r"证明|证毕|定理", text):
         return QuestionType.PROOF
+    if re.search(r"\u5982\u4f55\u5224\u65ad|\u600e\u4e48\u5224\u65ad|\u600e\u6837\u5224\u65ad|\u4e3a\u4ec0\u4e48\u5224\u65ad", text):
+        return QuestionType.GENERAL
     if re.search(r"推导|等价|化简|推出|蕴含|判断.*是否|说明理由", text):
         return QuestionType.DERIVATION
     if re.search(r"计算|求值|等于几|[0-9]+\s*[+\-*/]\s*[0-9]+", text):
@@ -68,6 +70,7 @@ def build_reasoning_prompt(question: str) -> ReasoningPrompt:
     return ReasoningPrompt(
         True,
         question_type,
+        (
         "你是离散数学教学助手。回答证明题、推导题和计算题时，必须采用教材式符号推理结构，"
         "不得只给结论或套用模板，不得跳过关键步骤。\n"
         "输出格式必须包含以下小节：\n"
@@ -77,9 +80,9 @@ def build_reasoning_prompt(question: str) -> ReasoningPrompt:
         "“步骤n：符号式/中间结论；依据：所用定义、定理或等价规则”。\n"
         "4. 自检：检查每一步是否由已知条件或已列规则推出，检查最终结论是否与题目目标一致。\n"
         "5. 结论：明确回答题目目标。\n"
-        "6. 证毕：证明题和推导题以“证毕”结束。\n"
-        "要求：证明必须完整但精炼，优先控制在4到8个关键步骤，不展开与题目目标无关的内容；"
-        "如果提供了程序侧符号校验结果或符号证据，必须优先依据该证据组织证明，不要自行生成与证据冲突的公式或表格。",
+            + ("6. \u8bc1\u6bd5\uff1a\u8bc1\u660e\u9898\u4ee5\u2018\u8bc1\u6bd5\u2019\u7ed3\u675f\u3002\n" if question_type == QuestionType.PROOF else "")
+            + "要求：证明必须完整但精炼，优先控制在4到8个关键步骤，不展开与题目目标无关的内容；"
+        "如果提供了程序侧符号校验结果或符号证据，必须优先依据该证据组织证明，不要自行生成与证据冲突的公式或表格。"),
     )
 
 
@@ -100,7 +103,7 @@ def build_proof_plan(question: str) -> ProofPlan:
         return ProofPlan(False, "none", "", [], [], symbolic_check)
 
     required_sections = ["已知", "分析", "推导", "自检", "结论"]
-    if question_type in {QuestionType.PROOF, QuestionType.DERIVATION}:
+    if question_type == QuestionType.PROOF:
         required_sections.append("证毕")
 
     return ProofPlan(

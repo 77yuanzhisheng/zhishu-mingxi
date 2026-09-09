@@ -84,13 +84,36 @@ class SparkVLClient:
             # may contain credentials or other sensitive request information.
             raise VisionProviderError("视觉模型调用失败") from exc
 
+    def recognize_text(self, image_bytes: bytes, content_type: str, prompt: str) -> str:
+        """Recognize image text using the existing configured vision provider."""
+        self.ensure_available()
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=self._payload(image_bytes, content_type, prompt=prompt),
+                timeout=httpx.Timeout(self.timeout, connect=min(self.timeout, 20.0)),
+            )
+            response.raise_for_status()
+            return self._coerce_text_content(response.json()["choices"][0]["message"]["content"])
+        except LLMUnavailableError:
+            raise
+        except VisionResponseParseError:
+            raise
+        except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+            raise VisionResponseParseError("\u89c6\u89c9\u6a21\u578b\u8fd4\u56de\u6587\u672c\u65e0\u6548") from exc
+        except httpx.HTTPError as exc:
+            raise VisionProviderError("\u89c6\u89c9\u6a21\u578b\u8bf7\u6c42\u5931\u8d25") from exc
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key and self.api_key != "your_api_key_here":
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _payload(self, image_bytes: bytes, content_type: str) -> dict[str, Any]:
+    def _payload(
+        self, image_bytes: bytes, content_type: str, *, prompt: str = VISION_PROMPT
+    ) -> dict[str, Any]:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return {
             "model": self.model,
@@ -98,7 +121,7 @@ class SparkVLClient:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": VISION_PROMPT},
+                        {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -111,6 +134,18 @@ class SparkVLClient:
             "temperature": 0.0,
             "max_tokens": self.max_tokens,
         }
+
+    @staticmethod
+    def _coerce_text_content(content: Any) -> str:
+        if isinstance(content, list):
+            content = "".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise VisionResponseParseError("\u89c6\u89c9\u6a21\u578b\u8fd4\u56de\u4e3a\u7a7a")
+        return content.strip()
 
     @staticmethod
     def _parse_content(content: Any) -> VisionParseResponse:
