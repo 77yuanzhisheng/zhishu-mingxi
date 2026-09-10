@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -54,7 +57,17 @@ _KB_DISCLAIMER = re.compile(
     r")"
     r"(?:[。！？!?\s]*(?:不过|但是|但|虽然如此|话虽如此|没关系)?[，,、\s]*"
     r"(?:我)?(?:根据已有知识|基于已有知识|根据现有知识|直接)?[^，,、：:。！？!?\n]{0,10}?"
-    r"(?:补充|解答|回答|说明|给出答案|直接回答|直接说明|告诉你)(?:一下|下)?[^，,、：:。！？!?\n]{0,8}?[：:，,、\s]*)?"
+    r"(?:补充|解答|回答|说明|给出答案|直接回答|直接说明|告诉你)(?:一下|下)?"
+    r"(?:[^，,、：:。！？!?\n]{0,12}[：:,，、;；\s]|[：:,，、;；\s]?))?"
+)
+
+
+# 开头若残留“无法依据知识库内容为你解释……”“知识库中没有相关内容”这类整句，一并删除。
+_KB_RESIDUAL_KB_SENTENCE = re.compile(
+    r"^(?=[^。！？!?\n]{0,80}[。！？!?])"
+    r"(?=[^。！？!?\n]{0,80}(?:知识库|资料库))"
+    r"(?=[^。！？!?\n]{0,80}(?:未检索到|没有找到|没找到|未找到|未命中|未收录|无相关|不包含|未覆盖|未提及|未整理|中没有|中未|无法|不足))"
+    r"[^。！？!?\n]{0,80}[。！？!?]\s*"
 )
 
 
@@ -75,9 +88,58 @@ def strip_knowledge_base_disclaimer(answer: str) -> str:
     text = str(answer or "").lstrip("\ufeff").strip()
     if not text:
         return text
-    text = _KB_DISCLAIMER.sub("", text, count=1)
-    text = _KB_LEADING_FILLER.sub("", text.lstrip("。！？!?，,、;；:： \n"), count=1)
-    return text.lstrip("，,、;；:： \n").strip()
+    for _ in range(3):
+        before = text
+        text = _KB_DISCLAIMER.sub("", text, count=1).lstrip("。！？!?，,、;；:： \n")
+        text = _KB_RESIDUAL_KB_SENTENCE.sub("", text, count=1).lstrip("。！？!?，,、;；:： \n")
+        text = _KB_LEADING_FILLER.sub("", text, count=1).lstrip("，,、;；:： \n")
+        if text == before:
+            break
+    return text.strip()
+
+
+_AGENT_ANSWER_RULES = (
+    "【回答要求】\n"
+    "1. 直接给出答案正文，不要反问，也不要问“是否需要我讲解/是否继续”这类确认问题。\n"
+    "2. 不要提及检索过程或知识库命中情况，不要写“知识库中没找到/未检索到/不过我可以补充”这类话术。\n"
+    "3. 数学符号使用规范写法（∀ ∃ ∧ ∨ → ⊆ ∪ ∩）或 LaTeX 行内格式，步骤清晰、结论明确。"
+)
+
+
+logger = logging.getLogger(__name__)
+
+# Agent 只回“知识库中未检索到”这类状态声明时，带更强指令重试一次
+_AGENT_RETRY_SUFFIX = (
+    "\n\n【再次提醒】上一轮没有给出答案，只回复了检索状态。"
+    "请直接输出完整的解答正文，不要提及知识库或检索过程。"
+)
+
+# 本地 RAG 兜底超时（秒）：向量检索异常时不能拖死整个服务
+try:
+    _RAG_TIMEOUT_SECONDS = max(1.0, float(os.getenv("CHAT_RAG_TIMEOUT_SECONDS", "8")))
+except (TypeError, ValueError):
+    _RAG_TIMEOUT_SECONDS = 8.0
+
+
+def _run_with_timeout(func: Callable[[], Any], timeout: float, default: Any) -> Any:
+    """在守护线程里执行 func；超时返回 default，避免阻塞请求线程与健康检查。"""
+    box: list[tuple[str, Any]] = []
+
+    def _target() -> None:
+        try:
+            box.append(("ok", func()))
+        except BaseException as exc:  # noqa: BLE001 - 原样抛给调用方处理
+            box.append(("error", exc))
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if not box:
+        return default
+    kind, value = box[0]
+    if kind == "error":
+        raise value
+    return value
 
 
 class ChatService:
@@ -96,6 +158,16 @@ class ChatService:
         self.learning_context_provider = (
             learning_context_provider or build_agent_learning_context
         )
+
+    def _search_references(self, query: str) -> tuple[list[Any], str]:
+        """带超时的 RAG 检索；检索卡住时按“无引用”处理，保证回答链路可用。"""
+        try:
+            return _run_with_timeout(
+                lambda: self.rag.search(query), _RAG_TIMEOUT_SECONDS, ([], "timeout")
+            )
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.warning("RAG 检索失败，本轮不注入引用: %s", exc)
+            return [], "unavailable"
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         session_id, topic_switch_hint, prepared = self._prepare_session(request)
@@ -129,6 +201,23 @@ class ChatService:
                 )
             except XingchenAgentUnavailableError as exc:
                 fallback_reason = exc.fallback_reason
+            else:
+                answer = strip_knowledge_base_disclaimer(answer)
+                if len(answer) < 2:
+                    # Agent 只回了“知识库中未检索到”这类状态声明：带更强指令重试一次
+                    try:
+                        answer = self.agent.generate(
+                            user_id=request.user_id,
+                            session_id=session_id,
+                            user_input=agent_input + _AGENT_RETRY_SUFFIX,
+                            history=agent_history,
+                        )
+                    except XingchenAgentUnavailableError as exc:
+                        fallback_reason = exc.fallback_reason
+                    else:
+                        answer = strip_knowledge_base_disclaimer(answer)
+                        if len(answer) < 2:
+                            fallback_reason = "agent_empty_answer"
 
         if fallback_reason is None:
             provider = "agent"
@@ -136,7 +225,9 @@ class ChatService:
             rag_status = "not_used_agent"
         else:
             provider = "fallback"
-            references, rag_status = self.rag.search(request.message.strip())
+            references, rag_status = self._search_references(
+                request.message.strip()
+            )
             answer = self._generate_fallback(request, prepared.messages, references)
             # 降级路径保留符号保真与自然演绎校验，不合格时带修复提示重生成
             fidelity = check_symbol_fidelity(answer, request.message.strip())
@@ -147,8 +238,10 @@ class ChatService:
                 answer = self._generate_fallback(
                     request, prepared.messages, references, repair=(fidelity, validity)
                 )
+            answer = strip_knowledge_base_disclaimer(answer)
 
-        answer = strip_knowledge_base_disclaimer(answer)
+        if not answer.strip():
+            answer = "抱歉，我暂时没能生成有效回答，请换个说法再问一次。"
 
         self.repository.add_message(session_id, "assistant", answer, request.node_ids)
 
@@ -176,7 +269,9 @@ class ChatService:
         """流式回答。星辰 Agent 通道暂不支持流式，走 Qwen3+RAG 降级路径并如实标注。"""
 
         session_id, topic_switch_hint, prepared = self._prepare_session(request)
-        references, rag_status = self.rag.search(request.message.strip())
+        references, rag_status = self._search_references(
+            request.message.strip()
+        )
         yield {
             "type": "meta",
             "session_id": session_id,
@@ -318,6 +413,7 @@ class ChatService:
         if learning_context:
             sections.append(learning_context)
         sections.append(f"【学生问题】\n{question}")
+        sections.append(_AGENT_ANSWER_RULES)
         return "\n\n".join(sections)
 
     @staticmethod

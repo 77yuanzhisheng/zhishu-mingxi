@@ -298,6 +298,8 @@ def test_payload_history_and_compact_learning_context(tmp_path):
     assert "近期重复追问：pl_02_02" in agent_input
     assert "命题逻辑已判定做题正确率：67%（3题）" in agent_input
     assert agent_input.count(question) == 1
+    assert "【回答要求】" in agent_input
+    assert "不要反问" in agent_input
     assert captured[1]["headers"]["Authorization"] == (
         "Bearer fake-api-key:fake-api-secret"
     )
@@ -316,6 +318,8 @@ def test_agent_still_works_without_learning_evidence(tmp_path):
     agent_input = agent.calls[0]["user_input"]
     assert "【当前学生学情】" not in agent_input
     assert "你好，介绍一下你自己" in agent_input
+    assert "【回答要求】" in agent_input
+    assert "不要反问" in agent_input
 
 
 def test_parser_accepts_official_json_and_sse_chunks():
@@ -449,6 +453,9 @@ def test_strip_knowledge_base_disclaimer_removes_leading_small_talk():
         "当前知识库未检索到足够依据。\n\n不过，我可以为你补充四色定理的相关知识：任何平面图都可四着色。",
         "知识库中没有找到对应依据，我可以直接说明：并集由所有属于A或属于B的元素组成。",
         "。  不过，我可以为你简要介绍四色定理的核心内容：任何平面图都可四着色。",
+        "当前知识库中未检索到足够依据。\n\n不过，我可以为你补充四色定理的基础信息：任何平面图都可四着色。",
+        "当前知识库中未检索到足够依据，无法依据知识库内容为你解释四色定理。\n\n不过，我可以为你补充四色定理的基础信息：任何平面图都可四着色。",
+        "当前知识库中未收录相关内容。\n\n好的，我来为你讲解鸽巢原理的核心结论：把 n+1 个物体放进 n 个抽屉必有重叠。",
     ]
     for sample in samples:
         cleaned = strip_knowledge_base_disclaimer(sample)
@@ -466,6 +473,19 @@ def test_strip_knowledge_base_disclaimer_removes_leading_small_talk():
         "定义：若 A⊆B 且 B⊆A，则 A=B。",
     ):
         assert strip_knowledge_base_disclaimer(plain) == plain
+
+    assert strip_knowledge_base_disclaimer("当前知识库中未检索到足够依据。") == ""
+    assert (
+        strip_knowledge_base_disclaimer(
+            "当前知识库中未检索到足够依据，无法依据知识库内容为你解释四色定理。\n\n"
+            "不过，我可以为你补充四色定理的基础信息：任何平面图都可四着色。"
+        )
+        == "任何平面图都可四着色。"
+    )
+    assert (
+        strip_knowledge_base_disclaimer("离散数学知识库包含19章73节内容。它覆盖了全部考点。")
+        == "离散数学知识库包含19章73节内容。它覆盖了全部考点。"
+    )
 
 
 def test_strip_knowledge_base_disclaimer_keeps_normal_answer_untouched():
@@ -485,3 +505,49 @@ def test_agent_answer_has_disclaimer_stripped_before_return(tmp_path):
     assert response.answer == "并集定义为 A∪B={x|x∈A或x∈B}。"
     stored = service.repository.get_messages(response.session_id)
     assert stored[-1]["content"] == response.answer
+
+
+def test_agent_retrieval_only_answer_falls_back_to_local_generation(tmp_path):
+    database_path = tmp_path / "agent-empty-answer.db"
+    user_id = create_user("空回答学生", database_path=database_path)
+    agent = RecordingAgent(answer="当前知识库中未检索到足够依据。")
+    service, llm, rag = build_service(database_path, agent)
+
+    response = service.chat(ChatRequest(user_id=user_id, message="帮我讲讲布尔代数。"))
+
+    assert response.provider == "fallback"
+    assert response.fallback_reason == "agent_empty_answer"
+    assert len(agent.calls) == 2  # 先重试一次 Agent，再降级
+    assert response.answer == "Qwen3 fallback answer"
+    assert len(llm.calls) == 1
+    assert rag.calls == ["帮我讲讲布尔代数。"]
+
+
+class SequencedAgent(RecordingAgent):
+    def __init__(self, answers):
+        super().__init__(answer=answers[0])
+        self._answers = list(answers)
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        index = min(len(self.calls) - 1, len(self._answers) - 1)
+        return self._answers[index]
+
+
+def test_agent_retrieval_only_answer_is_retried_and_kept_on_agent(tmp_path):
+    database_path = tmp_path / "agent-retry.db"
+    user_id = create_user("重试学生", database_path=database_path)
+    agent = SequencedAgent([
+        "当前知识库中未检索到足够依据。",
+        "四色定理的核心内容：任何平面图都可四着色。",
+    ])
+    service, llm, rag = build_service(database_path, agent)
+
+    response = service.chat(ChatRequest(user_id=user_id, message="请解释一下四色定理。"))
+
+    assert response.provider == "agent"
+    assert response.fallback_reason is None
+    assert response.answer == "四色定理的核心内容：任何平面图都可四着色。"
+    assert len(agent.calls) == 2
+    assert llm.calls == []
+    assert rag.calls == []
