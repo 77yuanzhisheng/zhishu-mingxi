@@ -89,6 +89,18 @@
     };
   }
 
+  function navigateTextbookWindow(contentWindow, { sectionId, kpId } = {}) {
+    if (!contentWindow || typeof contentWindow.renderSection !== "function") return false;
+    let targetSection = String(sectionId || "").trim();
+    if (!targetSection && kpId && typeof contentWindow.kpMeta === "function") {
+      const meta = contentWindow.kpMeta(kpId);
+      targetSection = String(meta?.sec?.id || "").trim();
+    }
+    if (!targetSection) return false;
+    contentWindow.renderSection(targetSection, kpId || undefined);
+    return true;
+  }
+
   function countReadyMaterials(evidence, recordings) {
     const screenshotCount = Object.values(evidence || {}).filter(Boolean).length;
     const recordingCount = Object.values(recordings || {}).filter(Boolean).length;
@@ -102,5 +114,6 @@
     normalizeAgentAnswer,
     resolveAssistantChannel,
     countReadyMaterials,
+    navigateTextbookWindow,
   };
 });

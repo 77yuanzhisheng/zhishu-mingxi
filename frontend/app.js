@@ -5667,65 +5667,37 @@ window.__graphDebug = {
 };
 
 // 教材融合：全局函数，从知识图谱跳转教材指定知识点
-window.openTextbookKP = function (kpId) {
-  console.log('[主平台] openTextbookKP 调用:', kpId);
+function navigateTextbookFrame({ sectionId, kpId } = {}) {
+  const textbookFrame = document.getElementById("textbookFrame");
+  const contentWindow = textbookFrame?.contentWindow;
+  if (!contentWindow) return false;
+  const directNavigated = window.Team4Utils?.navigateTextbookWindow(contentWindow, { sectionId, kpId }) || false;
+  if (directNavigated) return true;
+  contentWindow.postMessage(
+    { type: "navigate", ...(sectionId ? { sectionId } : {}), ...(kpId ? { kpId } : {}) },
+    window.location.origin,
+  );
+  return false;
+}
 
-  // 切换到教材标签页
+function navigateTextbookWithRetry(target) {
   const textbookTab = document.querySelector('[data-tab="textbook"]');
-  if (textbookTab) {
-    textbookTab.click();
-  }
-
-  // 发送导航消息的函数
-  const sendNavigateMessage = () => {
-    const textbookFrame = document.getElementById('textbookFrame');
-    if (textbookFrame && textbookFrame.contentWindow) {
-      console.log('[主平台] 发送 postMessage:', {type: 'navigate', kpId});
-      textbookFrame.contentWindow.postMessage(
-        { type: 'navigate', kpId: kpId },
-        window.location.origin
-      );
-    } else {
-      console.warn('[主平台] textbook iframe 未找到或未加载完成');
-    }
+  if (textbookTab) textbookTab.click();
+  let navigated = false;
+  const attempt = () => {
+    if (navigated) return;
+    navigated = navigateTextbookFrame(target);
   };
+  attempt();
+  setTimeout(attempt, 300);
+  setTimeout(attempt, 800);
+  setTimeout(attempt, 1500);
+}
 
-  // 立即尝试发送
-  sendNavigateMessage();
-
-  // 延迟重试,确保iframe已加载完成
-  setTimeout(sendNavigateMessage, 300);
-  setTimeout(sendNavigateMessage, 800);
+window.openTextbookKP = function (kpId) {
+  navigateTextbookWithRetry({ kpId });
 };
 
-// 教材融合：跳转到指定章节
 window.openTextbookSection = function (secId) {
-  console.log('[主平台] openTextbookSection 调用:', secId);
-
-  // 切换到教材标签页
-  const textbookTab = document.querySelector('[data-tab="textbook"]');
-  if (textbookTab) {
-    textbookTab.click();
-  }
-
-  // 发送导航消息
-  const sendNavigateMessage = () => {
-    const textbookFrame = document.getElementById('textbookFrame');
-    if (textbookFrame && textbookFrame.contentWindow) {
-      console.log('[主平台] 发送 postMessage:', {type: 'navigate', sectionId: secId});
-      textbookFrame.contentWindow.postMessage(
-        { type: 'navigate', sectionId: secId },
-        window.location.origin
-      );
-    } else {
-      console.warn('[主平台] textbook iframe 未找到或未加载完成');
-    }
-  };
-
-  // 立即尝试发送
-  sendNavigateMessage();
-
-  // 延迟重试,确保iframe已加载完成
-  setTimeout(sendNavigateMessage, 300);
-  setTimeout(sendNavigateMessage, 800);
+  navigateTextbookWithRetry({ sectionId: secId });
 };

@@ -42,3 +42,15 @@ assert.deepStrictEqual(
 );
 
 console.log("team4-utils tests passed");
+
+
+const navCalls = [];
+const textbookWindow = {
+  kpMeta: (kpId) => ({ sec: { id: kpId === 'K010101' ? 'S0101' : 'S9999' } }),
+  renderSection: (...args) => navCalls.push(args),
+};
+assert.strictEqual(utils.navigateTextbookWindow({}, { sectionId: 'S0101' }), false);
+assert.strictEqual(utils.navigateTextbookWindow(textbookWindow, { sectionId: 'S0102' }), true);
+assert.deepStrictEqual(navCalls.shift(), ['S0102', undefined]);
+assert.strictEqual(utils.navigateTextbookWindow(textbookWindow, { kpId: 'K010101' }), true);
+assert.deepStrictEqual(navCalls.shift(), ['S0101', 'K010101']);
