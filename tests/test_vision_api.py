@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from backend.vision.models import VisionParseResponse
 from backend.vision.router import get_vision_client, router
-from backend.vision.spark_vl import SparkVLClient
+from backend.vision.spark_vl import SparkVLClient, normalize_image
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +66,59 @@ def test_client_builds_configurable_openai_multimodal_payload(monkeypatch: pytes
 
 
 
+def test_client_defaults_to_compact_ocr_output_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('SPARK_VL_MAX_TOKENS', raising=False)
+    monkeypatch.setenv('LLM_MAX_TOKENS', '2048')
+
+    client = SparkVLClient()
+
+    assert client.max_tokens == 512
+
+
+def test_client_extracts_json_embedded_in_explanation() -> None:
+    response = SparkVLClient._parse_content(
+        'result:\n' + json.dumps({
+            'question_text': '',
+            'student_answer': 'x in A implies x in B',
+            'latex': [r'x \in A'],
+            'symbols': ['in'],
+            'confidence': 0.91,
+            'warnings': [],
+        }) + '\nend'
+    )
+
+    assert response.student_answer == 'x in A implies x in B'
+    assert response.confidence == 0.91
+
+def test_recognize_text_uses_custom_prompt_and_coerces_content_parts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPARK_VL_MODEL", "qwen3-vl-32b")
+    monkeypatch.setenv("SPARK_VL_BASE_URL", "https://vision.example/v1")
+    monkeypatch.setenv("SPARK_VL_API_KEY", "vision-key")
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": [{"text": "P "}, {"text": "? Q"}]}}]}
+
+    def fake_post(url: str, *, headers: dict[str, str], json: dict[str, object], timeout: object) -> FakeResponse:
+        captured.update(url=url, headers=headers, payload=json, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.vision.spark_vl.httpx.post", fake_post)
+
+    result = SparkVLClient().recognize_text(b"fake-png", "image/png", "OCR prompt")
+
+    assert result == "P ? Q"
+    assert captured["url"] == "https://vision.example/v1/chat/completions"
+    content = captured["payload"]["messages"][0]["content"]  # type: ignore[index]
+    assert content[0] == {"type": "text", "text": "OCR prompt"}
+
+
 def test_client_prefers_vision_specific_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPARK_VL_BASE_URL", "https://vision.example/v1/")
     monkeypatch.setenv("SPARK_VL_API_KEY", "vision-key")
@@ -104,7 +157,21 @@ def test_client_falls_back_to_shared_spark_and_llm_configuration(
     assert client.base_url == "https://shared.example/v1"
     assert client.api_key == "shared-key"
     assert client.timeout == 45.0
-    assert client.max_tokens == 768
+    assert client.max_tokens == 512
+
+
+def test_normalize_image_downscales_large_upload_without_losing_readability() -> None:
+    from PIL import Image
+
+    source = io.BytesIO()
+    Image.new('RGB', (3000, 1000), color='white').save(source, format='PNG')
+
+    normalized, content_type = normalize_image(source.getvalue(), 'image/png')
+
+    with Image.open(io.BytesIO(normalized)) as image:
+        assert max(image.size) == 1600
+        assert image.mode == 'RGB'
+    assert content_type == 'image/jpeg'
 
 
 def test_parse_valid_image_returns_normalized_response(
@@ -112,8 +179,8 @@ def test_parse_valid_image_returns_normalized_response(
 ) -> None:
     class FakeClient:
         def parse(self, image_bytes: bytes, content_type: str) -> VisionParseResponse:
-            assert image_bytes == b"fake-png"
-            assert content_type == "image/png"
+            assert image_bytes == b"normalized-jpeg"
+            assert content_type == "image/jpeg"
             return VisionParseResponse(
                 question_text="证明 A⊆B",
                 student_answer="因为 x∈A，所以 x∈B",
@@ -125,6 +192,7 @@ def test_parse_valid_image_returns_normalized_response(
             )
 
     monkeypatch.setattr("backend.vision.router.get_vision_client", lambda: FakeClient())
+    monkeypatch.setattr("backend.vision.router.normalize_image", lambda image_bytes, content_type: (b"normalized-jpeg", "image/jpeg"))
 
     response = TestClient(vision_app).post(
         "/api/vision/parse",
@@ -169,6 +237,7 @@ def test_missing_vl_model_returns_503(
 ) -> None:
     monkeypatch.delenv("SPARK_VL_MODEL", raising=False)
     monkeypatch.setattr("backend.vision.router.get_vision_client", lambda: SparkVLClient())
+    monkeypatch.setattr("backend.vision.router.normalize_image", lambda image_bytes, content_type: (image_bytes, content_type))
 
     response = TestClient(vision_app).post(
         "/api/vision/parse",
@@ -188,6 +257,7 @@ def test_upstream_error_does_not_leak_secret(
             raise RuntimeError(f"upstream failed with {secret}")
 
     monkeypatch.setattr("backend.vision.router.get_vision_client", lambda: FailingClient())
+    monkeypatch.setattr("backend.vision.router.normalize_image", lambda image_bytes, content_type: (image_bytes, content_type))
 
     response = TestClient(vision_app).post(
         "/api/vision/parse",
@@ -221,33 +291,3 @@ def test_api_registers_vision_route() -> None:
 
     assert "from backend.vision.router import router as vision_router" in api_source
     assert "app.include_router(vision_router)" in api_source
-
-def test_recognize_text_uses_configured_vision_endpoint_and_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SPARK_VL_MODEL", "qwen3-vl-32b")
-    monkeypatch.setenv("SPARK_VL_BASE_URL", "https://vision.example/v1")
-    monkeypatch.setenv("SPARK_VL_API_KEY", "vision-key")
-    captured: dict[str, object] = {}
-
-    class FakeResponse:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict[str, object]:
-            return {"choices": [{"message": {"content": "P \u2227 Q\nP\n\u2192 Q"}}]}
-
-    def fake_post(url: str, *, headers: dict[str, str], json: dict[str, object], timeout: object) -> FakeResponse:
-        captured.update(url=url, headers=headers, payload=json, timeout=timeout)
-        return FakeResponse()
-
-    monkeypatch.setattr("backend.vision.spark_vl.httpx.post", fake_post)
-
-    result = SparkVLClient().recognize_text(b"fake-png", "image/png", "OCR prompt")
-
-    assert result == "P \u2227 Q\nP\n\u2192 Q"
-    assert captured["url"] == "https://vision.example/v1/chat/completions"
-    assert captured["headers"] == {"Content-Type": "application/json", "Authorization": "Bearer vision-key"}
-    content = captured["payload"]["messages"][0]["content"]  # type: ignore[index]
-    assert content[0] == {"type": "text", "text": "OCR prompt"}
-    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")

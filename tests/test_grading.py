@@ -13,6 +13,7 @@ from backend.grading.prompts import repair_messages
 from backend.grading.router import get_grading_service, router
 from backend.grading.service import GradingService, InvalidGradingOutputError
 from backend.learning.database import connection_scope
+from backend.shared.json_extract import extract_json_object
 
 
 class ScriptedLLM:
@@ -124,6 +125,24 @@ def test_grade_resolves_question_bank_guide_repairs_json_and_persists(tmp_path, 
     assert json.loads(row['review_json'])['approved'] is True
 
 
+def test_grade_uses_auditable_analysis_fallback_after_empty_repair(tmp_path):
+    llm = ScriptedLLM(['', '', valid_scoring(), valid_review()])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer', grading_mode='strict')
+    )
+
+    assert result.total_score == 85
+    assert result.attempts.analysis == 2
+    content = llm.messages[2][1]['content']
+    analysis_text = content.split('analysis: ', 1)[1]
+    assert extract_json_object(analysis_text) == {
+        'key_steps': [],
+        'missing_steps': [],
+        'error_candidates': ['analysis_unavailable'],
+    }
+
+
 def test_grade_normalizes_unsupported_error_types_after_review(tmp_path):
     review = valid_review()
     review['error_types'] = ['calculation_error', 'jump_step']
@@ -175,6 +194,21 @@ def test_fast_mode_grades_in_one_call_and_accepts_fenced_json(tmp_path):
     assert result.audit.grading_mode == 'fast'
     assert result.audit.prompt_version == 'grading-v2.0'
 
+
+
+def test_fast_grading_repair_prompt_preserves_full_contract(tmp_path):
+    invalid = valid_fast_review()
+    invalid.pop('approved')
+    llm = ScriptedLLM([invalid, valid_fast_review()])
+
+    result = GradingService(llm=llm, database_path=tmp_path / 'grading.db').grade(
+        GradeRequest(question='Question', reference_answer='Reference', student_answer='Answer')
+    )
+
+    assert result.total_score == 85
+    assert result.attempts.model_dump() == {'analysis': 0, 'scoring': 2, 'review': 0}
+    assert 'approved:true' in llm.messages[1][1]['content']
+    assert 'analysis:{key_steps:[string],missing_steps:[string],error_candidates:[string]}' in llm.messages[1][1]['content']
 
 
 def test_decode_json_object_accepts_unescaped_latex_backslashes():

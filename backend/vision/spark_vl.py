@@ -8,21 +8,26 @@ provided by configuration or a future provider adapter.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
-import re
 import time
 from typing import Any
 
 import httpx
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import ValidationError
 
 from backend.chat.exceptions import LLMUnavailableError
+from backend.shared.json_extract import extract_json_object
 from backend.vision.models import VisionParseResponse
 
 
-VISION_PROMPT = """请识别这张离散数学题目或学生答案图片，并且只返回合法 JSON，不要 Markdown 代码块。JSON 字段必须为：
-question_text（题目文字，没有则为空字符串）、student_answer（学生答案，没有则为空字符串）、latex（识别出的 LaTeX 字符串数组）、symbols（离散数学符号数组）、confidence（0 到 1 的数字）、warnings（可能影响识别的说明字符串数组）。保留 ∀、∃、¬、∧、∨、→、↔、∈、∉、⊆、∪、∩ 等符号。"""
+VISION_PROMPT = """You are an OCR transcriber for discrete mathematics student answers. Return exactly one valid JSON object, with no Markdown, explanation, or extra text.
+Transcribe the student answer verbatim. Preserve line breaks, derivation order, and symbols such as \u2200, \u2203, \u00ac, \u2227, \u2228, \u2192, \u2194, \u2208, \u2209, \u2286, \u222a, \u2229. Put formulas in latex as well. Do not complete missing steps, correct the answer, solve the problem, or grade it. Use [unreadable] for unclear characters and describe their positions in warnings.
+Fixed fields: question_text (problem statement or ""), student_answer (student work or ""), latex (array of LaTeX strings), symbols (array of symbols), confidence (number from 0 to 1), warnings (array of strings)."""
+
+_MAX_OCR_IMAGE_DIMENSION = 1600
 
 
 class VisionProviderError(RuntimeError):
@@ -48,9 +53,7 @@ class SparkVLClient:
             os.getenv("SPARK_VL_TIMEOUT_SECONDS")
             or os.getenv("LLM_TIMEOUT_SECONDS", "60")
         )
-        self.max_tokens = int(
-            os.getenv("SPARK_VL_MAX_TOKENS") or os.getenv("LLM_MAX_TOKENS", "1024")
-        )
+        self.max_tokens = int(os.getenv("SPARK_VL_MAX_TOKENS", "512"))
 
     def ensure_available(self) -> None:
         if not self.model:
@@ -84,8 +87,14 @@ class SparkVLClient:
             # may contain credentials or other sensitive request information.
             raise VisionProviderError("视觉模型调用失败") from exc
 
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key and self.api_key != "your_api_key_here":
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     def recognize_text(self, image_bytes: bytes, content_type: str, prompt: str) -> str:
-        """Recognize image text using the existing configured vision provider."""
+        """Return OCR text for the legacy practice OCR orchestration path."""
         self.ensure_available()
         try:
             response = httpx.post(
@@ -95,25 +104,18 @@ class SparkVLClient:
                 timeout=httpx.Timeout(self.timeout, connect=min(self.timeout, 20.0)),
             )
             response.raise_for_status()
-            return self._coerce_text_content(response.json()["choices"][0]["message"]["content"])
+            content = response.json()["choices"][0]["message"]["content"]
+            return self._coerce_text_content(content)
         except LLMUnavailableError:
             raise
         except VisionResponseParseError:
             raise
         except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
-            raise VisionResponseParseError("\u89c6\u89c9\u6a21\u578b\u8fd4\u56de\u6587\u672c\u65e0\u6548") from exc
+            raise VisionResponseParseError("??????????") from exc
         except httpx.HTTPError as exc:
-            raise VisionProviderError("\u89c6\u89c9\u6a21\u578b\u8bf7\u6c42\u5931\u8d25") from exc
+            raise VisionProviderError("????????") from exc
 
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key and self.api_key != "your_api_key_here":
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
-
-    def _payload(
-        self, image_bytes: bytes, content_type: str, *, prompt: str = VISION_PROMPT
-    ) -> dict[str, Any]:
+    def _payload(self, image_bytes: bytes, content_type: str, *, prompt: str = VISION_PROMPT) -> dict[str, Any]:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return {
             "model": self.model,
@@ -144,7 +146,7 @@ class SparkVLClient:
                 if isinstance(item, dict) and isinstance(item.get("text"), str)
             )
         if not isinstance(content, str) or not content.strip():
-            raise VisionResponseParseError("\u89c6\u89c9\u6a21\u578b\u8fd4\u56de\u4e3a\u7a7a")
+            raise VisionResponseParseError("????????")
         return content.strip()
 
     @staticmethod
@@ -157,13 +159,10 @@ class SparkVLClient:
             )
         if not isinstance(content, str) or not content.strip():
             raise VisionResponseParseError("empty vision response")
-        text = content.strip()
-        fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.IGNORECASE | re.DOTALL)
-        if fenced:
-            text = fenced.group(1).strip()
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            raise VisionResponseParseError("vision response is not an object")
+        try:
+            data = extract_json_object(content)
+        except ValueError as exc:
+            raise VisionResponseParseError("vision response is not a JSON object") from exc
         try:
             return VisionParseResponse(
                 question_text=str(data.get("question_text", "") or ""),
@@ -183,3 +182,18 @@ def _as_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if item is not None]
     return []
+
+
+def normalize_image(image_bytes: bytes, _content_type: str) -> tuple[bytes, str]:
+    """Correct orientation and compact uploads before sending them to the OCR model."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            if max(image.size) > _MAX_OCR_IMAGE_DIMENSION:
+                ratio = _MAX_OCR_IMAGE_DIMENSION / max(image.size)
+                image = image.resize((round(image.width * ratio), round(image.height * ratio)), Image.Resampling.LANCZOS)
+            normalized = io.BytesIO()
+            image.save(normalized, format="JPEG", quality=92, optimize=True)
+            return normalized.getvalue(), "image/jpeg"
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise VisionResponseParseError("??????") from exc

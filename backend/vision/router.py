@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.chat.exceptions import LLMUnavailableError
 from backend.vision.models import VisionParseResponse
-from backend.vision.spark_vl import SparkVLClient, VisionProviderError, VisionResponseParseError
+from backend.vision.spark_vl import SparkVLClient, VisionProviderError, VisionResponseParseError, normalize_image
 
 
 router = APIRouter(prefix="/api/vision", tags=["视觉识别"])
@@ -46,7 +46,8 @@ async def parse_vision_image(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="图片内容不能为空",
             )
-        return await run_in_threadpool(get_vision_client().parse, image_bytes, content_type)
+        normalized_bytes, normalized_type = await run_in_threadpool(normalize_image, image_bytes, content_type)
+        return await run_in_threadpool(get_vision_client().parse, normalized_bytes, normalized_type)
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except HTTPException:

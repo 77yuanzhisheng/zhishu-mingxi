@@ -109,6 +109,7 @@ def repair_messages(stage: str, invalid_output: str, error: str) -> list[dict[st
         'analysis': 'Return {key_steps:[string],missing_steps:[string],error_candidates:[string]}.',
         'scoring': 'Return a valid scoring JSON object with all five dimension scores, allowed error_types, evidence, and feedback.',
         'review': 'Return {approved:true,dimension_scores:{all five keys},error_types:[allowed values],evidence:[objects],feedback:string,review_notes:string}. approved must be the JSON boolean true.',
+        'fast_grading': 'Return {approved:true,analysis:{key_steps:[string],missing_steps:[string],error_candidates:[string]},dimension_scores:{all five keys},error_types:[allowed values],evidence:[objects],feedback:string,review_notes:string}. approved must be the JSON boolean true.',
     }
     return [
         {
