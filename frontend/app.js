@@ -3931,71 +3931,91 @@ async function renderDashboardTextbookRecommendations(recommendationNodes, sourc
     return;
   }
 
-  // 查询推荐节点的教材映射
+  // 查询推荐节点的教材映射（父节点可能命中多个教材知识点）
   const mappingPromises = recommendationNodes.slice(0, 10).map(async (nodeItem) => {
     const nodeId = typeof nodeItem === "string" ? nodeItem : nodeItem.node_id;
-    if (!nodeId) return null;
+    if (!nodeId) return [];
 
     try {
       const response = await fetch(`${KB_API_BASE_URL}/kb/node-textbook-mapping?node_id=${encodeURIComponent(nodeId)}`);
       const mapping = await response.json();
-      if (mapping.found) {
-        return {
+      if (!mapping.found) return [];
+
+      const nodeName = typeof nodeItem === "string" ? findNodeName(nodeId) : nodeItem.node_name || nodeItem.name || findNodeName(nodeId);
+      const candidates = Array.isArray(mapping.candidates) && mapping.candidates.length > 0 ? mapping.candidates : [mapping];
+      return candidates
+        .filter((candidate) => candidate && candidate.kpId)
+        .map((candidate) => ({
           nodeId,
-          nodeName: typeof nodeItem === "string" ? findNodeName(nodeId) : nodeItem.node_name || nodeItem.name || findNodeName(nodeId),
-          ...mapping,
-        };
-      }
+          nodeName,
+          kpId: candidate.kpId,
+          kpTitle: candidate.kpTitle,
+          chapterId: candidate.chapterId,
+          chapterTitle: candidate.chapterTitle,
+          section: candidate.section,
+          sectionTitle: candidate.sectionTitle,
+        }));
     } catch (error) {
       console.warn(`查询 ${nodeId} 教材映射失败:`, error);
+      return [];
     }
-    return null;
   });
 
-  const mappings = (await Promise.all(mappingPromises)).filter(Boolean);
+  const mappings = (await Promise.all(mappingPromises)).flat();
 
   if (mappings.length === 0) {
     card.hidden = true;
     return;
   }
 
-  // 按章节聚合薄弱知识点
+  // 按「章节 → 小节」聚合，同一知识点只统计一次
   const chapterMap = new Map();
   mappings.forEach((mapping) => {
-    const key = `${mapping.chapterId}`;
-    if (!chapterMap.has(key)) {
-      chapterMap.set(key, {
+    if (!chapterMap.has(mapping.chapterId)) {
+      chapterMap.set(mapping.chapterId, {
         chapterId: mapping.chapterId,
         chapterTitle: mapping.chapterTitle,
+        nodeIds: new Set(),
+        sections: new Map(),
+      });
+    }
+    const chapter = chapterMap.get(mapping.chapterId);
+    chapter.nodeIds.add(mapping.nodeId);
+    const sectionKey = `${mapping.sectionId || ""}-${mapping.section || ""}`;
+    if (!chapter.sections.has(sectionKey)) {
+      chapter.sections.set(sectionKey, {
         section: mapping.section,
         sectionTitle: mapping.sectionTitle,
         kpId: mapping.kpId,
-        nodes: [],
+        nodes: new Set(),
       });
     }
-    chapterMap.get(key).nodes.push({
-      nodeId: mapping.nodeId,
-      nodeName: mapping.nodeName,
-      kpTitle: mapping.kpTitle,
-    });
+    chapter.sections.get(sectionKey).nodes.add(mapping.nodeId);
   });
 
-  // 按薄弱知识点数量排序，取前3个章节
   const topChapters = Array.from(chapterMap.values())
-    .sort((a, b) => b.nodes.length - a.nodes.length)
+    .sort((a, b) => b.nodeIds.size - a.nodeIds.size)
     .slice(0, 3);
 
-  const recommendationsHtml = topChapters.map((chapter) => `
-    <div class="textbook-recommendation-item">
-      <button class="textbook-recommendation-button" onclick="openTextbookKP('${chapter.kpId}')">
-        <div class="textbook-rec-header">
-          <strong>${escapeHtml(chapter.chapterTitle)}</strong>
-          <span class="textbook-rec-badge">${window.Team4Utils?.textbookRecommendationBadge(chapter.nodes.length, source) || `${chapter.nodes.length} 个待巩固点`}</span>
-        </div>
-        <small>第${escapeHtml(chapter.section)}节 · ${escapeHtml(chapter.sectionTitle)}</small>
+  const recommendationsHtml = topChapters.map((chapter) => {
+    const sections = Array.from(chapter.sections.values()).slice(0, 3);
+    const sectionButtons = sections.map((section) => `
+      <button class="textbook-section-button" onclick="openTextbookKP('${section.kpId}')">
+        <span>第${escapeHtml(section.section)}节 · ${escapeHtml(section.sectionTitle)}</span>
+        <em>${window.Team4Utils?.textbookRecommendationBadge(section.nodes.size, source) || `${section.nodes.size} 个待巩固点`}</em>
       </button>
+    `).join("");
+
+    return `
+    <div class="textbook-recommendation-item">
+      <div class="textbook-rec-header">
+        <strong>${escapeHtml(chapter.chapterTitle)}</strong>
+        <span class="textbook-rec-badge">${window.Team4Utils?.textbookRecommendationBadge(chapter.nodeIds.size, source) || `${chapter.nodeIds.size} 个待巩固点`}</span>
+      </div>
+      ${sectionButtons}
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   container.innerHTML = recommendationsHtml;
   card.hidden = false;

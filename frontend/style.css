@@ -2446,6 +2446,47 @@ th {
   color: white;
 }
 
+.textbook-rec-chapter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.textbook-section-button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #f8fafb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  transition: all 0.2s ease;
+}
+
+.textbook-section-button:hover {
+  background: linear-gradient(135deg, #157f6f 0%, #1a9980 100%);
+  border-color: #157f6f;
+  color: #fff;
+}
+
+.textbook-section-button em {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 11px;
+  color: #157f6f;
+  font-weight: 600;
+}
+
+.textbook-section-button:hover em { color: #fff; }
+
 .textbook-recommendation-button small {
   font-size: 12px;
   color: var(--muted);

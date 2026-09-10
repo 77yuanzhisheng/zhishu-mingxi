@@ -1,6 +1,6 @@
 import asyncio
 
-from backend.kb.router import get_knowledge_graph
+from backend.kb.router import get_knowledge_graph, get_node_textbook_mapping
 
 
 def test_knowledge_graph_exposes_chapters_dependencies_and_stats():
@@ -36,3 +36,28 @@ def test_knowledge_graph_exposes_chapters_dependencies_and_stats():
                 assert item["chapter"] == chapter["chapter"]
                 assert item["parent_node_id"] == chapter["node_id"]
                 assert item["name"]
+
+
+def test_node_textbook_mapping_supports_parent_nodes_with_multiple_candidates():
+    mapping = asyncio.run(get_node_textbook_mapping("rel_02"))
+
+    assert mapping["found"] is True
+    assert mapping["node_id"] == "rel_02"
+    assert mapping["kpId"] == "K020401"
+    assert mapping["chapterId"] == "C02"
+    assert [candidate["kpId"] for candidate in mapping["candidates"]] == [
+        "K020401",
+        "K020402",
+        "K020403",
+    ]
+    assert {candidate["section"] for candidate in mapping["candidates"]} == {"2.4"}
+    assert mapping["kpTitle"] == "自反与反自反"
+
+
+def test_node_textbook_mapping_keeps_direct_node_behaviour():
+    mapping = asyncio.run(get_node_textbook_mapping("rel_02_05"))
+
+    assert mapping["found"] is True
+    assert mapping["kpId"] == "K020402"
+    assert mapping["kpTitle"] == "对称与反对称"
+    assert [candidate["kpId"] for candidate in mapping["candidates"]] == ["K020402"]

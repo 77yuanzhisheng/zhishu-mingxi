@@ -1537,51 +1537,70 @@ async def get_node_textbook_mapping(node_id: str = Query(..., description="平�
     """
     根据平台知识图谱的 node_id 反向查询对应的教材章节信息。
 
-    返回格式:
-    - kpId: 教材知识点ID (K010101)
-    - chapterId: 章节ID (C01, S0101)
-    - chapterTitle: 章节标题
-    - section: 章节号 (1.1)
-    - chapter: 完整章节路径 (第1章 集合 > 1.1 集合的基本概念)
+    支持两类 node_id：
+    - 叶子节点（如 rel_02_05）：直接命中反向映射。
+    - 父节点（如 rel_02）：命中该平台节点下的多个教材知识点，候选见 candidates。
     """
     try:
         # 读取映射文件
         mapping_data = json.load(open(_WEB_RESOURCE_DIR / "mapping_v1.json", encoding="utf-8"))
         mapping = mapping_data.get("mapping", {})
+        reverse = mapping_data.get("reverse", {})
 
         # 读取教材结构
         kg = json.load(open(_WEB_RESOURCE_DIR / "teacher_kg.json", encoding="utf-8"))
 
-        # 反向查找: platform_node_id → kpId
-        kp_id = None
-        for kp, info in mapping.items():
-            if info.get("platform_node_id") == node_id:
-                kp_id = kp
-                break
-
-        if not kp_id:
+        # 优先使用 reverse（支持父节点一对多）；旧文件没有 reverse 时回退到逐条扫描
+        candidates = [
+            candidate for candidate in reverse.get(node_id, [])
+            if candidate in mapping
+        ]
+        if not candidates:
+            candidates = [
+                kp for kp, info in mapping.items()
+                if info.get("platform_node_id") == node_id
+            ]
+        if not candidates:
             return {"found": False, "node_id": node_id}
 
-        # 在教材结构中查找该 kpId 的章节信息
+        kp_index = {}
         for ch_idx, ch in enumerate(kg.get("chapters", []), 1):
             for sec_idx, sec in enumerate(ch.get("sections", []), 1):
                 for kp in sec.get("kps", []):
-                    if kp.get("id") == kp_id:
-                        return {
-                            "found": True,
-                            "node_id": node_id,
-                            "kpId": kp_id,
-                            "kpTitle": kp.get("title", ""),
-                            "chapterId": ch.get("id"),
-                            "chapterTitle": ch.get("title", ""),
-                            "sectionId": sec.get("id"),
-                            "sectionTitle": sec.get("title", ""),
-                            "section": f"{ch_idx}.{sec_idx}",
-                            "chapter": f"第{ch_idx}章 {ch.get('title')} > {ch_idx}.{sec_idx} {sec.get('title')}",
-                        }
+                    kp_index[kp.get("id")] = {
+                        "kpId": kp.get("id"),
+                        "kpTitle": kp.get("title", ""),
+                        "chapterId": ch.get("id"),
+                        "chapterTitle": ch.get("title", ""),
+                        "sectionId": sec.get("id"),
+                        "sectionTitle": sec.get("title", ""),
+                        "section": f"{ch_idx}.{sec_idx}",
+                        "chapter": f"第{ch_idx}章 {ch.get('title')} > {ch_idx}.{sec_idx} {sec.get('title')}",
+                    }
 
-        # 找到映射但未在教材结构中
-        return {"found": False, "node_id": node_id, "kpId": kp_id, "error": "映射存在但未在教材结构中找到"}
+        built = []
+        for kp_id in candidates:
+            info = kp_index.get(kp_id)
+            if info:
+                built.append({**info, "node_id": node_id})
+
+        if not built:
+            return {"found": False, "node_id": node_id, "kpId": candidates[0], "error": "映射存在但未在教材结构中找到"}
+
+        primary = built[0]
+        return {
+            "found": True,
+            "node_id": node_id,
+            "kpId": primary["kpId"],
+            "kpTitle": primary["kpTitle"],
+            "chapterId": primary["chapterId"],
+            "chapterTitle": primary["chapterTitle"],
+            "sectionId": primary["sectionId"],
+            "sectionTitle": primary["sectionTitle"],
+            "section": primary["section"],
+            "chapter": primary["chapter"],
+            "candidates": built,
+        }
 
     except Exception as exc:
         logger.error(f"查询教材映射失败: {exc}")
