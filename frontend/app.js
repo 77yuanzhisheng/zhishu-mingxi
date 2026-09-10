@@ -3909,25 +3909,30 @@ function renderDashboard(report = learningState.report) {
     : `<span>继续上次学习</span><strong>${escapeHtml(learningState.currentNodeName)}</strong><small>${escapeHtml(learningState.currentNodeId)}</small>`;
   renderActivityChart(recentEvents);
 
-  // 教材融合：薄弱知识点推荐教材章节
-  if (weak > 0 && report?.weak) {
-    renderDashboardTextbookRecommendations(report.weak);
+  // 教材融合：薄弱点优先，其次推荐理解中节点对应的教材章节
+  const textbookSelection = window.Team4Utils?.selectTextbookRecommendationNodes({
+    weak: report?.weak,
+    understandingNodes: report?.understanding_nodes,
+    nodeInsights: report?.node_insights,
+  }) || { source: null, nodes: [] };
+  if (textbookSelection.nodes.length > 0) {
+    renderDashboardTextbookRecommendations(textbookSelection.nodes, textbookSelection.source);
   } else {
     document.getElementById("dashboardTextbookCard").hidden = true;
   }
 }
 
-async function renderDashboardTextbookRecommendations(weakNodes) {
+async function renderDashboardTextbookRecommendations(recommendationNodes, source = "weak") {
   const container = document.getElementById("dashboardTextbookRecommendations");
   const card = document.getElementById("dashboardTextbookCard");
 
-  if (!weakNodes || weakNodes.length === 0) {
+  if (!recommendationNodes || recommendationNodes.length === 0) {
     card.hidden = true;
     return;
   }
 
-  // 查询所有薄弱节点的教材映射
-  const mappingPromises = weakNodes.slice(0, 10).map(async (nodeItem) => {
+  // 查询推荐节点的教材映射
+  const mappingPromises = recommendationNodes.slice(0, 10).map(async (nodeItem) => {
     const nodeId = typeof nodeItem === "string" ? nodeItem : nodeItem.node_id;
     if (!nodeId) return null;
 
@@ -3985,7 +3990,7 @@ async function renderDashboardTextbookRecommendations(weakNodes) {
       <button class="textbook-recommendation-button" onclick="openTextbookKP('${chapter.kpId}')">
         <div class="textbook-rec-header">
           <strong>${escapeHtml(chapter.chapterTitle)}</strong>
-          <span class="textbook-rec-badge">${chapter.nodes.length} 个薄弱点</span>
+          <span class="textbook-rec-badge">${window.Team4Utils?.textbookRecommendationBadge(chapter.nodes.length, source) || `${chapter.nodes.length} 个待巩固点`}</span>
         </div>
         <small>第${escapeHtml(chapter.section)}节 · ${escapeHtml(chapter.sectionTitle)}</small>
       </button>

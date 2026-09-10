@@ -54,3 +54,48 @@ assert.strictEqual(utils.navigateTextbookWindow(textbookWindow, { sectionId: 'S0
 assert.deepStrictEqual(navCalls.shift(), ['S0102', undefined]);
 assert.strictEqual(utils.navigateTextbookWindow(textbookWindow, { kpId: 'K010101' }), true);
 assert.deepStrictEqual(navCalls.shift(), ['S0101', 'K010101']);
+
+// 教材推荐节点选择：薄弱点优先，其次理解中节点
+{
+  const weak = [{ node_id: "st_01_03", node_name: "集合" }];
+  const pickedFromWeak = utils.selectTextbookRecommendationNodes({
+    weak,
+    understandingNodes: ["rel_02"],
+    nodeInsights: [{ node_id: "rel_02", name: "关系", status: "理解中" }],
+  });
+  assert.strictEqual(pickedFromWeak.source, "weak");
+  assert.deepStrictEqual(pickedFromWeak.nodes.map((n) => n.node_id), ["st_01_03"]);
+
+  const pickedFromUnderstanding = utils.selectTextbookRecommendationNodes({
+    weak: [],
+    understandingNodes: ["st_01_03", "pl_01_01"],
+    nodeInsights: [
+      { node_id: "st_01_03", name: "集合", status: "理解中" },
+      { node_id: "pl_01_01", name: "命题逻辑", status: "理解中" },
+    ],
+  });
+  assert.strictEqual(pickedFromUnderstanding.source, "understanding");
+  assert.deepStrictEqual(
+    pickedFromUnderstanding.nodes.map((n) => n.node_id),
+    ["st_01_03", "pl_01_01"],
+  );
+  assert.strictEqual(pickedFromUnderstanding.nodes[0].node_name, "集合");
+
+  const pickedFromInsightsOnly = utils.selectTextbookRecommendationNodes({
+    weak: [],
+    understandingNodes: [],
+    nodeInsights: [
+      { node_id: "st_01_03", name: "集合", status: "理解中" },
+      { node_id: "pl_01_01", name: "命题逻辑", status: "掌握" },
+    ],
+  });
+  assert.strictEqual(pickedFromInsightsOnly.source, "understanding");
+  assert.deepStrictEqual(pickedFromInsightsOnly.nodes.map((n) => n.node_id), ["st_01_03"]);
+
+  const empty = utils.selectTextbookRecommendationNodes({ weak: [], understandingNodes: [], nodeInsights: [] });
+  assert.strictEqual(empty.source, null);
+  assert.deepStrictEqual(empty.nodes, []);
+
+  assert.strictEqual(utils.textbookRecommendationBadge(1, "weak"), "1 个薄弱点");
+  assert.strictEqual(utils.textbookRecommendationBadge(2, "understanding"), "2 个待巩固点");
+}

@@ -101,6 +101,50 @@
     return true;
   }
 
+  function normalizeRecommendationNode(item) {
+    if (!item) return null;
+    if (typeof item === "string") return { node_id: item, node_name: "" };
+    const nodeId = item.node_id || item.nodeId || item.id;
+    if (!nodeId) return null;
+    return {
+      node_id: nodeId,
+      node_name: item.node_name || item.nodeName || item.name || "",
+    };
+  }
+
+  function selectTextbookRecommendationNodes({ weak, understandingNodes, nodeInsights } = {}) {
+    const weakNodes = (Array.isArray(weak) ? weak : []).map(normalizeRecommendationNode).filter(Boolean);
+    if (weakNodes.length > 0) {
+      return { source: "weak", nodes: weakNodes };
+    }
+
+    const insights = (Array.isArray(nodeInsights) ? nodeInsights : []).filter(
+      (item) => item && item.status === "理解中",
+    );
+    const insightById = new Map(
+      insights.map((item) => [item.node_id || item.nodeId || item.id, item]),
+    );
+    const rawIds = Array.isArray(understandingNodes) ? understandingNodes : [];
+    const ids = rawIds.length > 0 ? rawIds : insights.map((item) => item.node_id || item.nodeId || item.id);
+    const nodes = ids
+      .map((id) => {
+        const insight = insightById.get(id);
+        return normalizeRecommendationNode(insight ? { ...insight, node_id: id } : id);
+      })
+      .filter(Boolean);
+
+    if (nodes.length > 0) {
+      return { source: "understanding", nodes };
+    }
+    return { source: null, nodes: [] };
+  }
+
+  function textbookRecommendationBadge(count, source) {
+    const safeCount = Number(count) || 0;
+    if (source === "weak") return `${safeCount} 个薄弱点`;
+    return `${safeCount} 个待巩固点`;
+  }
+
   function countReadyMaterials(evidence, recordings) {
     const screenshotCount = Object.values(evidence || {}).filter(Boolean).length;
     const recordingCount = Object.values(recordings || {}).filter(Boolean).length;
@@ -115,5 +159,7 @@
     resolveAssistantChannel,
     countReadyMaterials,
     navigateTextbookWindow,
+    selectTextbookRecommendationNodes,
+    textbookRecommendationBadge,
   };
 });
