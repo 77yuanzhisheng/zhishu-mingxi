@@ -4826,11 +4826,12 @@ async function handleGradingPhoto(file) {
   if (recheck) recheck.disabled = true;
   try {
     const data = await parseVisionImage(file);
-    document.getElementById("gradingStudentAnswer").value = selectVisionText(data, "student_answer");
-    // 队员4：证明题分步作答——OCR 全文同时填入分步输入框
-    if (document.getElementById("gradingQuestionType").value === "proof") {
-      document.getElementById("proofStepInput").value = data.text || "";
-    }
+    const isProof = document.getElementById("gradingQuestionType").value === "proof";
+    window.GradingUtils.applyGradingOcrText(data, {
+      studentAnswer: document.getElementById("gradingStudentAnswer"),
+      proofStepInput: document.getElementById("proofStepInput"),
+      isProof,
+    });
     if (status) {
       status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}，可修改后提交`;
     }

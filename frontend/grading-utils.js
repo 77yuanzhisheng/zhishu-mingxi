@@ -48,6 +48,20 @@ function gradingErrorLabel(errorType) {
   return ERROR_TYPE_LABELS[String(errorType ?? '')] || '其他问题';
 }
 
+function resolveGradingVisionText(data) {
+  const studentAnswer = String(data?.student_answer || '').trim();
+  const questionText = String(data?.question_text || '').trim();
+  return studentAnswer || questionText;
+}
+
+function applyGradingOcrText(data, { studentAnswer, proofStepInput, isProof = false } = {}) {
+  const text = resolveGradingVisionText(data);
+  if (!text) throw new Error('\u56fe\u7247\u4e2d\u672a\u8bc6\u522b\u5230\u53ef\u7528\u6587\u5b57');
+  if (studentAnswer) studentAnswer.value = text;
+  if (isProof && proofStepInput) proofStepInput.value = text;
+  return text;
+}
+
 function escapeGradingHtml(text) {
   return String(text ?? '')
     .replaceAll('&', '&amp;')
@@ -112,6 +126,8 @@ const api = {
   DIMENSION_RUBRIC,
   gradingResultRatio,
   gradingErrorLabel,
+  resolveGradingVisionText,
+  applyGradingOcrText,
   normalizeGradingResult,
   formatGradingText,
   gradingQuestionSummary,

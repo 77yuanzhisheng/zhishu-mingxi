@@ -6,6 +6,7 @@ const {
   formatGradingText,
   gradingQuestionSummary,
   gradingErrorLabel,
+  applyGradingOcrText,
 } = require('../frontend/grading-utils');
 
 test('normalizes the current grading response into a 100-point five-dimension result', () => {
@@ -95,4 +96,34 @@ test('formats question text with safe line breaks and MathJax delimiters', () =>
   assert.match(html, /\\\(A\\cup B\\\)/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.equal((html.match(/<br>/g) || []).length, 1);
+});
+
+
+test('fills the visible proof step when OCR returns only question text', () => {
+  const studentAnswer = { value: '' };
+  const proofStepInput = { value: '' };
+  const text = applyGradingOcrText(
+    { question_text: 'Prove R cap S is antisymmetric.', student_answer: '' },
+    { studentAnswer, proofStepInput, isProof: true },
+  );
+
+  assert.equal(text, 'Prove R cap S is antisymmetric.');
+  assert.equal(studentAnswer.value, text);
+  assert.equal(proofStepInput.value, text);
+});
+
+test('prefers the student answer and rejects an OCR response with no usable text', () => {
+  const studentAnswer = { value: '' };
+  const proofStepInput = { value: '' };
+  const text = applyGradingOcrText(
+    { question_text: 'Question', student_answer: 'Student proof' },
+    { studentAnswer, proofStepInput, isProof: true },
+  );
+
+  assert.equal(text, 'Student proof');
+  assert.equal(proofStepInput.value, 'Student proof');
+  assert.throws(
+    () => applyGradingOcrText({}, { studentAnswer, proofStepInput, isProof: true }),
+    /\u56fe\u7247/,
+  );
 });
