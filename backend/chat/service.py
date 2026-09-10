@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,49 @@ SYSTEM_PROMPT = """你是“知数·明析”的离散数学助教。回答应�
 - 概念题控制在 300 字以内，直接给出定义和要点。
 - 证明题只写关键推导步骤，总长控制在 500 字以内，最后以“证毕”结尾。
 - 公式使用 LaTeX 行内格式，避免不必要的多行公式块。"""
+
+
+# 模型偶发会先说“知识库中没找到……不过我可以补充”这类检索状态话术，
+# 统一在后端清理，保证给用户的回答直接进入正文（不影响正文中的正常表述）。
+_KB_DISCLAIMER = re.compile(
+    r"^(?:(?:好的|好|嗯|明白|了解|收到)[，,、\s]*)?"
+    r"(?:(?:虽然|尽管)[，,、\s]*)?"
+    r"(?:(?:非常|很)?(?:抱歉|不好意思)[，,、\s]*)?"
+    r"(?:"
+    r"(?:在)?(?:当前|本地)?(?:知识库|资料库)(?:中|里)?[^。！？!?\n]{0,24}?"
+    r"(?:没有?找到|没找到|未找到|没有?命中|未命中|未检索到|没有?检索到|没有?收录|未收录|未覆盖"
+    r"|没有?相关(?:的)?(?:内容|资料|依据|材料|信息)|没有这方面[^。！？!?\n]{0,10})"
+    r"(?:[^，,、：:。！？!?\n]{0,8}"
+    r"|(?:(?:相关|对应|这(?:方面|个)?|该(?:方面|内容)?|此类)?(?:内容|资料|依据|材料|信息))?)?"
+    r"[，,、 ]*"
+    r"|(?:未在|没有在)(?:知识库|资料库)[^。！？!?\n]{0,20}?(?:检查到|检索到|找到|命中)"
+    r")"
+    r"(?:[。！？!?\s]*(?:不过|但是|但|虽然如此|话虽如此|没关系)?[，,、\s]*"
+    r"(?:我)?(?:根据已有知识|基于已有知识|根据现有知识|直接)?[^，,、：:。！？!?\n]{0,10}?"
+    r"(?:补充|解答|回答|说明|给出答案|直接回答|直接说明|告诉你)(?:一下|下)?[^，,、：:。！？!?\n]{0,8}?[：:，,、\s]*)?"
+)
+
+
+_KB_LEADING_FILLER = re.compile(
+    r"^(?:(?:不过|但是|但|虽然如此|话虽如此|另外|顺便说一句|顺便说一下|好的|那么)"
+    r"[，,、;；:：\s]*"
+    r"(?:(?:我|可以|可以为你|可以给你|为你|给你|直接|先|就|来|下面|接下来|简要|简单|大致|大概|再|重新|根据已有知识|基于已有知识|根据现有知识|凭已有知识)[，,、;；:：\s]*){0,4}"
+    r"(?:补充|解答|回答|说明|介绍|给出答案|直接回答|直接说明|告诉你|讲一下|讲解|科普)"
+    r"(?:一下|下)?"
+    r"(?:[^，,、：:。！？!?\n]{0,12}[：:,，、;；\s]|[：:,，、;；\s]?)"
+    r"|(?:不过|但是|但|虽然如此|话虽如此)[，,、;；:：\s]*"
+    r")"
+)
+
+
+def strip_knowledge_base_disclaimer(answer: str) -> str:
+    """删除回答开头的“知识库没找到/不过我可以补充”式套话，正文保持不变。"""
+    text = str(answer or "").lstrip("\ufeff").strip()
+    if not text:
+        return text
+    text = _KB_DISCLAIMER.sub("", text, count=1)
+    text = _KB_LEADING_FILLER.sub("", text.lstrip("。！？!?，,、;；:： \n"), count=1)
+    return text.lstrip("，,、;；:： \n").strip()
 
 
 class ChatService:
@@ -103,6 +147,8 @@ class ChatService:
                 answer = self._generate_fallback(
                     request, prepared.messages, references, repair=(fidelity, validity)
                 )
+
+        answer = strip_knowledge_base_disclaimer(answer)
 
         self.repository.add_message(session_id, "assistant", answer, request.node_ids)
 

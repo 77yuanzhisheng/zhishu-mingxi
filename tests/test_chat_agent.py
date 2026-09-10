@@ -15,7 +15,7 @@ from backend.chat.agent import XingchenAgentClient, XingchenAgentUnavailableErro
 from backend.chat.models import ChatRequest
 from backend.chat.repository import ChatRepository
 from backend.chat.router import get_chat_service, router as chat_router
-from backend.chat.service import ChatService
+from backend.chat.service import ChatService, strip_knowledge_base_disclaimer
 from backend.learning.service import (
     create_answer_event,
     create_user,
@@ -434,3 +434,54 @@ def test_dotenv_refresh_only_applies_xingchen_settings(monkeypatch, tmp_path):
     assert client.enabled is True
     assert client.is_configured is True
     assert os.environ["LEARNING_DB_PATH"] == "isolated-test.db"
+
+
+def test_strip_knowledge_base_disclaimer_removes_leading_small_talk():
+    samples = [
+        "知识库中没找到，不过我可以补充：集合的并集是把两个集合的元素合并到一起。",
+        "在知识库中没有找到相关内容，不过我可以为你解答：并集的定义是……",
+        "知识库未命中，我可以直接回答：两个集合的并集由所有属于A或属于B的元素组成。",
+        "抱歉，知识库中没找到相关内容，我根据已有知识补充一下：A∪B={x|x∈A或x∈B}",
+        "未在知识库检查到，不过我可以补充，交集的定义是……",
+        "虽然知识库中没有找到，但我可以直接给出答案：并集满足交换律。",
+
+        "当前知识库中未检索到足够依据。\n\n不过，我可以为你补充图的染色数的核心定义：图的染色数记为 χ(G)。",
+        "当前知识库未检索到足够依据。\n\n不过，我可以为你补充四色定理的相关知识：任何平面图都可四着色。",
+        "知识库中没有找到对应依据，我可以直接说明：并集由所有属于A或属于B的元素组成。",
+        "。  不过，我可以为你简要介绍四色定理的核心内容：任何平面图都可四着色。",
+    ]
+    for sample in samples:
+        cleaned = strip_knowledge_base_disclaimer(sample)
+        assert "知识库" not in cleaned
+        assert "补充" not in cleaned
+        assert not cleaned.startswith("，")
+
+    residue = "。  不过，我可以为你简要介绍四色定理的核心内容：任何平面图都可四着色。"
+    assert strip_knowledge_base_disclaimer(residue) == "任何平面图都可四着色。"
+
+    for plain in (
+        "第1次星球回答",
+        "解答：A∪B={x|x∈A或x∈B}。",
+        "四色定理：任何平面图都可以用不超过四种颜色着色。",
+        "定义：若 A⊆B 且 B⊆A，则 A=B。",
+    ):
+        assert strip_knowledge_base_disclaimer(plain) == plain
+
+
+def test_strip_knowledge_base_disclaimer_keeps_normal_answer_untouched():
+    answer = "集合的并集定义为 A∪B={x|x∈A或x∈B}。它满足交换律与结合律。"
+    assert strip_knowledge_base_disclaimer(answer) == answer
+
+
+def test_agent_answer_has_disclaimer_stripped_before_return(tmp_path):
+    database_path = tmp_path / "agent-disclaimer.db"
+    user_id = create_user("Agent 学生", database_path=database_path)
+    agent = RecordingAgent(answer="知识库中没找到，不过我可以补充：并集定义为 A∪B={x|x∈A或x∈B}。")
+    service, _, _ = build_service(database_path, agent)
+
+    response = service.chat(ChatRequest(user_id=user_id, message="什么是并集？"))
+
+    assert response.provider == "agent"
+    assert response.answer == "并集定义为 A∪B={x|x∈A或x∈B}。"
+    stored = service.repository.get_messages(response.session_id)
+    assert stored[-1]["content"] == response.answer
