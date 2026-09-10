@@ -131,7 +131,7 @@ def format_proof_plan_for_prompt(plan: ProofPlan) -> str:
     lines.extend(f"{index}. {step}" for index, step in enumerate(plan.steps, start=1))
     if plan.symbolic_check.checked:
         status = "通过" if plan.symbolic_check.valid else "未通过"
-        lines.append(f"程序侧符号校验：{status}；{plan.symbolic_check.detail}")
+        lines.append(f"内部符号一致性依据：{status}；{plan.symbolic_check.detail}")
         if plan.symbolic_check.evidence:
             lines.append("校验证据：")
             lines.append(plan.symbolic_check.evidence)

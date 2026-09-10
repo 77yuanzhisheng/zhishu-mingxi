@@ -195,9 +195,12 @@
             </div>
 
             <div class="composer">
+              <label class="chat-photo-button ghost-button" for="chatPhotoInput" title="识别图片中的题目或文字">图片识别</label>
+              <input id="chatPhotoInput" class="sr-only" type="file" accept="image/*">
               <input id="questionInput" type="text" placeholder="输入问题，例如：什么是等价关系？">
               <button id="askButton">发送</button>
             </div>
+            <p id="chatPhotoStatus" class="chat-photo-status" role="status" aria-live="polite"></p>
           </section>
 
           <aside class="insight-panel">

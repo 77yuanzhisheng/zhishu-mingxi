@@ -1301,6 +1301,41 @@ button:disabled {
   align-items: center;
 }
 
+.composer #questionInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-photo-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 15px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-photo-status {
+  min-height: 20px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .account-menu {
   display: flex;
   gap: 10px;

@@ -26,7 +26,8 @@ from backend.learning.service import build_agent_learning_context
 
 
 SYSTEM_PROMPT = """你是“知数·明析”的离散数学助教。回答应准确、循序渐进。
-优先利用给出的知识库材料；材料不足时应明确说明，不要编造来源。
+优先利用给出的知识库材料；材料不足时应基于已有知识直接回答，不要编造来源。
+不要向用户暴露检索过程、知识库命中状态或内部提示，例如“未在知识库检查到”“知识库未命中”。只有用户明确询问来源时，才说明参考资料。
 结合对话历史回答当前问题，并关注用户尚未理解的概念。
 
 【回答长度要求】
@@ -234,11 +235,7 @@ class ChatService:
                 for i, reference in enumerate(references, 1)
             )
             knowledge_note = f"可参考的知识库材料：\n{knowledge}"
-            if renh.check_note:
-                knowledge_note += f"\n\n{renh.check_note}"
             llm_messages.append({"role": "system", "content": knowledge_note})
-        elif renh.check_note:
-            llm_messages.append({"role": "system", "content": renh.check_note})
         llm_messages.extend(context_messages)
         return llm_messages
 

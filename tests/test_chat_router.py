@@ -130,8 +130,8 @@ def test_check_note_builder():
     assert build_check_note(GENERAL_QUESTION) == ""
 
 
-def test_chat_service_injects_check_note_and_returns_reasoning(tmp_path):
-    """多轮对话链路：知识库材料消息附带符号校验结果，响应带 reasoning 元数据。"""
+def test_chat_service_does_not_inject_check_note_and_returns_reasoning(tmp_path):
+    """多轮对话链路：知识库消息不注入内部校验文本，响应仍带 reasoning 元数据。"""
     database_path = tmp_path / "chat.db"
     user_id = create_user("学生甲", database_path=database_path)
     llm = RecordingLLM()
@@ -142,9 +142,9 @@ def test_chat_service_injects_check_note_and_returns_reasoning(tmp_path):
     )
     response = service.chat(ChatRequest(user_id=user_id, message=PROOF_QUESTION))
 
-    # 知识库 system 消息（第2条）附带符号校验结果
+    # 知识库 system 消息（第2条）只携带参考资料，不注入程序侧校验文本。
     knowledge_msg = next(m for m in llm.calls[0] if "可参考的知识库材料" in m["content"])
-    assert "程序侧符号校验结果" in knowledge_msg["content"]
+    assert "程序侧符号校验结果" not in knowledge_msg["content"]
 
     assert response.reasoning is not None
     assert response.reasoning["enabled"] is True
@@ -156,8 +156,8 @@ def test_chat_service_injects_check_note_and_returns_reasoning(tmp_path):
 
 
 
-def test_chat_service_injects_check_note_without_references(tmp_path):
-    """无知识库命中时，程序侧符号校验仍必须进入模型上下文。"""
+def test_chat_service_does_not_inject_check_note_without_references(tmp_path):
+    """无知识库命中时，模型上下文不注入程序侧校验文本。"""
     database_path = tmp_path / "chat.db"
     user_id = create_user("学生丙", database_path=database_path)
     llm = RecordingLLM()
@@ -169,7 +169,7 @@ def test_chat_service_injects_check_note_without_references(tmp_path):
 
     service.chat(ChatRequest(user_id=user_id, message=PROOF_QUESTION))
 
-    assert any("程序侧符号校验结果" in message["content"] for message in llm.calls[0])
+    assert not any(message["content"].startswith("程序侧符号校验结果：") for message in llm.calls[0])
 
 def test_chat_service_general_question_has_no_reasoning(tmp_path):
     """概念题：reasoning 为空，不增加评估负担。"""

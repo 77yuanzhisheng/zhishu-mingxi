@@ -946,7 +946,7 @@ async function handleAsk() {
   addMessage(question, "user");
   input.value = "";
 
-  const loading = addMessage("正在检索知识库并生成回答...", "assistant");
+  const loading = addMessage("正在生成回答...", "assistant");
   try {
     const data = await requestPreferredAssistant({
       message: question,
@@ -3399,6 +3399,39 @@ function describeVisionResult(data) {
   if (Number.isFinite(elapsed) && elapsed > 0) parts.push(`耗时 ${(elapsed / 1000).toFixed(1)} 秒`);
   if (Array.isArray(data?.warnings) && data.warnings.length) parts.push(`提示：${data.warnings.join("；")}`);
   return parts.join(" · ");
+}
+
+async function handleChatPhoto(file) {
+  if (!file) return;
+
+  const status = document.getElementById("chatPhotoStatus");
+  const input = document.getElementById("questionInput");
+  if (!status || !input) return;
+
+  if (!file.type.startsWith("image/")) {
+    status.textContent = "请选择图片文件。";
+    return;
+  }
+
+  status.textContent = "正在识别图片中的文字...";
+  try {
+    const data = await parseVisionImage(file);
+    const text = selectVisionText(data, "question_text");
+    if (!text) throw new Error("图片中未识别到可用文字");
+
+    input.value = text;
+    input.focus();
+
+    const details = describeVisionResult(data);
+    status.textContent = details
+      ? `识别完成：${details}`
+      : "识别完成，请检查文字后发送";
+  } catch (error) {
+    status.textContent = `图片识别失败：${error.message}`;
+  } finally {
+    const picker = document.getElementById("chatPhotoInput");
+    if (picker) picker.value = "";
+  }
 }
 
 async function handleProofPhoto(questionId, file) {
