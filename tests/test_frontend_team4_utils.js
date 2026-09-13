@@ -34,7 +34,7 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   utils.resolveAssistantChannel({}, "智能体接口尚未接通"),
-  { kind: "fallback", label: "Qwen3 降级", detail: "智能体接口尚未接通" },
+  { kind: "fallback", label: "Qwen3-32B 通道", detail: "智能体接口尚未接通" },
 );
 assert.deepStrictEqual(
   utils.countReadyMaterials({ maas: "a.png", agent: "b.png" }, { application: "c.webm" }),

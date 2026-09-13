@@ -84,7 +84,7 @@
     }
     return {
       kind: "fallback",
-      label: "Qwen3 降级",
+      label: "Qwen3-32B 通道",
       detail: reason || "当前回答由基础模型生成",
     };
   }

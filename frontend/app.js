@@ -52,6 +52,20 @@ const titles = {
   textbook: "Web 交互式教材 2.0",
 };
 
+// 角色专属页：教师端不提供学生向页面，学生端不提供教师向页面。
+// 值 = 该角色访问时会被拦下的 tab。仅靠 data-role-only 隐藏导航是不够的——
+// 直链、popstate 与页面内按钮仍能触发 switchTab，所以准入判断必须写在 switchTab 里。
+const ROLE_BLOCKED_TABS = {
+  teacher: new Set(["practice", "companion"]),
+  student: new Set(["lessonPrep"]),
+};
+
+// 教师端这两个 tab 的标题与学生端不同（侧栏导航文案与顶栏标题都会跟着变）
+const TEACHER_TITLES = {
+  dashboard: "班级学情总览",
+  learning: "班级学情分析",
+};
+
 const graphState = {
   chart: null,
   modules: [],
@@ -90,6 +104,18 @@ const chatState = { sessionId: null };
 const agentState = { channel: "pending", fallbackReason: "" };
 const authState = { token: localStorage.getItem(AUTH_TOKEN_KEY) || "", user: null };
 const classState = { role: null, studentClass: null, teacherClasses: [], selectedClassId: null };
+// 教师端班级学情总览的状态（与学生端的 learningState 平行，互不影响）
+const teacherState = { report: null, classId: null, chart: null };
+// 教师端组卷的知识点选择器状态。必须声明在这里、而不是挨着 EXAM_NODE_QUESTION_COUNTS
+// 放在文件后半段：下方 DOM 绑定处（约 665 行）会同步读取 onlyWithQuestions 给复选框打勾，
+// 而 const 在声明执行前处于 TDZ，放在后面会让整页脚本在加载时抛错白屏。
+const examNodeState = {
+  catalog: [],
+  selected: new Set(),
+  query: "",
+  onlyWithQuestions: true,   // 默认只列有题的知识点；取消勾选可看到全部模块及"暂无题目"标注
+  loading: false,
+};
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
@@ -630,7 +656,46 @@ document.getElementById("showLoginButton").addEventListener("click", () => setAu
 document.getElementById("showRegisterButton").addEventListener("click", () => setAuthMode("register"));
 document.getElementById("logoutButton").addEventListener("click", logoutAccount);
 document.getElementById("generateExamForm").addEventListener("submit", generateTeacherExam);
+// 教师端班级学情总览：手动刷新
+const teacherDashboardRefreshButton = document.getElementById("teacherDashboardRefresh");
+if (teacherDashboardRefreshButton) {
+  teacherDashboardRefreshButton.addEventListener("click", () => loadTeacherClassOverview());
+}
 document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
+// 知识点选择器（教师端组卷）：搜索 / 只看有题 / 清空 / 载入示例 / 题量变化时重算预检
+const examNodeSearchInput = document.getElementById("teacherExamNodeSearch");
+if (examNodeSearchInput) {
+  examNodeSearchInput.addEventListener("input", () => {
+    examNodeState.query = examNodeSearchInput.value;
+    renderExamNodePicker();
+  });
+}
+const examNodeOnlyCheckbox = document.getElementById("teacherExamNodeOnlyWithQuestions");
+if (examNodeOnlyCheckbox) {
+  examNodeOnlyCheckbox.checked = examNodeState.onlyWithQuestions;
+  examNodeOnlyCheckbox.addEventListener("change", () => {
+    examNodeState.onlyWithQuestions = examNodeOnlyCheckbox.checked;
+    renderExamNodePicker();
+  });
+}
+const examNodeClearButton = document.getElementById("teacherExamNodeClear");
+if (examNodeClearButton) {
+  examNodeClearButton.addEventListener("click", () => {
+    examNodeState.selected.clear();
+    renderExamNodePicker();
+  });
+}
+const examNodeExampleButton = document.getElementById("teacherExamNodeExample");
+if (examNodeExampleButton) {
+  examNodeExampleButton.addEventListener("click", loadExamNodeExample);
+}
+const examCountInput = document.getElementById("teacherExamCount");
+if (examCountInput) {
+  // 题目数量一变，可用题量是否够也要跟着变
+  examCountInput.addEventListener("input", () => {
+    if (examNodeState.selected.size) renderExamNodeSelection();
+  });
+}
 document.querySelectorAll(".practice-filter").forEach((button) => {
   button.addEventListener("click", () => setPracticeFilter(button.dataset.practiceFilter));
 });
@@ -839,12 +904,30 @@ function selectUnifiedTool(toolName) {
 
 function switchTab(tabName, updateHistory = true) {
   if (!titles[tabName]) tabName = "dashboard";
+
+  // 角色准入：classState.role 在登录态就绪前为 null（模块加载期那次 switchTab），
+  // 此时不拦截；applyAuthenticatedUser() 设好角色后会再调一次，那时才真正生效。
+  const blockedTabs = classState.role ? ROLE_BLOCKED_TABS[classState.role] : null;
+  if (blockedTabs && blockedTabs.has(tabName)) {
+    // 必须 replaceState：否则地址栏停在 /practice 而页面是首页，一刷新又走一遍重定向
+    window.history.replaceState({ tab: "dashboard" }, "", tabRoutes.dashboard);
+    tabName = "dashboard";
+    updateHistory = false;
+  }
+
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
 
-  document.querySelector(`[data-tab="${tabName}"]`).classList.add("active");
-  document.getElementById(tabName).classList.add("active");
-  document.getElementById("pageTitle").textContent = titles[tabName];
+  const navItem = document.querySelector(`[data-tab="${tabName}"]`);
+  if (navItem) navItem.classList.add("active");
+  const panel = document.getElementById(tabName);
+  if (panel) panel.classList.add("active");
+  const pageTitle = document.getElementById("pageTitle");
+  if (pageTitle) {
+    pageTitle.textContent = classState.role === "teacher" && TEACHER_TITLES[tabName]
+      ? TEACHER_TITLES[tabName]
+      : titles[tabName];
+  }
   if (updateHistory && window.location.pathname !== tabRoutes[tabName]) {
     window.history.pushState({ tab: tabName }, "", tabRoutes[tabName]);
   }
@@ -879,6 +962,7 @@ function switchTab(tabName, updateHistory = true) {
     renderDashboard();
     loadLearningReport({ silent: true });
     setTimeout(() => dashboardState.chart?.resize(), 0);
+    setTimeout(() => teacherState.chart?.resize(), 0);   // 教师端雷达图：切回首页时重算尺寸
   }
   if (tabName === "learning") {
     loadLearningReport();
@@ -2889,7 +2973,7 @@ function recordLearningEvent(node) {
     event_type: "view",
   };
 
-  const localEvents = parseLocalLearningEvents();
+  const localEvents = readAllLocalLearningEvents();
   localEvents.push({
     ...payload,
     node_name: node.name,
@@ -2901,13 +2985,25 @@ function recordLearningEvent(node) {
   // 当前学情接口只定义答题掌握度更新，浏览行为先保存在本地活动记录中。
 }
 
-function parseLocalLearningEvents() {
+// 原始读取：返回全部账号的事件。仅供写入路径使用（读出来 → push → 整体写回），
+// 这里绝不能按用户过滤，否则写回时会把其他账号的事件整批抹掉。
+function readAllLocalLearningEvents() {
   try {
     const events = JSON.parse(localStorage.getItem("learning_events") || "[]");
     return Array.isArray(events) ? events : [];
   } catch (error) {
     return [];
   }
+}
+
+// 展示用读取：learning_events 是浏览器全局键，同一浏览器切换账号会串数据
+// （「今日学习 / 本周完成题目 / 近 7 天折线图」三处都读它）。事件写入时已带 user_id，
+// 这里按当前用户过滤即可隔离，其余账号的数据仍原样保留在 localStorage 中。
+function parseLocalLearningEvents() {
+  const userId = Number(getCurrentUserId());
+  return readAllLocalLearningEvents().filter(
+    (event) => Number(event && event.user_id) === userId
+  );
 }
 
 function setCurrentLearningNode(node) {
@@ -3231,7 +3327,7 @@ function renderCalcList(target) {
     <article class="practice-card calc-card" data-calc-id="${escapeHtml(q.id)}">
       <div class="practice-card-header">
         <span>${escapeHtml(q.moduleName)}</span>
-        <strong>${escapeHtml(q.nodeId)} · ${escapeHtml(q.kp || "")}</strong>
+        <strong>${escapeHtml(q.kp || findNodeName(q.nodeId))}</strong>
       </div>
       <h4>${escapeHtml(q.question)}</h4>
       ${q.fig ? `<img class="practice-figure" src="${escapeHtml(q.fig)}" alt="题目图示" />` : ""}
@@ -3557,7 +3653,7 @@ async function submitPracticeAnswer(questionId, selectedIndex) {
       throw new Error("答题事件记录失败");
     }
   } catch (error) {
-    const localEvents = parseLocalLearningEvents();
+    const localEvents = readAllLocalLearningEvents();
     localEvents.push({
       user_id: getCurrentUserId(),
       node_id: question.nodeId,
@@ -3587,6 +3683,12 @@ function updatePracticeScore() {
 }
 
 async function loadLearningReport(options = {}) {
+  // 教师端不取"本人学情"——教师没有答题记录，取回来只会是一份全 0 的学生结构报告。
+  // 这一处早退收口了所有学生向调用路径（刷新按钮、bootstrap、两个 tab、交卷后、路径刷新）。
+  if (classState.role === "teacher") {
+    await loadTeacherClassOverview({ silent: options.silent });
+    return;
+  }
   updateCurrentLearningNodeText();
   const chartBox = document.getElementById("learningChart");
   const weakBox = document.getElementById("weakNodes");
@@ -3674,6 +3776,9 @@ async function refreshGraphMastery() {
 async function loadAiSummary() {
   const target = document.getElementById("aiSummaryResult");
   if (!target) return;
+  // 这段 AI 学情洞察是学生向的（取本人问答+答题记录），教师在学情面板看到的是班级视图，
+  // 该元素在教师视图下是 hidden 的，没必要为它发一次请求。
+  if (classState.role === "teacher") return;
   const userId = getCurrentUserId();
   if (!userId) {
     target.textContent = "请先登录后再生成学情分析。";
@@ -3873,6 +3978,8 @@ function buildModuleLearningStats(mastered, weak, unlearned) {
 }
 
 function renderDashboard(report = learningState.report) {
+  // 教师端首页渲染的是班级学情总览，学生仪表盘整套逻辑不参与（见 renderTeacherClassView）
+  if (classState.role === "teacher") return;
   const events = parseLocalLearningEvents();
   const now = new Date();
   const weekStart = new Date(now);
@@ -4215,6 +4322,18 @@ async function copyLessonPrep() {
   setTimeout(() => { button.textContent = "复制内容"; }, 1200);
 }
 
+// 统一用 null-safe 的取元素工具：万一只换了 app.js 没同步换 index.html（部署失误），
+// 也只是新功能不出现，不会因整页脚本抛错而白屏。
+function setTextById(id, text) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = text;
+}
+
+function showRoleView(id, visible) {
+  const element = document.getElementById(id);
+  if (element) element.hidden = !visible;
+}
+
 function updateRoleInterface() {
   classState.role = ["teacher", "admin"].includes(authState.user?.role) ? "teacher" : "student";
   const roleName = formatRole(classState.role);
@@ -4226,6 +4345,17 @@ function updateRoleInterface() {
   document.getElementById("teacherClassView").hidden = classState.role !== "teacher";
   document.getElementById("studentExamView").hidden = classState.role !== "student";
   document.getElementById("teacherExamView").hidden = classState.role !== "teacher";
+
+  // 首页 / 学情面板：学生看到学生视图，教师看到班级学情视图
+  const isTeacher = classState.role === "teacher";
+  showRoleView("studentDashboardView", !isTeacher);
+  showRoleView("teacherDashboardView", isTeacher);
+  showRoleView("studentLearningView", !isTeacher);
+  showRoleView("teacherLearningView", isTeacher);
+
+  // 导航文案随角色变，避免出现「导航写个人仪表盘、面板写班级学情总览」的现场穿帮
+  setTextById("navTitleDashboard", isTeacher ? "班级学情总览" : "个人仪表盘");
+  setTextById("navTitleLearning", isTeacher ? "班级学情分析" : "学情面板");
 }
 
 async function joinClass(event) {
@@ -4328,6 +4458,242 @@ function renderClassList(targetId, items, roleLabel, selectable = false) {
   target.querySelectorAll(".class-detail-button").forEach((button) => {
     button.addEventListener("click", () => loadTeacherClassDetails(Number(button.dataset.classId)));
   });
+}
+
+// ==================== 教师端：班级学情总览 ====================
+// 教师没有"本人学情"（没有答题记录），所以首页与学情面板改渲染班级维度数据。
+// 数据全部来自既有的 GET /api/class/{id}/report（后端已做 require_class_manager 权限校验），
+// 不新增任何后端接口。
+
+async function loadTeacherClassOverview(options = {}) {
+  if (!authState.user || classState.role !== "teacher") return;
+  if (!options.silent) {
+    setTextById("teacherDashboardSummary", "正在读取班级学情…");
+    setTextById("teacherLearningSummary", "正在读取班级学情…");
+  }
+  if (!(classState.teacherClasses || []).length) {
+    await loadClassWorkspace();   // 复用班级面板的加载逻辑，其教师分支会填充 teacherClasses
+  }
+  const classes = classState.teacherClasses || [];
+  if (!classes.length) {
+    teacherState.report = null;
+    teacherState.classId = null;
+    renderTeacherEmptyState();
+    return;
+  }
+  const classId = Number(classState.selectedClassId) || Number(classes[0].class_id || classes[0].id);
+  classState.selectedClassId = classId;
+  try {
+    teacherState.report = await fetchApiJson(`/api/class/${classId}/report?requester_id=${getCurrentUserId()}`);
+    teacherState.classId = classId;
+  } catch (error) {
+    teacherState.report = null;
+    renderTeacherEmptyState(`班级学情读取失败：${error.message}`);
+    return;
+  }
+  renderTeacherClassView();
+}
+
+function disposeTeacherRadar() {
+  if (teacherState.chart) {
+    teacherState.chart.dispose();
+    teacherState.chart = null;
+  }
+}
+
+function setTeacherListState(id, className, text) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.className = `${className} empty-state`;
+  target.textContent = text;
+}
+
+function renderTeacherEmptyState(message) {
+  const emptyBox = document.getElementById("teacherDashboardEmpty");
+  const bodyBox = document.getElementById("teacherDashboardBody");
+  if (bodyBox) bodyBox.hidden = true;
+  if (emptyBox) {
+    emptyBox.hidden = false;
+    emptyBox.className = "data-list empty-state";
+    // 无班级与"读取失败"是两种不同处境：前者给指路话术，后者只如实报错，都不填任何推测数字
+    emptyBox.innerHTML = message
+      ? `<p>${escapeHtml(message)}</p>`
+      : '<p>你还没有创建班级，暂时没有可分析的班级学情。</p>'
+        + '<p>请在「班级管理」创建班级，学生用邀请码加入并完成练习后，这里会显示班级平均正确率、模块掌握度雷达与全班薄弱知识点排行。</p>'
+        + '<button id="teacherGoCreateClassButton" type="button">去创建班级</button>';
+  }
+  const button = document.getElementById("teacherGoCreateClassButton");
+  if (button) button.addEventListener("click", () => switchTab("classes"));
+
+  setTextById("teacherDashboardSummary", message ? "班级学情暂不可用。" : "尚未创建班级。");
+  setTextById("teacherLearningSummary", message ? "班级学情暂不可用。" : "尚未创建班级。");
+  setTeacherListState("teacherWeakNodeRankingFull", "learning-node-list", "请先创建班级。");
+  setTeacherListState("teacherStudentDetailList", "student-report-list", "请先创建班级。");
+  setTeacherListState("teacherModuleTable", "student-report-list", "请先创建班级。");
+  disposeTeacherRadar();
+  const radarBox = document.getElementById("teacherClassRadarChart");
+  if (radarBox) {
+    radarBox.innerHTML = "";
+    radarBox.textContent = "尚未创建班级。";
+  }
+}
+
+function normalizeClassRadar(radarData) {
+  if (!Array.isArray(radarData)) return [];
+  return radarData.map((item) => ({
+    moduleName: item.module || item.name || "未命名模块",
+    score: Number(item.value ?? 0),          // 后端已给 0-100（average_level / 4 * 100）
+    level: Number(item.average_level ?? 0),  // 0-4
+    practiced: Number(item.practiced_nodes ?? 0),
+  }));
+}
+
+function renderTeacherClassView() {
+  const report = teacherState.report;
+  if (!report) {
+    renderTeacherEmptyState();
+    return;
+  }
+  const classes = classState.teacherClasses || [];
+  const selected = classes.find((item) => Number(item.class_id || item.id) === Number(teacherState.classId));
+  const className = selected?.name || report.class_name || "当前班级";
+
+  const emptyBox = document.getElementById("teacherDashboardEmpty");
+  const bodyBox = document.getElementById("teacherDashboardBody");
+  if (emptyBox) emptyBox.hidden = true;
+  if (bodyBox) bodyBox.hidden = false;
+
+  const students = Array.isArray(report.students) ? report.students : [];
+  const weakNodes = Array.isArray(report.weak_nodes) ? report.weak_nodes : [];
+  const answered = students.some((item) => Number(item.learning_summary?.total_answers || 0) > 0);
+  const attention = students.filter((item) => Number(item.learning_summary?.weak_nodes || 0) > 0).length;
+  const studentCount = Number(report.student_count ?? students.length);
+
+  setTextById("teacherDashboardSummary", `${className} · 共 ${studentCount} 名学生。`
+    + (answered ? "以下数据来自全班真实答题记录。" : "班级尚无答题记录，各项指标暂为空。"));
+  setTextById("teacherLearningSummary", `${className} · 共 ${studentCount} 名学生。`
+    + (answered ? "以下为全班汇总与逐生明细。" : "班级尚无答题记录。"));
+  setTextById("teacherClassStudentCount", String(studentCount));
+  // 无答题记录时显示 -- 而不是 0%：0% 会被读成"全班一道题都没做对"
+  setTextById("teacherClassAccuracy", answered ? `${Math.round(Number(report.overall_accuracy || 0) * 100)}%` : "--");
+  setTextById("teacherClassAttention", String(attention));
+  setTextById("teacherWeakNodeCount", String(weakNodes.length));
+
+  renderTeacherClassRadar(report.radar_data, answered);
+  renderTeacherWeakRanking("teacherWeakNodeRanking", weakNodes, 5);
+  renderTeacherWeakRanking("teacherWeakNodeRankingFull", weakNodes, Infinity);
+  renderTeacherStudentList(students);
+  renderTeacherModuleTable(report.radar_data);
+  syncTeacherDashboardClassSelect(classes, teacherState.classId);
+}
+
+function renderTeacherClassRadar(radarData, hasAnswers) {
+  const box = document.getElementById("teacherClassRadarChart");
+  if (!box) return;
+  const stats = normalizeClassRadar(radarData);
+  disposeTeacherRadar();
+  // 不画全 0 的雷达：那会让人误读成"班级掌握度为 0"。
+  // practiced_nodes 全为 0 即代表全班还没在这些模块上产生练习记录。
+  if (!stats.length || !stats.some((item) => item.practiced > 0)) {
+    box.innerHTML = "";
+    box.textContent = hasAnswers
+      ? "本班学生尚未在课程模块上产生练习记录，暂无法计算模块掌握度。"
+      : "班级尚无答题记录，暂无法计算模块掌握度。";
+    return;
+  }
+  if (!window.echarts) {
+    box.textContent = "ECharts 加载失败，无法绘制班级雷达图。";
+    return;
+  }
+  box.innerHTML = "";
+  teacherState.chart = echarts.init(box);
+  teacherState.chart.setOption({
+    tooltip: {
+      formatter: (params) => {
+        const item = stats[params.dataIndex];
+        return `${item.moduleName}<br>班级平均掌握度：${item.score}%<br>平均等级：${item.level}/4<br>已练知识点：${item.practiced}`;
+      },
+    },
+    radar: { indicator: stats.map((item) => ({ name: item.moduleName, max: 100 })), radius: "66%", splitNumber: 4 },
+    series: [
+      {
+        type: "radar",
+        data: [{ value: stats.map((item) => item.score), name: "班级模块掌握度", areaStyle: { color: "rgba(47,143,131,.2)" }, lineStyle: { color: "#2f8f83", width: 3 }, itemStyle: { color: "#1f5f8b" } }],
+      },
+    ],
+  }, true);
+}
+
+function renderTeacherWeakRanking(targetId, weakNodes, limit) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  if (!weakNodes.length) {
+    target.className = "learning-node-list empty-state";
+    target.textContent = "全班暂无薄弱知识点。学生产生答题记录后，这里会按薄弱人数从多到少展示。";
+    return;
+  }
+  target.className = "learning-node-list";
+  // 只读统计：不加 data-node-id、不用 button —— 复用学生端的点击跳问答行为在这里语义不对
+  target.innerHTML = weakNodes.slice(0, limit).map((item) => {
+    const nodeId = item.node_id || item.nodeId || "";
+    const name = NODE_NAME_FALLBACKS[nodeId] || findNodeName(nodeId) || nodeId;
+    return `<div class="learning-node-button weak-node"><strong>${escapeHtml(name)}</strong><span>${Number(item.student_count || 0)} 名学生薄弱 · ${escapeHtml(nodeId)}</span></div>`;
+  }).join("");
+}
+
+function renderTeacherStudentList(students) {
+  const target = document.getElementById("teacherStudentDetailList");
+  if (!target) return;
+  if (!students.length) {
+    target.className = "student-report-list empty-state";
+    target.textContent = "该班级暂无学生。学生凭邀请码加入后，这里会显示每人的答题次数与掌握情况。";
+    return;
+  }
+  target.className = "student-report-list";
+  target.innerHTML = students.map((item) => {
+    const summary = item.learning_summary || {};
+    const total = Number(summary.total_answers || 0);
+    const weakCount = Number(summary.weak_nodes || 0);
+    const accuracy = total ? `${Math.round(Number(summary.overall_accuracy || 0) * 100)}%` : "--";
+    const badge = weakCount ? `薄弱 ${weakCount}` : total ? "状态良好" : "暂无答题";
+    const badgeClass = weakCount ? "weak" : total ? "mastered" : "unlearned";
+    return `<article><div><strong>${escapeHtml(item.name || `用户 ${item.user_id}`)}</strong><span>答题 ${total} 次 · 正确率 ${accuracy} · 已练 ${Number(summary.practiced_nodes || 0)} 个 · 已掌握 ${Number(summary.mastered_nodes || 0)} 个知识点</span></div><span class="mastery-badge ${badgeClass}">${badge}</span></article>`;
+  }).join("");
+}
+
+function renderTeacherModuleTable(radarData) {
+  const target = document.getElementById("teacherModuleTable");
+  if (!target) return;
+  const stats = normalizeClassRadar(radarData);
+  if (!stats.length) {
+    target.className = "student-report-list empty-state";
+    target.textContent = "暂无模块掌握度数据。";
+    return;
+  }
+  target.className = "student-report-list";
+  // 只展示后端给出的三个数值（百分比 / 等级 / 已练节点数）。后端没有模块级达标线，
+  // 前端不自造"达标/未达标"阈值。
+  target.innerHTML = stats.map((item) => {
+    const badge = item.practiced ? `已练 ${item.practiced} 个知识点` : "暂无数据";
+    return `<article><div><strong>${escapeHtml(item.moduleName)}</strong><span>平均掌握度 ${item.score}% · 等级 ${item.level}/4</span></div><span class="mastery-badge ${item.practiced ? "learning" : "unlearned"}">${badge}</span></article>`;
+  }).join("");
+}
+
+function syncTeacherDashboardClassSelect(classes, classId) {
+  const select = document.getElementById("teacherDashboardClassSelect");
+  if (!select) return;
+  select.innerHTML = classes.map((item) => {
+    const id = Number(item.class_id || item.id);
+    return `<option value="${id}"${id === Number(classId) ? " selected" : ""}>${escapeHtml(item.name || "未命名班级")}</option>`;
+  }).join("");
+  select.hidden = classes.length <= 1;   // 只有一个班级时不必给选择器
+  if (!select.dataset.bound) {
+    select.dataset.bound = "1";
+    select.addEventListener("change", () => {
+      classState.selectedClassId = Number(select.value);
+      loadTeacherClassOverview();
+    });
+  }
 }
 
 async function loadTeacherClassDetails(classId) {
@@ -4437,6 +4803,7 @@ async function loadExamWorkspace() {
   if (classState.role === "teacher") {
     await loadClassWorkspace();
     syncTeacherExamClasses();
+    ensureExamNodeCatalog();   // 不 await：自管加载态与错误态，不阻塞考试页其余部分
     return;
   }
   await loadStudentExams();
@@ -4509,7 +4876,7 @@ function renderExamPaper() {
   form.innerHTML = examState.questions.map((question, index) => `
     <fieldset class="exam-question">
       <legend><span>${index + 1}</span>${escapeHtml(question.question)}</legend>
-      <small>${escapeHtml(question.type)} · ${question.score} 分 · ${escapeHtml(question.nodeId)}</small>
+      <small>${escapeHtml(question.type)} · ${question.score} 分 · ${escapeHtml(findNodeName(question.nodeId))}</small>
       <label class="exam-answer-label" for="exam-answer-${question.id}">你的答案</label>
       <textarea id="exam-answer-${question.id}" data-question-id="${question.id}" rows="3" placeholder="${String(question.type).includes("选择") ? "输入选项字母，例如 A" : "输入完整作答过程"}"></textarea>
     </fieldset>
@@ -4621,16 +4988,248 @@ function syncTeacherExamClasses() {
   select.disabled = !classes.length;
   document.querySelector('#generateExamForm button[type="submit"]').disabled = !classes.length;
   document.getElementById("teacherExamClassCount").textContent = classes.length;
+  // 按钮被禁用时要说明原因，否则教师只会看到"点了没反应"
+  if (!classes.length) {
+    const target = document.getElementById("teacherExamResult");
+    if (target) {
+      target.className = "exam-result empty-state";
+      target.textContent = "尚未创建班级，无法发布考试。请先到「班级管理」创建班级，学生凭邀请码加入后再发布。";
+    }
+  }
+}
+
+// ==================== 在线考试：知识点选择器 ====================
+// 组卷的知识点唯一数据源是 data/documents/题库节点映射.md（后端 recommender 按 node_id 精确查找）。
+// 下面这张表是该文件的真实快照（78 个知识点 / 88 道题），用于前端预检提示；
+// 最终能否组卷仍以后端 POST /api/exam/generate 的返回为准。
+// 题库文件变更后需按《部署说明.md》给出的命令重新生成。
+// 注意：初等数论(nt_)/组合数学(cm_)/代数结构(ag_) 在该文件中一道题都没有，故不在此表内。
+// 读取方是 examNodeState 相关的选择器函数；examNodeState 本身声明在文件开头（TDZ 原因）。
+const EXAM_NODE_QUESTION_COUNTS = {
+  pl_01_01: 2, pl_01_02: 3, pl_02_01: 2, pl_02_02: 3, pl_02_03: 1, pl_02_04: 2,
+  pl_03_01: 2, pl_03_02: 1, pl_03_03: 1, pl_03_04: 1, pl_03_05: 2, pl_03_06: 1, pl_03_07: 1, pl_03_08: 1,
+  fl_01_01: 1, fl_01_02: 1, fl_01_03: 1, fl_01_04: 1, fl_02_01: 1, fl_02_02: 1, fl_02_03: 1, fl_02_04: 1, fl_02_05: 1, fl_02_06: 1,
+  st_01_01: 1, st_01_02: 1, st_01_03: 1, st_01_04: 1, st_02_01: 1, st_02_02: 1, st_02_03: 1, st_02_04: 1, st_02_05: 1, st_03_01: 1, st_03_02: 1, st_03_03: 1,
+  mi_01_01: 1, mi_01_02: 2, mi_02_01: 1, mi_03_01: 1, mi_03_02: 1, mi_03_03: 1, mi_03_04: 1, mi_03_05: 1,
+  rel_01_01: 1, rel_01_02: 1, rel_01_03: 1, rel_02_01: 1, rel_02_02: 1, rel_02_03: 1, rel_02_04: 1, rel_02_05: 1,
+  rel_03_01: 1, rel_03_02: 1, rel_03_03: 1, rel_03_04: 1, rel_04_01: 1, rel_04_02: 1, rel_04_03: 1, rel_04_04: 1, rel_04_05: 1,
+  gt_01_01: 1, gt_01_02: 1, gt_01_03: 1, gt_01_04: 1, gt_02_01: 1, gt_02_02: 1, gt_02_03: 1, gt_02_04: 1,
+  gt_03_01: 1, gt_03_02: 1, gt_03_03: 1, gt_03_04: 1, gt_03_05: 1, gt_04_01: 1, gt_04_02: 1, gt_04_03: 1, gt_04_04: 1,
+};
+
+async function ensureExamNodeCatalog() {
+  const list = document.getElementById("teacherExamNodeList");
+  if (!list || examNodeState.catalog.length || examNodeState.loading) return;
+  examNodeState.loading = true;
+  list.className = "node-picker-list empty-state";
+  list.textContent = "正在加载知识点目录…";
+  try {
+    let modules = graphState.modules;
+    if (!modules || !modules.length) {
+      // 不调用 loadKnowledgeGraph()：那会往隐藏的图谱容器里 init echarts 并改 graphState.loaded。
+      // 这里只取数据，归一化后也不写回 graphState，避免干扰图谱页自己的加载判定。
+      const response = await fetch(`${KB_API_BASE_URL}/kb/knowledge-graph`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `知识图谱接口返回 ${response.status}`);
+      modules = normalizeKnowledgeGraph(data);
+    }
+    examNodeState.catalog = buildExamNodeCatalog(modules);
+    examNodeState.loading = false;
+    renderExamNodePicker();
+  } catch (error) {
+    examNodeState.loading = false;
+    list.className = "node-picker-list error-state";
+    list.textContent = `知识点目录加载失败：${error.message}。可刷新页面重试。`;
+  }
+}
+
+function buildExamNodeCatalog(modules) {
+  const catalog = [];
+  (modules || []).forEach((module) => {
+    (module.children || []).forEach((concept) => {
+      (concept.items || []).forEach((item) => {
+        const nodeId = item.nodeId;
+        if (!nodeId) return;
+        catalog.push({
+          nodeId,
+          name: NODE_NAME_FALLBACKS[nodeId] || item.name || nodeId,   // 短中文名，不用 findNodeName 的长路径
+          conceptName: concept.name || "未分组",
+          moduleId: module.nodeId || module.id,
+          moduleName: module.name || "未命名模块",
+          questionCount: Number(EXAM_NODE_QUESTION_COUNTS[nodeId] || 0),
+        });
+      });
+    });
+  });
+  return catalog;
+}
+
+function examNodeName(nodeId) {
+  // 目录未加载完就被选中的情况兜底为 node_id 本身 —— 绝不猜名字
+  return NODE_NAME_FALLBACKS[nodeId]
+    || examNodeState.catalog.find((node) => node.nodeId === nodeId)?.name
+    || nodeId;
+}
+
+function renderExamNodePicker() {
+  const list = document.getElementById("teacherExamNodeList");
+  if (!list) return;
+  const query = examNodeState.query.trim().toLowerCase();
+  const pool = examNodeState.catalog.filter((node) => !examNodeState.onlyWithQuestions || node.questionCount);
+  const hit = (node, fields) => fields.some((value) => String(value || "").toLowerCase().includes(query));
+  // 两段式匹配：先只按知识点名 / node_id 精确找。若一个都没命中，再放宽到模块名与所属概念名。
+  // 不能一上来就匹配概念名 —— 概念名往往包含知识点名（如"等价与德摩根律"含"德摩根"），
+  // 搜"德摩根"会把同概念下的兄弟知识点一并带出来，教师看到的结果比想要的宽。
+  let visible = query ? pool.filter((node) => hit(node, [node.name, node.nodeId])) : pool;
+  if (query && !visible.length) {
+    visible = pool.filter((node) => hit(node, [node.moduleName, node.conceptName]));
+  }
+
+  if (!visible.length) {
+    list.className = "node-picker-list empty-state";
+    list.textContent = examNodeState.onlyWithQuestions
+      ? "没有匹配的知识点。可取消「只看有题知识点」查看全部模块。"
+      : "没有匹配的知识点，请更换关键词。";
+    renderExamNodeSelection();
+    return;
+  }
+
+  const byModule = new Map();
+  visible.forEach((node) => {
+    if (!byModule.has(node.moduleId)) byModule.set(node.moduleId, { name: node.moduleName, concepts: new Map() });
+    const bucket = byModule.get(node.moduleId);
+    if (!bucket.concepts.has(node.conceptName)) bucket.concepts.set(node.conceptName, []);
+    bucket.concepts.get(node.conceptName).push(node);
+  });
+
+  list.className = "node-picker-list";
+  list.innerHTML = Array.from(byModule.entries()).map(([moduleId, module]) => {
+    const nodes = Array.from(module.concepts.values()).flat();
+    const usable = nodes.filter((node) => node.questionCount);
+    const usableTotal = usable.reduce((sum, node) => sum + node.questionCount, 0);
+    const header = usable.length
+      ? `<span>可出题 ${usable.length} 个知识点 / ${usableTotal} 道题</span><button type="button" class="ghost-button" data-select-module="${escapeHtml(moduleId)}">选中有题项</button>`
+      : '<span class="node-picker-none">题库暂无题目</span>';
+    const groups = Array.from(module.concepts.entries()).map(([conceptName, conceptNodes]) => `
+      <div class="node-picker-group">
+        <h5>${escapeHtml(conceptName)}</h5>
+        ${conceptNodes.map((node) => `
+          <label class="node-option${node.questionCount ? "" : " node-option-empty"}" title="${node.questionCount ? `题库现有 ${node.questionCount} 道题` : "题库中该知识点暂无题目，选中后无法用于组卷"}">
+            <input type="checkbox" data-node-checkbox="${escapeHtml(node.nodeId)}"${node.questionCount ? "" : " disabled"}${examNodeState.selected.has(node.nodeId) ? " checked" : ""}>
+            <span>${escapeHtml(node.name)}</span>
+            <small>${node.questionCount ? `${node.questionCount} 道题` : "暂无题目"}</small>
+          </label>`).join("")}
+      </div>`).join("");
+    return `<section class="node-picker-module" data-module="${escapeHtml(moduleId)}"><header><strong>${escapeHtml(module.name)}</strong>${header}</header>${groups}</section>`;
+  }).join("");
+
+  list.querySelectorAll("[data-node-checkbox]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const nodeId = checkbox.dataset.nodeCheckbox;
+      if (checkbox.checked) examNodeState.selected.add(nodeId);
+      else examNodeState.selected.delete(nodeId);
+      renderExamNodeSelection();
+    });
+  });
+  list.querySelectorAll("[data-select-module]").forEach((button) => {
+    button.addEventListener("click", () => {
+      examNodeState.catalog
+        .filter((node) => node.questionCount && String(node.moduleId) === button.dataset.selectModule)
+        .forEach((node) => examNodeState.selected.add(node.nodeId));
+      renderExamNodePicker();
+    });
+  });
+  renderExamNodeSelection();
+}
+
+function renderExamNodeSelection() {
+  const box = document.getElementById("teacherExamNodeSelected");
+  const budget = document.getElementById("teacherExamNodeBudget");
+  const selectedIds = Array.from(examNodeState.selected);
+
+  if (box) {
+    if (!selectedIds.length) {
+      box.className = "node-picker-selected empty-state";
+      box.textContent = "尚未选择知识点。可按模块分组勾选，或点「载入示例」。";
+    } else {
+      box.className = "node-picker-selected";
+      box.innerHTML = selectedIds.map((nodeId) => `<span class="node-chip">${escapeHtml(examNodeName(nodeId))}<small>${escapeHtml(nodeId)}</small><button type="button" data-remove-node="${escapeHtml(nodeId)}" aria-label="移除">×</button></span>`).join("");
+      box.querySelectorAll("[data-remove-node]").forEach((button) => {
+        button.addEventListener("click", () => {
+          examNodeState.selected.delete(button.dataset.removeNode);
+          renderExamNodePicker();
+        });
+      });
+    }
+  }
+
+  if (!budget) return;
+  if (!selectedIds.length) {
+    budget.className = "node-picker-budget";
+    budget.textContent = "";
+    return;
+  }
+  const available = selectedIds.reduce((sum, nodeId) => sum + Number(EXAM_NODE_QUESTION_COUNTS[nodeId] || 0), 0);
+  const need = Number(document.getElementById("teacherExamCount")?.value || 0);
+  const enough = !need || available >= need;
+  budget.className = `node-picker-budget${enough ? "" : " warn"}`;
+  budget.textContent = enough
+    ? `已选 ${selectedIds.length} 个知识点，题库可用题目合计 ${available} 道（题目数量 ${need || "-"} 道）。`
+    : `已选 ${selectedIds.length} 个知识点，题库可用题目合计仅 ${available} 道，少于题目数量 ${need} 道，生成会失败：请调小题目数量或再选几个知识点。`;
+}
+
+// 示例 = 按题量从多到少累加，直到累计题量 ≥ 当前题目数量。
+// 纯由 EXAM_NODE_QUESTION_COUNTS 推导，不硬编码任何 node_id，也不代表"推荐教学重点"。
+function loadExamNodeExample() {
+  const need = Math.max(1, Number(document.getElementById("teacherExamCount")?.value || 5));
+  const sorted = examNodeState.catalog
+    .filter((node) => node.questionCount)
+    .sort((a, b) => b.questionCount - a.questionCount || a.nodeId.localeCompare(b.nodeId));
+  examNodeState.selected.clear();
+  let total = 0;
+  for (const node of sorted) {
+    if (total >= need) break;
+    examNodeState.selected.add(node.nodeId);
+    total += node.questionCount;
+  }
+  renderExamNodePicker();
+}
+
+// 后端 409 的原始文案是"现有题库仅找到 N 道匹配题目，少于请求的 M 道"（面向开发者）。
+// 这里只把文案翻译成教师能懂的话并给出可执行建议，不改任何组卷/判分逻辑，也不编造题量。
+function explainExamGenerateError(message) {
+  const match = String(message || "").match(/仅找到\s*(\d+)\s*道匹配题目，少于请求的\s*(\d+)\s*道/);
+  if (!match) return `发布失败：${message}`;
+  const found = Number(match[1]);
+  const need = Number(match[2]);
+  return `生成失败：所选知识点在题库中共有 ${found} 道题，少于需要生成的 ${need} 道。`
+    + `处理办法：把「题目数量」改为 ${found > 0 ? found : 1}，或再勾选几个标着「N 道题」的知识点。`;
 }
 
 async function generateTeacherExam(event) {
   event.preventDefault();
   const classId = Number(document.getElementById("examClassSelect").value);
   const title = document.getElementById("teacherExamTitle").value.trim();
-  const nodeIds = document.getElementById("teacherExamNodes").value.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+  const nodeIds = Array.from(examNodeState.selected);
   const questionCount = Number(document.getElementById("teacherExamCount").value);
   const target = document.getElementById("teacherExamResult");
-  if (!classId || !title || !nodeIds.length) return;
+  // 原来是 `if (!classId || !title || !nodeIds.length) return;` —— 静默返回，
+  // 教师点了「生成并发布」界面毫无反应。改为逐项可读提示。
+  const problems = [];
+  if (!classId) problems.push("请先选择班级（还没有班级请先到「班级管理」创建）");
+  if (!title) problems.push("请填写考试标题");
+  if (!nodeIds.length) problems.push("请至少选择 1 个知识点");
+  if (!Number.isFinite(questionCount) || questionCount < 1) problems.push("题目数量需为不小于 1 的整数");
+  if (problems.length) {
+    target.className = "exam-result error-state";
+    target.textContent = `无法生成试卷：${problems.join("；")}。`;
+    return;
+  }
+  if (nodeIds.length > 20) {
+    target.className = "exam-result error-state";
+    target.textContent = `知识点最多选择 20 个（后端限制），当前已选 ${nodeIds.length} 个。`;
+    return;
+  }
   target.className = "exam-result empty-state";
   target.textContent = "正在从题库生成试卷...";
   try {
@@ -4651,7 +5250,7 @@ async function generateTeacherExam(event) {
     document.getElementById("loadExamResultsButton").disabled = false;
   } catch (error) {
     target.className = "exam-result error-state";
-    target.textContent = `发布失败：${error.message}`;
+    target.textContent = explainExamGenerateError(error.message);
   }
 }
 

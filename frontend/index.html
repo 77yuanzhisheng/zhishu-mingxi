@@ -5,6 +5,45 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离散数学智能学习平台</title>
   <link rel="stylesheet" href="style.css?v=45">
+  <!-- 教师端修复专用样式。写在这里（而非 style.css）是为了不引出第三个 ?v= 版本号，
+       避免与其它补丁包的缓存击穿改动相互覆盖。 -->
+  <style>
+    /* 知识点字段横跨 .teacher-exam-form 的「150px + 1fr」两列网格 */
+    .exam-node-field { grid-column: 1 / -1; display: grid; gap: 8px; }
+
+    .node-picker { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #ffffff; }
+    .node-picker-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    /* 必须覆盖 .teacher-exam-form input 的 width:100% / min-height:42px，否则复选框会被撑开 */
+    .node-picker input[type="search"] { flex: 1 1 240px; width: auto; min-height: 38px; padding: 7px 10px; border: 1px solid #bfcfdd; border-radius: 7px; }
+    .node-picker input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; padding: 0; margin: 0; flex: none; }
+    .node-picker .ghost-button { width: auto; min-height: 38px; padding: 7px 12px; }
+
+    .node-picker-only { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font-size: 13px; cursor: pointer; }
+
+    .node-picker-selected { display: flex; flex-wrap: wrap; gap: 6px; }
+    .node-picker-selected.empty-state { display: block; }
+    .node-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid #bfd9cd; border-radius: 999px; background: #eef8f2; font-size: 13px; }
+    .node-chip small { color: var(--muted); font-size: 11px; }
+    .node-chip button { width: 18px; min-height: 0; height: 18px; padding: 0; border: none; border-radius: 50%; background: #d8e8de; color: #35604c; font-size: 13px; line-height: 1; cursor: pointer; }
+
+    .node-picker-budget { color: var(--muted); font-size: 13px; }
+    .node-picker-budget.warn { color: var(--danger); font-weight: 600; }
+
+    .node-picker-list { display: grid; gap: 12px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+    .node-picker-list.empty-state, .node-picker-list.error-state { display: block; max-height: none; }
+    .node-picker-module { display: grid; gap: 8px; }
+    .node-picker-module > header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    .node-picker-module > header span { color: var(--muted); font-size: 12px; }
+    .node-picker-none { color: var(--muted); font-size: 12px; }
+    .node-picker-group { display: grid; gap: 4px; padding-left: 10px; }
+    .node-picker-group h5 { margin: 4px 0 2px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .node-option { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+    .node-option:hover { background: #f2f8fc; }
+    .node-option span { flex: 1 1 auto; }
+    .node-option small { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .node-option-empty { cursor: not-allowed; opacity: .55; }
+    .node-option-empty:hover { background: transparent; }
+  </style>
 </head>
 <body>
   <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
@@ -73,7 +112,7 @@
       <nav class="nav-list" aria-label="功能导航">
         <button class="nav-item active" data-tab="dashboard">
           <span>首页</span>
-          <strong>个人仪表盘</strong>
+          <strong id="navTitleDashboard">个人仪表盘</strong>
         </button>
         <button class="nav-item" data-tab="chat">
           <span>问答</span>
@@ -87,13 +126,13 @@
           <span>图谱</span>
           <strong>知识图谱</strong>
         </button>
-        <button class="nav-item" data-tab="practice">
+        <button class="nav-item" data-tab="practice" data-role-only="student">
           <span>练习</span>
           <strong>自测练习</strong>
         </button>
         <button class="nav-item" data-tab="learning">
           <span>分析</span>
-          <strong>学情面板</strong>
+          <strong id="navTitleLearning">学情面板</strong>
         </button>
         <button class="nav-item" data-tab="companion" data-role-only="student">
           <span>陪伴</span>
@@ -140,6 +179,8 @@
       </header>
 
       <section id="dashboard" class="panel active">
+        <!-- 学生视图：原有内容一字未动，仅包一层容器，由 updateRoleInterface 按角色切换显隐 -->
+        <div id="studentDashboardView">
         <div class="dashboard-header">
           <div>
             <p class="eyebrow">Personal Learning</p>
@@ -175,6 +216,46 @@
               <div id="dashboardTextbookRecommendations"></div>
             </div>
           </aside>
+        </div>
+        </div>
+
+        <!-- 教师视图：班级学情总览。数据来自既有的 GET /api/class/{id}/report，不新增接口。 -->
+        <div id="teacherDashboardView" hidden>
+          <div class="dashboard-header">
+            <div>
+              <p class="eyebrow">Class Analytics</p>
+              <h3>班级学情总览</h3>
+              <p id="teacherDashboardSummary" class="hint">正在读取班级学情…</p>
+            </div>
+            <div class="button-row">
+              <select id="teacherDashboardClassSelect" aria-label="选择班级" hidden></select>
+              <button id="teacherDashboardRefresh" type="button">刷新学情</button>
+            </div>
+          </div>
+
+          <div id="teacherDashboardEmpty" class="data-list empty-state" hidden></div>
+
+          <div id="teacherDashboardBody">
+            <div class="dashboard-metrics">
+              <article><span>班级学生</span><strong id="teacherClassStudentCount">0</strong><small>已加入班级的学生数</small></article>
+              <article><span>班级平均正确率</span><strong id="teacherClassAccuracy">--</strong><small>全班累计答题正确率</small></article>
+              <article><span>待关注学生</span><strong id="teacherClassAttention">0</strong><small>存在薄弱知识点的学生</small></article>
+              <article class="alert-metric"><span>全班薄弱知识点</span><strong id="teacherWeakNodeCount">0</strong><small>按薄弱人数排序</small></article>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="work-panel">
+                <div class="section-title">
+                  <div><p class="eyebrow">Module Mastery</p><h3>班级模块掌握度</h3></div>
+                </div>
+                <div id="teacherClassRadarChart" class="learning-chart">正在读取班级模块掌握度…</div>
+              </section>
+              <aside class="insight-panel">
+                <h3>全班薄弱知识点</h3>
+                <div id="teacherWeakNodeRanking" class="learning-node-list empty-state">暂无数据。</div>
+              </aside>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -396,6 +477,8 @@
       </section>
 
       <section id="learning" class="panel">
+        <!-- 学生视图：原有内容一字未动，仅包一层容器，由 updateRoleInterface 按角色切换显隐 -->
+        <div id="studentLearningView">
         <div class="learning-grid">
           <section class="work-panel">
             <div class="section-title">
@@ -460,9 +543,38 @@
             </div>
           </aside>
         </div>
+        </div>
+
+        <!-- 教师视图：班级学情分析（全班汇总 + 逐生明细），数据同 GET /api/class/{id}/report -->
+        <div id="teacherLearningView" hidden>
+          <div class="dashboard-header">
+            <div>
+              <p class="eyebrow">Class Detail</p>
+              <h3>班级学情分析</h3>
+              <p id="teacherLearningSummary" class="hint">正在读取班级学情…</p>
+            </div>
+          </div>
+
+          <div class="learning-grid">
+            <section class="work-panel">
+              <div class="section-title">
+                <div><p class="eyebrow">Students</p><h3>学生学情明细</h3></div>
+              </div>
+              <div id="teacherStudentDetailList" class="student-report-list empty-state">正在读取学生学情…</div>
+            </section>
+            <aside class="insight-panel">
+              <h3>模块掌握度（全班平均）</h3>
+              <div id="teacherModuleTable" class="student-report-list empty-state">暂无数据。</div>
+              <div class="study-card">
+                <h4>全班薄弱知识点（完整）</h4>
+                <div id="teacherWeakNodeRankingFull" class="learning-node-list empty-state">暂无数据。</div>
+              </div>
+            </aside>
+          </div>
+        </div>
       </section>
 
-      <section id="practice" class="panel">
+      <section id="practice" class="panel" data-role-only="student">
         <div class="practice-grid">
           <section class="work-panel">
             <div class="section-title">
@@ -587,7 +699,7 @@
         </div>
       </section>
 
-      <section id="companion" class="panel">
+      <section id="companion" class="panel" data-role-only="student">
         <div class="companion-layout">
           <section class="work-panel companion-main">
             <div class="section-title"><div><h3>今日学习</h3><p class="hint">结合学情和最近练习，安排一个能完成的学习回合。</p></div></div>
@@ -727,8 +839,20 @@
               <select id="examClassSelect" required></select>
               <label for="teacherExamTitle">考试标题</label>
               <input id="teacherExamTitle" required maxlength="200" placeholder="例如 命题逻辑单元测试">
-              <label for="teacherExamNodes">知识点 node_id</label>
-              <input id="teacherExamNodes" required value="pl_02_02,pl_03_01" placeholder="多个 ID 使用英文逗号分隔">
+              <div class="exam-node-field">
+                <label for="teacherExamNodeSearch">知识点（可多选）</label>
+                <div class="node-picker">
+                  <div class="node-picker-toolbar">
+                    <input id="teacherExamNodeSearch" type="search" placeholder="搜索中文名或 node_id，例如：德摩根律 / pl_02_02">
+                    <button type="button" id="teacherExamNodeExample" class="ghost-button">载入示例</button>
+                    <button type="button" id="teacherExamNodeClear" class="ghost-button">清空</button>
+                  </div>
+                  <label class="node-picker-only"><input type="checkbox" id="teacherExamNodeOnlyWithQuestions" checked> 只看有题知识点</label>
+                  <div id="teacherExamNodeSelected" class="node-picker-selected empty-state">尚未选择知识点。</div>
+                  <div id="teacherExamNodeBudget" class="node-picker-budget"></div>
+                  <div id="teacherExamNodeList" class="node-picker-list empty-state">正在加载知识点目录…</div>
+                </div>
+              </div>
               <label for="teacherExamCount">题目数量</label>
               <input id="teacherExamCount" type="number" min="1" max="50" value="5" required>
               <button type="submit">生成并发布</button>
@@ -790,8 +914,8 @@
   </script>
   <script defer src="vendor/mathjax/tex-chtml.js"></script>
   <script src="grading-utils.js?v=4"></script>
-  <script src="team4-utils.js?v=4"></script>
+  <script src="team4-utils.js?v=5"></script>
   <script src="chat-stream-utils.js?v=1"></script>
-  <script defer src="app.js?v=60"></script>
+  <script defer src="app.js?v=61"></script>
 </body>
 </html>
