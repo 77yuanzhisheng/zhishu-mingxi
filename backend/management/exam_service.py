@@ -18,6 +18,7 @@ from backend.management.models import (
     ExamGenerateResponse,
     ExamQuestion,
     ExamResultsResponse,
+    ExamStatusUpdateResponse,
     ExamSubmitResponse,
     NodeExamStatistic,
     StudentExamDetail,
@@ -25,6 +26,7 @@ from backend.management.models import (
     StudentExamQuestion,
     StudentExamResult,
     TeacherExamInfo,
+    TeacherExamPaper,
 )
 from backend.management.question_source import recommend_exam_questions
 
@@ -44,7 +46,12 @@ def _question_from_row(row, include_answer: bool = True) -> ExamQuestion:
 
 
 def get_student_exams(user_id: int, database_path=None) -> list[StudentExamInfo]:
-    """Return published exams for a student's class, including submission state."""
+    """Return published exams for a student's class, including submission state.
+
+    2026-09-14 起把 'closed' 也纳入：教师「结束考试」之后，学生端那条卷子应当**仍在列表里
+    并标示为已结束**（只是不再允许作答），而不是整条消失。作答闸门在 submit_exam 里
+    （status != 'published' → ConflictError），所以放宽这个 SELECT 不会放进新的交卷。
+    """
 
     init_database(database_path)
     with connection_scope(database_path) as connection:
@@ -61,7 +68,7 @@ def get_student_exams(user_id: int, database_path=None) -> list[StudentExamInfo]
                        WHERE s.exam_id = e.id AND s.user_id = ?
                    ) AS submitted
             FROM exams e
-            WHERE e.class_id = ? AND e.status = 'published'
+            WHERE e.class_id = ? AND e.status IN ('published', 'closed')
             ORDER BY e.created_at DESC, e.id DESC
             """,
             (user_id, user["class_id"]),
@@ -175,6 +182,9 @@ def generate_exam(
     node_ids: list[str],
     question_count: int,
     database_path=None,
+    # 题型多选。刻意排在 database_path **后面**：现有测试与调用方都是按位置把
+    # database_path 传在第 6 个参数上的，插在前面会把它们全部打断。
+    question_types: list[str] | None = None,
 ) -> ExamGenerateResponse:
     init_database(database_path)
     with connection_scope(database_path) as connection:
@@ -184,10 +194,14 @@ def generate_exam(
         if teacher["role"] != "admin" and class_row["teacher_id"] != teacher_id:
             raise PermissionDeniedError("只能为自己管理的班级生成考试")
 
-    questions = recommend_exam_questions(node_ids, question_count)
+    questions = recommend_exam_questions(node_ids, question_count, question_types)
     if len(questions) < question_count:
+        # ⚠️ 「仅找到 N 道匹配题目，少于请求的 M 道」这个子串被前端
+        # explainExamGenerateError() 的正则抠出来解析题量 —— 只能在**末尾追加**，
+        # 不能改写中间任何一段，否则教师端会退化成直接显示这条面向开发者的原文。
         raise ConflictError(
             f"现有题库仅找到 {len(questions)} 道匹配题目，少于请求的 {question_count} 道"
+            + (f"（已按题型筛选：{'、'.join(question_types)}）" if question_types else "")
         )
     question_score = round(100 / question_count, 2)
     scores = [question_score] * question_count
@@ -416,4 +430,156 @@ def get_exam_results(exam_id: int, requester_id: int, database_path=None):
         ],
         node_statistics=node_statistics,
         weak_nodes=weak_nodes,
+    )
+
+
+# ==================== 教师校对 / 结束考试 / 学生回看（2026-09-14） ====================
+
+# 允许切换到的状态。'draft' 不在内：generate_exam 一律建成 'published'，
+# 全站从来没有写入过 draft，所以不接受。
+_STATUS_MESSAGES = {
+    "closed": "考试已结束，学生不能再作答；已交卷的学生仍可回看自己的成绩。",
+    "published": "考试已重新开放，学生可以继续作答。",
+}
+
+
+def get_exam_paper_for_teacher(
+    exam_id: int, requester_id: int, database_path=None
+) -> TeacherExamPaper:
+    """教师校对视图：题干 + 参考答案（**只读**，不写任何数据）。
+
+    单独开一个函数、而不是给 get_student_exam 加一个 include_answer 开关，是因为两者的
+    授权模型根本不同：get_student_exam 只要求登录（学生答自己的卷子也走它），
+    连 answer 列都不 SELECT；这里必须先 require_class_manager 钉死班级归属，才敢回答案。
+    把开关加进那个函数，等于给「任何登录者 + 任意 exam_id」开了一条偷答案的路。
+    """
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        exam = connection.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
+        if exam is None:
+            raise ResourceNotFoundError(f"考试 {exam_id} 不存在")
+        class_row = connection.execute(
+            "SELECT name FROM classes WHERE id = ?", (exam["class_id"],)
+        ).fetchone()
+    require_class_manager(requester_id, exam["class_id"], database_path)
+    with connection_scope(database_path) as connection:
+        questions = connection.execute(
+            "SELECT * FROM exam_questions WHERE exam_id = ? ORDER BY sort_order", (exam_id,)
+        ).fetchall()
+    return TeacherExamPaper(
+        exam_id=exam["id"],
+        title=exam["title"],
+        class_id=exam["class_id"],
+        class_name=class_row["name"] if class_row is not None else "",
+        status=exam["status"],
+        created_at=exam["created_at"],
+        total_score=exam["total_score"],
+        questions=[_question_from_row(row) for row in questions],
+    )
+
+
+def set_exam_status(
+    exam_id: int, requester_id: int, status: str, database_path=None
+) -> ExamStatusUpdateResponse:
+    """结束考试（closed）/ 重新开放（published）。**只改 exams.status 一列**，不动任何作答数据。
+
+    为什么不需要迁移：'closed' 早就在 exams.status 的 CHECK 约束里
+    （learning/database.py 的 SCHEMA_SQL），而交卷闸门 submit_exam 里那句
+    `if exam["status"] != "published": raise ConflictError` 本来就认它。
+    所以这是真正的「一列一值」改动 —— 没有加列、没有改表、没有动历史数据。
+
+    幂等：本来就是目标状态时直接返回成功（老师连点两下不该看到红色报错）。
+    """
+
+    if status not in _STATUS_MESSAGES:
+        raise ConflictError(f"不支持的考试状态：{status}")
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        exam = connection.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
+        if exam is None:
+            raise ResourceNotFoundError(f"考试 {exam_id} 不存在")
+    require_class_manager(requester_id, exam["class_id"], database_path)
+
+    current = exam["status"]
+    if current == status:
+        return ExamStatusUpdateResponse(
+            exam_id=exam_id,
+            status=current,
+            message=f"{_STATUS_MESSAGES[status]}（该考试已是此状态，未做改动）",
+        )
+    if current not in _STATUS_MESSAGES:
+        raise ConflictError(f"考试当前状态为 {current}，不支持切换")
+
+    with connection_scope(database_path) as connection:
+        # CAS：把「读到的那个状态」一并写进 WHERE。两条请求同时进来时必有一条 rowcount=0，
+        # 不存在「先 SELECT 判断、再 UPDATE」中间被别人插一脚的窗口。
+        cursor = connection.execute(
+            "UPDATE exams SET status = ? WHERE id = ? AND status = ?",
+            (status, exam_id, current),
+        )
+        changed = cursor.rowcount
+    if not changed:
+        # 只有并发才会走到这里（同状态的重复操作上面已经返回了）。重读一次、如实回报，
+        # 而不是报错 —— 老师的意图已经达成了，没有必要给他一个红色提示。
+        with connection_scope(database_path) as connection:
+            latest = connection.execute(
+                "SELECT status FROM exams WHERE id = ?", (exam_id,)
+            ).fetchone()
+        if latest is None:
+            raise ResourceNotFoundError(f"考试 {exam_id} 不存在")
+        return ExamStatusUpdateResponse(
+            exam_id=exam_id,
+            status=latest["status"],
+            message=f"该考试的状态已被另一处操作改成了 {latest['status']}，本次未再改动。",
+        )
+    return ExamStatusUpdateResponse(
+        exam_id=exam_id, status=status, message=_STATUS_MESSAGES[status]
+    )
+
+
+def get_student_submission(exam_id: int, user_id: int, database_path=None) -> ExamSubmitResponse:
+    """学生回看**自己**已交卷的得分与逐题对错（只读）。
+
+    这是既有缺口，不是「结束考试」造成的：交卷时后端把 ExamSubmitResponse 回了一次，
+    前端渲染完就丢了，刷新页面成绩就没了。复用同一个响应模型，前端可以直接用
+    渲染交卷结果那套代码。
+    """
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        submission = connection.execute(
+            "SELECT * FROM exam_submissions WHERE exam_id = ? AND user_id = ?",
+            (exam_id, user_id),
+        ).fetchone()
+        if submission is None:
+            raise ResourceNotFoundError("尚未提交本次考试")
+        rows = connection.execute(
+            """
+            SELECT a.question_id, q.node_id, a.is_correct, a.score, a.review_status
+            FROM exam_answers a
+            JOIN exam_questions q ON q.id = a.question_id
+            WHERE a.submission_id = ?
+            ORDER BY q.sort_order
+            """,
+            (submission["id"],),
+        ).fetchall()
+    return ExamSubmitResponse(
+        submission_id=submission["id"],
+        exam_id=submission["exam_id"],
+        user_id=submission["user_id"],
+        total_score=submission["total_score"],
+        status=submission["status"],
+        answers=[
+            AnswerResult(
+                question_id=row["question_id"],
+                node_id=row["node_id"],
+                # 库里存的是 0/1/NULL；None 表示这道题是主观题、还没人工复核。
+                is_correct=None if row["is_correct"] is None else bool(row["is_correct"]),
+                score=row["score"],
+                review_status=row["review_status"],
+            )
+            for row in rows
+        ],
     )

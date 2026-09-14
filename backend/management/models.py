@@ -81,6 +81,7 @@ class ExamGenerateRequest(BaseModel):
                 "title": "命题逻辑测试",
                 "node_ids": ["pl_02_02", "pl_03_01"],
                 "question_count": 5,
+                "question_types": ["概念题", "选择题"],
             }
         }
     )
@@ -91,12 +92,20 @@ class ExamGenerateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     node_ids: list[str] = Field(min_length=1, max_length=20)
     question_count: int = Field(default=5, ge=1, le=50)
+    # 教师组卷的「题型多选」。可选：不传 / 空列表 = 不限题型，与加这个字段之前的行为一致。
+    # 上限 3 对应题库现有的三种题型（概念题 / 证明题 / 选择题）。刻意不写成 Literal 枚举：
+    # 题库以后加题型时这里不必跟着改，传了题库里没有的值也只是筛不出题（走 409），不会 500。
+    question_types: list[str] | None = Field(default=None, max_length=3)
 
     @model_validator(mode="after")
     def normalize_nodes(self) -> "ExamGenerateRequest":
         self.node_ids = list(dict.fromkeys(node.strip() for node in self.node_ids if node.strip()))
         if not self.node_ids:
             raise ValueError("node_ids 不能为空")
+        # 去重去空之后仍为空 = 老师一个题型都没勾（或全清空了）→ 落回 None，
+        # 下游只需要判 `if types` 一处，不必再区分 None / [] 两种「不限」。
+        cleaned = [item.strip() for item in (self.question_types or []) if item and item.strip()]
+        self.question_types = list(dict.fromkeys(cleaned)) or None
         return self
 
 
@@ -148,6 +157,42 @@ class TeacherExamInfo(BaseModel):
     total_score: float
     question_count: int
     submitted_count: int
+
+
+class TeacherExamPaper(BaseModel):
+    """教师校对视图：题干 + **参考答案**。
+
+    与 StudentExamDetail 的唯一区别就是含 answer（复用 ExamQuestion —— 那个模型本来就有
+    answer 字段，只是学生端那两个查询刻意不 SELECT 它）。
+
+    正因为含答案，它只能挂在带**班级归属校验**的端点上，**绝不能**并进
+    GET /api/exam/{exam_id} —— 那个端点只要求登录（学生答自己的卷子也要走它），
+    一旦让它回 answer，任何登录者拿到任意 exam_id 就能偷到任意试卷的答案。
+    """
+
+    exam_id: int
+    title: str
+    class_id: int
+    class_name: str
+    status: str
+    created_at: datetime
+    total_score: float
+    questions: list[ExamQuestion]
+
+
+class ExamStatusUpdateRequest(BaseModel):
+    # 只接受这两个目标态：
+    #   closed    = 结束考试（学生端仍看得到卷子，但不能再作答；已交卷者仍能回看自己的成绩）
+    #   published = 重新开放（误点「结束考试」的撤销）
+    # draft 从未被写入过（generate_exam 一律建成 published），所以不接受 —— 传了就是 422。
+    status: Literal["closed", "published"]
+
+
+class ExamStatusUpdateResponse(BaseModel):
+    exam_id: int
+    status: str
+    # 给前端直接显示的行内文案（本项目没有 toast，提示都是常驻文本）。
+    message: str
 
 
 class StudentExamQuestion(BaseModel):

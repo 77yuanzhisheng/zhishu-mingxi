@@ -35,8 +35,13 @@ def _resolve_choice_answer(content: str, answers: list[tuple[str, str]]) -> str 
     return None
 
 
-def recommend_exam_questions(node_ids: list[str], count: int) -> list[dict]:
-    """Reuse KB recommendations; never synthesize questions or answers."""
+def recommend_exam_questions(
+    node_ids: list[str], count: int, types: list[str] | None = None
+) -> list[dict]:
+    """Reuse KB recommendations; never synthesize questions or answers.
+
+    types: 只从这些题型里出题（None 或空 = 不限题型，行为与加这个参数之前完全一致）。
+    """
 
     recommender = get_recommender()
     answers = _load_choice_answers()
@@ -45,7 +50,9 @@ def recommend_exam_questions(node_ids: list[str], count: int) -> list[dict]:
     per_node = max(count, 5)
     for node_id in node_ids:
         node_questions: list[dict] = []
-        for question in recommender.recommend(node_id=node_id, level=2, count=per_node):
+        for question in recommender.recommend(
+            node_id=node_id, level=2, count=per_node, types=types
+        ):
             key = (question["node_id"], question["content"])
             if key in seen:
                 continue

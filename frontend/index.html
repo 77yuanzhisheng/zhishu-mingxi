@@ -47,8 +47,27 @@
     /* 历史试卷：.study-card 是 grid，按钮不写 justify-self 会被拉满整行 */
     .teacher-exam-history > button { justify-self: start; }
     /* 右端「已交 N 人」徽标与「查看题目」按钮并排，与 .approval-actions 同一形状 */
-    .exam-history-actions { display: flex; align-items: center; gap: 8px; }
+    .exam-history-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .exam-history-actions button { min-height: 32px; padding: 6px 10px; white-space: nowrap; }
+    /* 「已结束」徽标：与 .local（琥珀）/ .synced（绿）区分开，用中性灰表明「不再变动」 */
+    .source-badge.closed { color: #4a5568; background: #e8ebef; }
+    /* 校对视图里的参考答案行 */
+    .exam-answer-key { margin: 6px 0 0; color: #1f5d43; font-size: 13px; }
+    /* 成绩查看卡里两个按钮：不写 justify-self 会被 .study-card 的 grid 拉满整行。
+       用 id 精确点名，不写 `.study-card > button` —— 那会波及页面上其它同名卡片。 */
+    #loadExamResultsButton, #exportExamResultsButton { justify-self: start; }
+
+    /* 题型多选。容器复用 .exam-node-field（grid-column: 1 / -1 横跨两列）。 */
+    .exam-type-heading { font-weight: 700; }
+    .exam-type-options { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #ffffff; }
+    /* 必须覆盖 .teacher-exam-form input 的 width:100% / min-height:42px，否则复选框被撑开（同 .node-picker） */
+    .exam-type-options input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; padding: 0; margin: 0; flex: none; }
+    /* 同 .node-picker .ghost-button：不写 width:auto 会被上面那条 input 规则带跑 */
+    .exam-type-options .ghost-button { width: auto; min-height: 32px; padding: 6px 12px; }
+
+    /* 考试答题页的拍照行：布局整个复用 style.css 里的 .grading-photo-row，
+       这里只补它与上方 textarea 的间距，免得为了一个 margin 去动 style.css、多引一个 ?v=。 */
+    .exam-question .grading-photo-row { margin: 10px 0 0; }
   </style>
 </head>
 <body>
@@ -851,7 +870,7 @@
               <div><span>已作答</span><strong id="examAnsweredCount">0</strong></div>
               <div><span>提交状态</span><strong id="examSubmitStatus">待选择</strong></div>
             </div>
-            <div class="study-card"><h4>考试说明</h4><p>试卷内容由教师发布，提交后由后端判分；证明题可能需要等待教师复核。</p></div>
+            <div class="study-card"><h4>考试说明</h4><p>试卷内容由教师发布，提交后由后端判分；证明题可能需要等待教师复核。</p><p>教师结束考试后，卷子仍会留在这里并标示「已结束」、不能再作答；已经交过卷的可以点「查看成绩」回看自己的得分与逐题对错。</p></div>
           </aside>
         </div>
 
@@ -877,6 +896,15 @@
                   <div id="teacherExamNodeList" class="node-picker-list empty-state">正在加载知识点目录…</div>
                 </div>
               </div>
+              <div class="exam-node-field">
+                <div class="exam-type-heading">题型（不勾选 = 不限题型）</div>
+                <div class="exam-type-options">
+                  <label class="node-picker-only"><input type="checkbox" name="teacherExamType" value="概念题"> 概念题</label>
+                  <label class="node-picker-only"><input type="checkbox" name="teacherExamType" value="选择题"> 选择题</label>
+                  <label class="node-picker-only"><input type="checkbox" name="teacherExamType" value="证明题"> 证明题</label>
+                  <button type="button" id="teacherExamTypeClear" class="ghost-button">清空</button>
+                </div>
+              </div>
               <label for="teacherExamCount">题目数量</label>
               <input id="teacherExamCount" type="number" min="1" max="50" value="5" required>
               <button type="submit">生成并发布</button>
@@ -884,7 +912,7 @@
             <div id="teacherExamResult" class="exam-result empty-state">选择班级和知识点后生成试卷。</div>
             <div class="study-card teacher-exam-history">
               <h4>我发布的试卷</h4>
-              <p>该教师名下各班已发布的试卷会一直留在这里，刷新页面也在。点「查看题目」可在上方只读回看题干、题型与分值。</p>
+              <p>该教师名下各班已发布的试卷会一直留在这里，刷新页面也在。「查看题目」只回看题干、题型与分值；「查看答案」是教师校对视图，含参考答案；「结束考试」可随时停考（学生端仍看得到卷子但不能再作答，已交卷的学生仍能回看自己的成绩），点错了可以「重新开放」撤销。</p>
               <button id="refreshTeacherExamListButton" class="ghost-button" type="button">刷新试卷列表</button>
               <div id="teacherExamHistory" class="student-report-list empty-state">正在读取已发布试卷...</div>
             </div>
@@ -896,7 +924,7 @@
               <div><span>最近试卷</span><strong id="teacherLatestExam">--</strong></div>
               <div><span>题目数量</span><strong id="teacherLatestExamCount">0</strong></div>
             </div>
-            <div class="study-card"><h4>成绩查看</h4><p>试卷生成后可读取提交人数、平均分和薄弱知识点。</p><button id="loadExamResultsButton" class="ghost-button" type="button" disabled>查看最近试卷成绩</button></div>
+            <div class="study-card"><h4>成绩查看</h4><p>试卷生成后可读取提交人数、平均分和薄弱知识点。导出的是这份汇总清单（姓名、得分、判分状态、交卷时间 + 每知识点正确率），不含逐题作答明细。</p><button id="loadExamResultsButton" class="ghost-button" type="button" disabled>查看最近试卷成绩</button><button id="exportExamResultsButton" class="ghost-button" type="button">导出成绩清单 CSV</button></div>
             <div id="teacherExamAnalytics" class="student-report-list empty-state">暂无考试成绩。</div>
           </aside>
         </div>
@@ -946,6 +974,6 @@
   <script src="grading-utils.js?v=4"></script>
   <script src="team4-utils.js?v=5"></script>
   <script src="chat-stream-utils.js?v=1"></script>
-  <script defer src="app.js?v=65"></script>
+  <script defer src="app.js?v=66"></script>
 </body>
 </html>

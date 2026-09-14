@@ -120,7 +120,7 @@ const examNodeState = {
   onlyWithQuestions: true,   // 默认只列有题的知识点；取消勾选可看到全部模块及"暂无题目"标注
   loading: false,
 };
-const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null, teacherExams: [] };
+const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null, teacherExams: [], latestResult: null, latestExamClassId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
 const companionState = { kind: "today", loading: false };
@@ -671,6 +671,12 @@ if (teacherApprovalRefreshButton) {
   teacherApprovalRefreshButton.addEventListener("click", () => loadPendingTeachers());
 }
 document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
+// 同 refreshTeacherExamListButton：新按钮必须判空 —— 若浏览器还缓存着旧 index.html，
+// 这里会拿到 null，直接 .addEventListener 会让整个 app.js 顶层抛错（白屏）。
+const exportExamResultsButton = document.getElementById("exportExamResultsButton");
+if (exportExamResultsButton) {
+  exportExamResultsButton.addEventListener("click", exportExamResultsCsv);
+}
 // 同 teacherApprovalRefreshButton：新按钮必须判空 —— 若浏览器还缓存着旧 index.html，
 // 这里会拿到 null，直接 .addEventListener 会让整个 app.js 顶层抛错（白屏）。
 const refreshTeacherExamListButton = document.getElementById("refreshTeacherExamListButton");
@@ -711,6 +717,24 @@ if (examCountInput) {
     if (examNodeState.selected.size) renderExamNodeSelection();
   });
 }
+// 「清空」必须判空：浏览器若还缓存着旧 index.html，这里会拿到 null，
+// 直接 .addEventListener 会让整个 app.js 顶层抛错（白屏）。同 refreshTeacherExamListButton。
+const examTypeClearButton = document.getElementById("teacherExamTypeClear");
+if (examTypeClearButton) {
+  examTypeClearButton.addEventListener("click", () => {
+    document.querySelectorAll('input[name="teacherExamType"]').forEach((input) => {
+      input.checked = false;
+    });
+    if (examNodeState.selected.size) renderExamNodeSelection();
+  });
+}
+// 题型一变，「限定之后可用的只会更少」这句提示要跟着出现/消失。
+// 旧 index.html 里没有这些复选框 —— querySelectorAll 返回空 NodeList，这里是空操作。
+document.querySelectorAll('input[name="teacherExamType"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    if (examNodeState.selected.size) renderExamNodeSelection();
+  });
+});
 document.querySelectorAll(".practice-filter").forEach((button) => {
   button.addEventListener("click", () => setPracticeFilter(button.dataset.practiceFilter));
 });
@@ -1608,14 +1632,21 @@ function renderHasseResultChart(result) {
 function bindGeneratedCodeCopy(code) {
   const button = document.getElementById("copyGeneratedCodeButton");
   if (!button) return;
-  button.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      button.textContent = "已复制";
-      setTimeout(() => { button.textContent = "复制代码"; }, 1600);
-    } catch (error) {
-      button.textContent = "复制失败";
+  const done = () => {
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = "复制代码"; }, 1600);
+  };
+  button.addEventListener("click", () => {
+    // 同一根因：线上是纯 HTTP（非安全上下文），navigator.clipboard 是 undefined，
+    // 原来 await navigator.clipboard.writeText 每次必抛，按钮永远停在「复制失败」。
+    if (copyPlainTextViaSelection(code)) { done(); return; }
+    // 只有安全上下文才碰 clipboard API（HTTP 下访问该属性本身就会抛 TypeError）。
+    // 线上一律走不到这里，是「以后上了 HTTPS 自动变好」的保险。
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(done, () => { button.textContent = "复制失败"; });
+      return;
     }
+    button.textContent = "复制失败";
   });
 }
 
@@ -4363,12 +4394,109 @@ async function generateLessonPrep() {
   }
 }
 
-async function copyLessonPrep() {
-  if (!lessonPrepState.resultText) return;
-  await navigator.clipboard.writeText(lessonPrepState.resultText);
+// ==================== 复制到剪贴板（HTTP 下的正确写法） ====================
+// 线上是纯 HTTP → 非安全上下文 → navigator.clipboard 是 undefined。
+// 原来 `await navigator.clipboard.writeText(...)` 每次都抛未捕获异常，按钮永远停在
+// 「复制内容」；而且复制的是**原始 markdown**，粘进 Word/WPS 得到的是 \(x\) 源码。
+// 唯一能把 text/html 写进剪贴板的办法是「离屏选区 + document.execCommand('copy')」，
+// 且该调用必须在**用户手势的同一次任务**里同步完成 —— 所以这条链路一行 await 都不能有。
+
+const LESSON_PREP_COPY_LABEL = { idle: "复制内容", done: "已复制", fail: "复制失败" };
+let lessonPrepCopyTimer = null;
+
+// Word / WPS 认得 <math xmlns=...>MathML</math>，不认得 MathJax 的 <mjx-container>。
+// 渲染后的 DOM 里每个 <mjx-container> 内都有一个带 xmlns 的 assistive <math>
+// （MathJax 3.2.2 tex-chtml 默认 enableAssistiveMml），换出来公式就能带格式粘进 Word/WPS。
+function buildLessonPrepClipboardHtml(renderedHtml) {
+  if (!renderedHtml) return "";
+  if (!/mjx-container|mjx-assistive-mml|<math[\s>]/i.test(renderedHtml)) return renderedHtml;
+  const host = document.createElement("template");   // template 不触发其中的资源加载
+  host.innerHTML = renderedHtml;
+  host.content.querySelectorAll("mjx-container").forEach((node) => {
+    const math = node.querySelector("math");
+    // 找不到 <math> 就原样留着：宁可留一点 MathJax 残留，也不能把公式删掉。
+    if (math) node.replaceWith(math);
+  });
+  return host.innerHTML;   // 只回片段，不包 <html>/<body> —— Word 粘 HTML 片段更干净
+}
+
+// 离屏选区 + execCommand，返回是否成功。
+// ⚠️ 不能用 display:none / visibility:hidden / opacity:0 —— Chrome 会因此复制出空内容，
+//    必须真的在布局里（挪到 -9999px 之外即可）。
+function copyHtmlViaSelection(html) {
+  if (!html) return false;
+  const stage = document.createElement("div");
+  stage.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
+  stage.setAttribute("aria-hidden", "true");
+  stage.innerHTML = html;
+  document.body.appendChild(stage);
+  const selection = window.getSelection();
+  let ok = false;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(stage);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  }
+  if (selection) selection.removeAllRanges();
+  stage.remove();
+  return ok;
+}
+
+// 纯文本兜底：HTML 那条路失败时，至少把原始文本复制走。
+function copyPlainTextViaSelection(text) {
+  if (!text) return false;
+  const stage = document.createElement("textarea");
+  stage.value = text;
+  stage.setAttribute("readonly", "readonly");
+  stage.setAttribute("aria-hidden", "true");
+  stage.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;";
+  document.body.appendChild(stage);
+  let ok = false;
+  try {
+    stage.select();
+    stage.setSelectionRange(0, stage.value.length);
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  }
+  stage.remove();
+  return ok;
+}
+
+// 定时器挂在模块级：连点两下时，后一次不能把前一次的文案提前收回去。
+function setLessonPrepCopyLabel(button, state) {
+  if (!button) return;
+  if (lessonPrepCopyTimer) clearTimeout(lessonPrepCopyTimer);
+  button.textContent = LESSON_PREP_COPY_LABEL[state] || LESSON_PREP_COPY_LABEL.idle;
+  lessonPrepCopyTimer = setTimeout(() => {
+    lessonPrepCopyTimer = null;
+    button.textContent = LESSON_PREP_COPY_LABEL.idle;
+  }, 1600);
+}
+
+function copyLessonPrep() {   // 注意：**不是** async，整条链路必须同步走完
   const button = document.getElementById("copyLessonPrepButton");
-  button.textContent = "已复制";
-  setTimeout(() => { button.textContent = "复制内容"; }, 1200);
+  const target = document.getElementById("lessonPrepResult");
+  const renderedHtml = target ? target.innerHTML : "";
+  if (!lessonPrepState.resultText && !renderedHtml) return;
+  // 优先复制「渲染后的 HTML」——公式是 MathML、标题是 <h4>，粘进 Word/WPS 就是排版好的样子。
+  let ok = false;
+  if (renderedHtml) ok = copyHtmlViaSelection(buildLessonPrepClipboardHtml(renderedHtml));
+  if (!ok && lessonPrepState.resultText) ok = copyPlainTextViaSelection(lessonPrepState.resultText);
+  if (ok) { setLessonPrepCopyLabel(button, "done"); return; }
+  // 只有安全上下文才碰 clipboard API（HTTP 下该属性是 undefined，直接访问就抛 TypeError）。
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText && lessonPrepState.resultText) {
+    navigator.clipboard.writeText(lessonPrepState.resultText).then(
+      () => setLessonPrepCopyLabel(button, "done"),
+      () => setLessonPrepCopyLabel(button, "fail"),
+    );
+    return;
+  }
+  setLessonPrepCopyLabel(button, "fail");
 }
 
 // 统一用 null-safe 的取元素工具：万一只换了 app.js 没同步换 index.html（部署失误），
@@ -4966,14 +5094,34 @@ function renderStudentExamList() {
     return;
   }
   target.className = "exam-list";
-  target.innerHTML = examState.available.map((exam) => `
+  target.innerHTML = examState.available.map((exam) => {
+    const closed = exam.status === "closed";
+    const submitted = Boolean(exam.submitted);
+    let badge;
+    let button;
+    if (submitted) {
+      // 已交卷的，关闭与否都能点开看自己那一份（学生只该看到自己的答案与得分）。
+      badge = `<span class="source-badge ${closed ? "closed" : "synced"}">${closed ? "已结束" : "已提交"}</span>`;
+      button = `<button type="button" class="ghost-button" data-result-exam-id="${Number(exam.exam_id)}">查看成绩</button>`;
+    } else if (closed) {
+      badge = `<span class="source-badge closed">已结束</span>`;
+      button = `<button type="button" disabled>已结束</button>`;
+    } else {
+      badge = `<span class="source-badge local">待作答</span>`;
+      button = `<button type="button" data-exam-id="${Number(exam.exam_id)}">进入考试</button>`;
+    }
+    return `
     <article>
       <div><strong>${escapeHtml(exam.title)}</strong><span>${formatDateTime(exam.created_at)} · 满分 ${Number(exam.total_score)}</span></div>
-      <span class="source-badge ${exam.submitted ? "synced" : "local"}">${exam.submitted ? "已提交" : "待作答"}</span>
-      <button type="button" data-exam-id="${Number(exam.exam_id)}" ${exam.submitted ? "disabled" : ""}>${exam.submitted ? "已完成" : "进入考试"}</button>
-    </article>`).join("");
+      ${badge}
+      ${button}
+    </article>`;
+  }).join("");
   target.querySelectorAll("[data-exam-id]:not(:disabled)").forEach((button) => {
     button.addEventListener("click", () => openStudentExam(Number(button.dataset.examId)));
+  });
+  target.querySelectorAll("[data-result-exam-id]").forEach((button) => {
+    button.addEventListener("click", () => openStudentExamResult(Number(button.dataset.resultExamId)));
   });
 }
 
@@ -5012,6 +5160,11 @@ function renderExamPaper() {
       <small>${escapeHtml(question.type)} · ${question.score} 分 · ${escapeHtml(findNodeName(question.nodeId))}</small>
       <label class="exam-answer-label" for="exam-answer-${question.id}">你的答案</label>
       <textarea id="exam-answer-${question.id}" data-question-id="${question.id}" rows="3" placeholder="${String(question.type).includes("选择") ? "输入选项字母，例如 A" : "输入完整作答过程"}"></textarea>
+      <div class="grading-photo-row">
+        <label class="grading-photo-button" for="exam-photo-${question.id}">拍照识别</label>
+        <input id="exam-photo-${question.id}" class="proof-file-input" type="file" accept="image/*" capture="environment" data-exam-photo="${question.id}">
+        <span id="exam-ocr-status-${question.id}" class="grading-ocr-status"></span>
+      </div>
     </fieldset>
   `).join("") + '<div class="button-row"><button id="leaveExamButton" class="ghost-button" type="button">返回列表</button><button type="submit" class="submit-exam-button">提交试卷</button></div>';
   form.querySelectorAll("[data-question-id]").forEach((input) => {
@@ -5021,6 +5174,10 @@ function renderExamPaper() {
       else examState.answers.delete(Number(input.dataset.questionId));
       updateExamStatus();
     });
+  });
+  // 拍照输入用 data-exam-photo 而不是 data-question-id，上面那个选择器不会重复绑到它。
+  form.querySelectorAll("[data-exam-photo]").forEach((input) => {
+    input.addEventListener("change", () => handleExamPhoto(input.dataset.examPhoto, input.files[0]));
   });
   document.getElementById("leaveExamButton").addEventListener("click", resetExam);
   form.onsubmit = submitExam;
@@ -5075,20 +5232,22 @@ async function submitExam(event) {
   }
 }
 
-function renderExamSubmission(data) {
+function renderExamSubmission(data, mode) {
   const target = document.getElementById("examResult");
   target.hidden = false;
   target.className = "exam-result";
   const pending = data.status === "pending_review";
+  // mode === "recall"：学生点「查看成绩」回看自己已交的那一份（不是刚交完）。
+  const recall = mode === "recall";
   target.innerHTML = `
-    <div class="exam-score"><span>${pending ? "自动判分得分" : "本次得分"}</span><strong>${Number(data.total_score || 0)}</strong><small>${pending ? "主观题等待教师复核" : "判分完成并已更新学情"}</small></div>
+    <div class="exam-score"><span>${recall ? "我的得分" : pending ? "自动判分得分" : "本次得分"}</span><strong>${Number(data.total_score || 0)}</strong><small>${recall ? (pending ? "主观题等待教师复核" : "这是你交卷时的判分结果") : pending ? "主观题等待教师复核" : "判分完成并已更新学情"}</small></div>
     <div class="exam-review">${(data.answers || []).map((answer, index) => `<article class="${answer.is_correct === false ? "wrong" : "correct"}"><strong>${index + 1}. ${answer.review_status === "pending_review" ? "待复核" : answer.is_correct ? "正确" : "错误"}</strong><p>本题得分 ${Number(answer.score || 0)}</p></article>`).join("")}</div>
     <button id="backToExamListButton" type="button">返回考试列表</button>`;
   document.getElementById("examForm").hidden = true;
   document.getElementById("backToExamListButton").addEventListener("click", resetExam);
-  document.getElementById("examSubmitStatus").textContent = pending ? "待复核" : "已提交";
+  document.getElementById("examSubmitStatus").textContent = recall ? "已查看成绩" : pending ? "待复核" : "已提交";
   updateExamStatus();
-  renderDashboard();
+  if (!recall) renderDashboard();   // 回看历史成绩没有新的学情变化，不必再拉一次
 }
 
 function resetExam() {
@@ -5306,9 +5465,16 @@ function renderExamNodeSelection() {
   const need = Number(document.getElementById("teacherExamCount")?.value || 0);
   const enough = !need || available >= need;
   budget.className = `node-picker-budget${enough ? "" : " warn"}`;
-  budget.textContent = enough
+  const summary = enough
     ? `已选 ${selectedIds.length} 个知识点，题库可用题目合计 ${available} 道（题目数量 ${need || "-"} 道）。`
     : `已选 ${selectedIds.length} 个知识点，题库可用题目合计仅 ${available} 道，少于题目数量 ${need} 道，生成会失败：请调小题目数量或再选几个知识点。`;
+  // EXAM_NODE_QUESTION_COUNTS 是**只有知识点维度、没有题型维度**的快照，
+  // 所以这里算不出「限定题型后可用的到底有几道」—— 那就如实说明它是全部题型的合计，
+  // 绝不编一个看着准确、其实是猜的数字出来。
+  const types = examTypeFilter();
+  budget.textContent = types
+    ? `${summary}已限定题型（${types.join("、")}）：上面的合计是全部题型的题量，限定后实际可用的只会更少，不够时请调小题目数量、再勾几个知识点，或放宽题型。`
+    : summary;
 }
 
 // 示例 = 按题量从多到少累加，直到累计题量 ≥ 当前题目数量。
@@ -5335,8 +5501,13 @@ function explainExamGenerateError(message) {
   if (!match) return `发布失败：${message}`;
   const found = Number(match[1]);
   const need = Number(match[2]);
-  return `生成失败：所选知识点在题库中共有 ${found} 道题，少于需要生成的 ${need} 道。`
-    + `处理办法：把「题目数量」改为 ${found > 0 ? found : 1}，或再勾选几个标着「N 道题」的知识点。`;
+  const types = examTypeFilter();
+  // 限定了题型时 found 是**筛完之后**的题量。不点明的话老师会以为题库真没题，
+  // 转头来报「题型选择是坏的」。
+  const scope = types ? `在限定的题型（${types.join("、")}）里只有 ${found} 道题` : `在题库中共有 ${found} 道题`;
+  return `生成失败：所选知识点${scope}，少于需要生成的 ${need} 道。`
+    + `处理办法：把「题目数量」改为 ${found > 0 ? found : 1}，或再勾选几个标着「N 道题」的知识点`
+    + (types ? `，或放宽上面的题型限制。` : `。`);
 }
 
 async function generateTeacherExam(event) {
@@ -5372,6 +5543,9 @@ async function generateTeacherExam(event) {
       title,
       node_ids: nodeIds,
       question_count: questionCount,
+      // 不限题型时是 undefined —— JSON.stringify 会整个丢掉这个键，
+      // 请求体与加「题型选择」之前逐字节相同（后端那个字段默认也是 None）。
+      question_types: examTypeFilter(),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(readApiError(data, "考试生成失败"));
@@ -5395,11 +5569,51 @@ async function loadTeacherExamResults() {
   target.textContent = "正在读取成绩...";
   try {
     const data = await fetchApiJson(`/api/exam/${examState.latestTeacherExamId}/results?requester_id=${getCurrentUserId()}`);
-    target.className = "student-report-list";
-    target.innerHTML = `<article><div><strong>提交 ${Number(data.submitted_count)} 人</strong><span>平均 ${Number(data.average_score)} · 最高 ${Number(data.highest_score)} · 最低 ${Number(data.lowest_score)}</span></div></article>${(data.students || []).map((student) => `<article><div><strong>${escapeHtml(student.name)}</strong><span>${formatDateTime(student.submitted_at)}</span></div><span class="mastery-badge ${Number(student.total_score) >= 60 ? "mastered" : "weak"}">${Number(student.total_score)} 分</span></article>`).join("")}`;
+    examState.latestResult = data;
+    renderTeacherExamAnalytics();
   } catch (error) {
     target.className = "student-report-list error-state";
     target.textContent = `成绩读取失败：${error.message}`;
+  }
+}
+
+// 汇总层作答情况：谁交了 / 每人得分与交卷时间 / 每知识点正确率 / 薄弱知识点。
+// 后端一直有 node_statistics 与 weak_nodes，原先前端拿到就丢，这里补上。
+// 差集「谁没交」要另取一次班级名单 —— /results 里的 students 是**内连接**，只含交了卷的人。
+function renderTeacherExamAnalytics() {
+  const data = examState.latestResult;
+  const target = document.getElementById("teacherExamAnalytics");
+  if (!data || !target) return;
+  const students = data.students || [];
+  const nodes = (data.node_statistics || []).filter((item) => item.accuracy !== null && item.accuracy !== undefined);
+  const weakNodes = data.weak_nodes || [];
+  const nodeLine = nodes.length
+    ? nodes.map((item) => `<article><div><strong>${escapeHtml(findNodeName(item.node_id))}</strong><span>${Number(item.correct_answers)}/${Number(item.graded_answers)} 人答对${Number(item.pending_review) ? ` · ${Number(item.pending_review)} 份待复核` : ""}</span></div><span class="mastery-badge ${Number(item.accuracy) >= 0.6 ? "mastered" : "weak"}">${Math.round(Number(item.accuracy) * 100)}%</span></article>`).join("")
+    : `<article><div><strong>暂无可用正确率</strong><span>这一份卷子的主观题可能都还在等待复核。</span></div></article>`;
+  target.className = "student-report-list";
+  target.innerHTML = `
+    <article><div><strong>提交 ${Number(data.submitted_count)} 人</strong><span>平均 ${Number(data.average_score)} · 最高 ${Number(data.highest_score)} · 最低 ${Number(data.lowest_score)}</span></div></article>
+    <article><div><strong>薄弱知识点 ${weakNodes.length} 个</strong><span>${weakNodes.length ? escapeHtml(weakNodes.map((node) => findNodeName(node)).join("、")) : "暂无明显薄弱知识点。"}</span></div></article>
+    ${students.map((student) => `<article><div><strong>${escapeHtml(student.name)}</strong><span>${formatDateTime(student.submitted_at)}</span></div><span class="mastery-badge ${Number(student.total_score) >= 60 ? "mastered" : "weak"}">${Number(student.total_score)} 分</span></article>`).join("")}
+    ${nodeLine}`;
+  // 名单是后到的，到了再补一行「未交卷」，不阻塞上面的汇总。
+  fillMissingSubmitters(data);
+}
+
+async function fillMissingSubmitters(data) {
+  const target = document.getElementById("teacherExamAnalytics");
+  const classId = Number(data.exam?.class_id || examState.latestExamClassId);
+  if (!target || !classId) return;
+  try {
+    const roster = await fetchApiJson(`/api/class/${classId}/students?requester_id=${getCurrentUserId()}`);
+    const submitted = new Set((data.students || []).map((student) => String(student.user_id)));
+    const missing = (roster.students || []).filter((student) => !submitted.has(String(student.user_id)));
+    if (!missing.length) return;
+    const line = document.createElement("article");
+    line.innerHTML = `<div><strong>未交卷 ${missing.length} 人</strong><span>${escapeHtml(missing.map((student) => student.name).join("、"))}</span></div>`;
+    target.appendChild(line);
+  } catch (error) {
+    // 补不到就算了：这只是锦上添花，不该把已经渲染好的汇总整块变成错误态。
   }
 }
 
@@ -5429,20 +5643,31 @@ function renderTeacherExamList() {
   const exams = Array.isArray(examState.teacherExams) ? examState.teacherExams : [];
   if (!exams.length) {
     target.className = "student-report-list empty-state";
-    target.textContent = "还没有发布过试卷。用上面的表单生成第一份后，这里会一直留着，随时可以回看。";
+    target.textContent = "还没有发布过试卷。用上面的表单生成第一份后，这里会一直留着，随时可以回看、校对答案、结束考试。";
     return;
   }
   target.className = "student-report-list";
-  target.innerHTML = exams.map((exam) => `
+  target.innerHTML = exams.map((exam) => {
+    const closed = exam.status === "closed";
+    return `
     <article>
       <div><strong>${escapeHtml(exam.title)}</strong><span>${escapeHtml(exam.class_name)} · ${formatDateTime(exam.created_at)} · ${Number(exam.question_count)} 题 · 满分 ${Number(exam.total_score)}</span></div>
       <div class="exam-history-actions">
-        <span class="source-badge ${Number(exam.submitted_count) ? "synced" : "local"}">${Number(exam.submitted_count)} 人已交</span>
+        <span class="source-badge ${closed ? "closed" : Number(exam.submitted_count) ? "synced" : "local"}">${closed ? "已结束" : `${Number(exam.submitted_count)} 人已交`}</span>
         <button type="button" class="ghost-button" data-preview-exam-id="${Number(exam.exam_id)}">查看题目</button>
+        <button type="button" class="ghost-button" data-paper-exam-id="${Number(exam.exam_id)}">查看答案</button>
+        <button type="button" class="ghost-button" data-status-exam-id="${Number(exam.exam_id)}" data-status-target="${closed ? "published" : "closed"}">${closed ? "重新开放" : "结束考试"}</button>
       </div>
-    </article>`).join("");
+    </article>`;
+  }).join("");
   target.querySelectorAll("[data-preview-exam-id]").forEach((button) => {
     button.addEventListener("click", () => previewTeacherExam(Number(button.dataset.previewExamId)));
+  });
+  target.querySelectorAll("[data-paper-exam-id]").forEach((button) => {
+    button.addEventListener("click", () => loadTeacherExamPaper(Number(button.dataset.paperExamId)));
+  });
+  target.querySelectorAll("[data-status-exam-id]").forEach((button) => {
+    button.addEventListener("click", () => toggleTeacherExamStatus(button));
   });
 }
 
@@ -5465,6 +5690,211 @@ async function previewTeacherExam(examId) {
   } catch (error) {
     target.className = "exam-result error-state";
     target.textContent = `试卷加载失败：${error.message}`;
+  }
+}
+
+// ==================== 考试：校对答案 / 结束考试 / 导出成绩 / 学生回看 ====================
+
+function examStatusLabel(status) {
+  return ({ published: "进行中", closed: "已结束", draft: "草稿" })[status] || String(status || "未知");
+}
+
+// 校对答案：走 GET /api/exam/{id}/paper（require_teacher + 班级归属校验，所以**含答案**）。
+// 与「查看题目」刻意分成两条路：那条走学生端端点，任何登录者都能读，因此永远不含 answer。
+async function loadTeacherExamPaper(examId) {
+  const target = document.getElementById("teacherExamResult");
+  target.className = "exam-result empty-state";
+  target.textContent = "正在加载参考答案...";
+  try {
+    const paper = await fetchApiJson(`/api/exam/${examId}/paper?requester_id=${getCurrentUserId()}`);
+    const questions = paper.questions || [];
+    examState.latestTeacherExamId = paper.exam_id;
+    examState.latestExamClassId = paper.class_id;
+    document.getElementById("teacherLatestExam").textContent = `#${paper.exam_id}`;
+    document.getElementById("teacherLatestExamCount").textContent = questions.length;
+    document.getElementById("loadExamResultsButton").disabled = false;
+    target.className = "exam-result";
+    target.innerHTML = `<div class="tool-status-banner success"><div><span>教师校对视图 · 含参考答案</span><strong>${escapeHtml(paper.title)}</strong></div><span>${escapeHtml(paper.class_name)} · ${questions.length} 道题 · ${examStatusLabel(paper.status)}</span></div><div class="teacher-question-list">${questions.map((question, index) => `<article><strong>${index + 1}. ${escapeHtml(question.content)}</strong><span>${escapeHtml(question.question_type)} · ${Number(question.score)} 分 · ${escapeHtml(findNodeName(question.node_id))}</span><p class="exam-answer-key">参考答案：${question.answer ? escapeHtml(question.answer) : "（无标准答案，需人工复核）"}</p></article>`).join("")}</div>`;
+  } catch (error) {
+    target.className = "exam-result error-state";
+    target.textContent = `参考答案加载失败：${error.message}`;
+  }
+}
+
+// 结束 / 重新开放。全站没有 confirm() 先例（浏览器弹窗在演示里很突兀），
+// 改成**行内二次确认**：第一次点只是把按钮变成「确认结束？」，再点才真的发请求。
+function toggleTeacherExamStatus(button) {
+  const examId = Number(button.dataset.statusExamId);
+  const target = button.dataset.statusTarget;
+  if (!examId || !target) return;
+  if (button.dataset.confirming !== "1") {
+    button.dataset.confirming = "1";
+    button.dataset.originalLabel = button.textContent;
+    button.textContent = target === "closed" ? "确认结束？" : "确认重开？";
+    // 3 秒内没再点就退回原样，避免「点了一次忘了、过一会儿手滑点到」。
+    setTimeout(() => {
+      if (button.dataset.confirming === "1") {
+        button.dataset.confirming = "";
+        button.textContent = button.dataset.originalLabel || "";
+      }
+    }, 3000);
+    return;
+  }
+  button.dataset.confirming = "";
+  button.disabled = true;
+  button.textContent = "正在提交...";
+  // 这不是 async 函数，用 Promise 链而不是 await —— 与文件里其它按钮处理器同一风格。
+  postJson(`/api/exam/${examId}/status?requester_id=${getCurrentUserId()}`, { status: target }).then(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "状态更新失败"));
+    button.disabled = false;
+    loadTeacherExamList();     // 重新拉列表，按钮文案与徽标由服务端状态决定
+    const banner = document.getElementById("teacherExamResult");
+    if (banner) {
+      banner.className = "exam-result";
+      banner.textContent = data.message || `已更新为「${examStatusLabel(data.status)}」。`;
+    }
+  }).catch((error) => {
+    button.disabled = false;
+    button.textContent = button.dataset.originalLabel || "重试";
+    const banner = document.getElementById("teacherExamResult");
+    if (banner) {
+      banner.className = "exam-result error-state";
+      banner.textContent = `操作失败：${error.message}`;
+    }
+  });
+}
+
+// CSV 字段转义：RFC 4180 —— 含逗号/引号/换行的整体加双引号，内部双引号翻倍。
+function csvCell(value) {
+  let text = value === null || value === undefined ? "" : String(value);
+  // Excel / WPS 会把 = + - @ 开头的单元格当公式执行，前面加个单引号关掉这条路径。
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildExamResultsCsv(data) {
+  const rows = [[
+    "姓名",
+    "得分",
+    "判分状态",
+    "交卷时间",
+  ]];
+  (data.students || []).forEach((student) => {
+    rows.push([
+      student.name,
+      Number(student.total_score),
+      student.status === "pending_review" ? "待复核" : "已判分",
+      formatDateTime(student.submitted_at),
+    ]);
+  });
+  rows.push([]);
+  rows.push(["知识点", "答对人数", "已判分人数", "正确率", "待复核份数"]);
+  (data.node_statistics || []).forEach((item) => {
+    rows.push([
+      findNodeName(item.node_id),
+      Number(item.correct_answers),
+      Number(item.graded_answers),
+      item.accuracy === null || item.accuracy === undefined ? "暂无" : `${Math.round(Number(item.accuracy) * 100)}%`,
+      Number(item.pending_review),
+    ]);
+  });
+  return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
+function exportExamResultsCsv() {
+  const data = examState.latestResult;
+  const note = document.getElementById("teacherExamResult");
+  if (!data) {
+    if (note) {
+      note.className = "exam-result error-state";
+      note.textContent = "请先在上面点某一份试卷的「查看题目」或「查看答案」，再来导出它的成绩。";
+    }
+    return;
+  }
+  const examTitle = (data.exam && data.exam.title) || `exam-${examState.latestTeacherExamId}`;
+  // 必须带 UTF-8 BOM，否则 Excel / WPS 打开中文全是乱码。
+  const blob = new Blob(["\ufeff", buildExamResultsCsv(data)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${examTitle}-成绩清单.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // 立刻 revoke 在部分浏览器上会截断下载，延后一拍更稳。
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// 学生点「查看成绩」：走 /my-submission，身份只来自 token，接口上根本没有 user_id 参数。
+async function openStudentExamResult(examId) {
+  const target = document.getElementById("examResult");
+  target.hidden = false;
+  target.className = "exam-result empty-state";
+  target.textContent = "正在读取你的成绩...";
+  try {
+    const data = await fetchApiJson(`/api/exam/${examId}/my-submission`);
+    renderExamSubmission(data, "recall");
+  } catch (error) {
+    target.className = "exam-result error-state";
+    target.textContent = `成绩读取失败：${error.message}`;
+  }
+}
+
+// ==================== 组卷：题型多选 ====================
+
+// 题库里仅有的三种题型（data/documents/题库节点分布：证明题 41 / 概念题 28 / 选择题 19）。
+// 顺序就是界面上复选框的书写顺序，只用于「全勾 == 不限」的判断。
+const EXAM_QUESTION_TYPES = ["概念题", "选择题", "证明题"];
+
+// 勾中的题型 → 送给后端的 question_types。
+// 一个都没勾 或 三个全勾 都返回 undefined（= 不限题型）：
+// JSON.stringify 会把 undefined 的键整个丢掉，所以这两种情况下请求体与
+// 加「题型选择」之前**逐字节相同**，老师不会因为顺手全勾而拿到一份奇怪的卷子。
+function examTypeFilter() {
+  const checked = Array.from(document.querySelectorAll('input[name="teacherExamType"]:checked'))
+    .map((input) => input.value)
+    .filter((value) => EXAM_QUESTION_TYPES.includes(value));
+  if (!checked.length || checked.length === EXAM_QUESTION_TYPES.length) return undefined;
+  return checked;
+}
+
+// ==================== 考试答题纸：拍照识别 ====================
+
+// 自测练习那边的 handleCalcPhoto / handleProofPhoto / handleGradingPhoto
+// 全都写死了各自的 DOM 选择器与 practiceState / gradingState，一个都不能直接调，
+// 所以这里单独写一个 —— 但复用同一条后端链路（POST /api/vision/parse）与同一组纯函数。
+async function handleExamPhoto(questionId, file) {
+  if (!file) return;
+  const status = document.getElementById(`exam-ocr-status-${questionId}`);
+  const textarea = document.getElementById(`exam-answer-${questionId}`);
+  if (!status || !textarea) return;
+  if (!String(file.type || "").startsWith("image/")) {
+    status.className = "grading-ocr-status error";
+    status.textContent = "请选择图片文件。";
+    return;
+  }
+  // 识别最长可能要几十秒（后端超时上限 60 秒），而考试有 15 分钟倒计时且到点**自动交卷**。
+  // 识别在飞的时候学生可能已经交卷、点了「返回列表」、或换开了另一份卷子 ——
+  // 那这时的结果必须丢弃，否则会写进一张已经交上去的答题纸里。
+  const examId = examState.examId;
+  status.className = "grading-ocr-status";
+  status.textContent = "正在识别…";
+  try {
+    const data = await parseVisionImage(file);
+    if (examState.examId !== examId || document.getElementById("examForm").hidden) return;
+    const text = selectVisionText(data, "student_answer");
+    if (!text) throw new Error("图片中未识别到可用文字");
+    // ⚠️ 必须同时写两个地方：交卷走的是 examState.answers.get(question.id)，
+    // 只改 textarea.value 的话学生一交卷答案就没了。
+    // 反过来也**绝不能重渲染答题纸**（textarea 没有 value 回填），那会冲掉已经写好的其它答案。
+    textarea.value = text;
+    examState.answers.set(Number(questionId), text);
+    updateExamStatus();
+    status.textContent = `识别完成：${describeVisionResult(data) || "已提取文本"}，可修改后提交`;
+  } catch (error) {
+    status.className = "grading-ocr-status error";
+    status.textContent = `识别失败：${error.message}`;
   }
 }
 
@@ -6316,6 +6746,9 @@ function formatAnswerHtml(text) {
 
 function renderMarkdownBlocks(html) {
   const lines = html.split("\n");
+  // ⚠️ 这里**刻意不**把「·」「•」算作块级语法：纯文本里冒出一个「·」不该让整段
+  //    从 <br> 模式切成块模式，那是扩散半径最大的一处，必须克制。
+  //    （但已经在块模式里时，「·」会被下面当成无序列表项 —— 见 putItem 的调用点。）
   const hasBlockSyntax = lines.some((line) => (
     /^\s*$/.test(line)
     || /^\s{0,3}#{1,6}\s+/.test(line)
@@ -6329,7 +6762,13 @@ function renderMarkdownBlocks(html) {
 
   const output = [];
   let paragraph = [];
-  let listType = "";
+  // 列表栈：一层 <ol>/<ul> 一帧，帧里记着「还没闭合的 <li>」。
+  // <li> 不在原地关闭，而是延后到下一个出口 —— 只要它不提前关，
+  // 子项就会被塞进上一个 <li> 里，嵌套就是自然结果，而不是另起一个列表。
+  const stack = [];
+  // 第一次出现列表行时的缩进量。比它还浅的缩进一律夹到这一层，
+  // 免得整篇都缩进 2 格、末行没缩进时被拆成两个列表。
+  let baseIndent = null;
 
   const flushParagraph = () => {
     if (paragraph.length) {
@@ -6337,66 +6776,118 @@ function renderMarkdownBlocks(html) {
       paragraph = [];
     }
   };
-  const closeList = () => {
-    if (listType) {
-      output.push(`</${listType}>`);
-      listType = "";
+  const frame = () => stack[stack.length - 1];
+  const closeItem = () => {
+    const top = frame();
+    if (top && top.itemOpen) {
+      output.push("</li>");
+      top.itemOpen = false;
     }
   };
-  const addListItem = (type, content) => {
+  const openFrame = (type, indent, startAttr) => {
+    output.push(`<${type} class="answer-list"${startAttr}>`);
+    stack.push({ type, indent, itemOpen: false });
+  };
+  const closeFrame = () => {
+    closeItem();
+    output.push(`</${stack.pop().type}>`);
+  };
+  const closeAllFrames = () => {
+    while (stack.length) closeFrame();
+  };
+  const indentOf = (line) => line.replace(/\t/g, "    ").match(/^ */)[0].length;
+
+  // 用**源里的编号**配 start="N"，不做顺序计数器重排。
+  // 源编号本来就是 1 时一个字都不加 → 输出与改造前逐字节相同。
+  // 这既忠实又能自愈：LLM 真的会吐 `1. 1. 1. 1.`，也会吐 `3.`。
+  const orderedStartAttr = (number) => {
+    const value = Number(number);
+    // > 1e6 时忽略：浏览器对 start 有上限，加了反而被夹成错的。
+    return value > 1 && value <= 1e6 ? ` start="${value}"` : "";
+  };
+
+  const putItem = (type, content, indent, startAttr) => {
     flushParagraph();
-    if (listType !== type) {
-      closeList();
-      output.push(`<${type} class="answer-list">`);
-      listType = type;
+    // 先退栈到「比本行更浅」的那一层为止 —— 退掉的每一层都会补上自己的 </li></ul>。
+    // ⚠️ 条件是 stack.length > 1：**绝不因为缩进变浅就把最外层列表也关掉**。
+    //    否则一行缩进不一致的内容（LLM 偶尔混进一个制表符）会把它拆成两个列表，
+    //    而改造前那种「不看缩进」的写法是会合成一个的 —— 那是纯粹的倒退。
+    //    真正要换列表的情况（ul 里插 ol、被标题/空行/段落打断）各有各的出口，不靠这里。
+    while (stack.length > 1 && frame().indent > indent) closeFrame();
+    if (!stack.length || frame().indent < indent) {
+      openFrame(type, indent, startAttr);          // 更深（或从无到有）→ 新开一层，嵌进上一层的 <li>
+    } else if (frame().type !== type) {
+      closeFrame();                                 // 同缩进但换了类型（ul 里插 ol）→ 关旧开新
+      openFrame(type, indent, startAttr);
     }
-    output.push(`<li>${content}</li>`);
+    closeItem();                                    // 关掉同层的上一个 <li>（刚开的新层无副作用）
+    output.push(`<li>${content}`);
+    frame().itemOpen = true;
   };
+
+  const listLine = (line) => {
+    // 缩进比基准还浅的，一律夹到基准层 —— 保证「整篇缩进一致」的输入仍是一个列表。
+    const raw = indentOf(line);
+    const indent = baseIndent === null ? raw : Math.max(raw, baseIndent);
+    const trimmed = line.trim();
+    const ordered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+    if (ordered) {
+      if (baseIndent === null) baseIndent = raw;
+      putItem("ol", ordered[2], indent, orderedStartAttr(ordered[1]));
+      return true;
+    }
+    // 「·」「•」只在块模式内部当列表项用（见函数开头的说明）。
+    const bullet = trimmed.match(/^[-*+·•]\s*(.+)$/);
+    if (bullet) {
+      if (baseIndent === null) baseIndent = raw;
+      putItem("ul", bullet[1], indent, "");
+      return true;
+    }
+    return false;
+  };
+
+  const isListLine = (line) => /^\s*(?:\d+[.)]|[-*+·•])\s*\S/.test(line);
 
   lines.forEach((line, index) => {
     const trimmed = line.trim();
     if (!trimmed) {
       flushParagraph();
       const nextContentLine = lines.slice(index + 1).find((nextLine) => nextLine.trim());
+      // 空行后面如果还是编号项，就先别关 —— 与改造前同一条判据，只是从
+      // 「单个 listType」改成「栈顶那一层」。
       const continuesOrderedList =
-        listType === "ol" && /^\s*\d+[.)]\s+/.test(nextContentLine || "");
-      if (!continuesOrderedList) closeList();
+        frame() && frame().type === "ol" && /^\s*\d+[.)]\s+/.test(nextContentLine || "");
+      if (!continuesOrderedList) closeAllFrames();
       return;
     }
 
     const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       flushParagraph();
-      closeList();
+      closeAllFrames();
       const level = Math.min(heading[1].length + 3, 6);
       output.push(`<h${level} class="answer-heading">${heading[2]}</h${level}>`);
       return;
     }
 
-    const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
-    if (unordered) {
-      addListItem("ul", unordered[1]);
-      return;
-    }
-    const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
-    if (ordered) {
-      addListItem("ol", ordered[1]);
-      return;
-    }
+    if (isListLine(line) && listLine(line)) return;
+
     const quote = trimmed.match(/^&gt;\s+(.+)$/);
     if (quote) {
       flushParagraph();
-      closeList();
+      closeAllFrames();
       output.push(`<blockquote class="answer-quote">${quote[1]}</blockquote>`);
       return;
     }
 
-    closeList();
+    // 列表之外的普通行：先把列表收干净再当段落 —— 编号由 start="N" 保住，
+    // 结构不需要为了「不断号」而变形。
+    closeAllFrames();
     paragraph.push(trimmed);
   });
 
   flushParagraph();
-  closeList();
+  closeAllFrames();
   return output.join("");
 }
 

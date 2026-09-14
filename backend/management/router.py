@@ -24,10 +24,13 @@ from backend.management.class_service import (
 )
 from backend.management.exam_service import (
     generate_exam,
+    get_exam_paper_for_teacher,
     get_exam_results,
     get_student_exam,
     get_student_exams,
+    get_student_submission,
     list_teacher_exams,
+    set_exam_status,
     submit_exam,
 )
 from backend.management.exceptions import ManagementError
@@ -41,6 +44,8 @@ from backend.management.models import (
     ExamGenerateRequest,
     ExamGenerateResponse,
     ExamResultsResponse,
+    ExamStatusUpdateRequest,
+    ExamStatusUpdateResponse,
     ExamSubmitRequest,
     ExamSubmitResponse,
     ShareRequestCreate,
@@ -52,6 +57,7 @@ from backend.management.models import (
     TeacherAccountInfo,
     TeacherAccountListResponse,
     TeacherExamInfo,
+    TeacherExamPaper,
 )
 from backend.management.share_service import (
     create_share_request,
@@ -177,6 +183,7 @@ def generate_exam_endpoint(
             request.title,
             request.node_ids,
             request.question_count,
+            question_types=request.question_types,
         )
     except ManagementError as exc:
         _raise_http(exc)
@@ -247,6 +254,57 @@ def exam_results_endpoint(
     actor = resolve_actor(user, requester_id, what="requester_id")
     try:
         return get_exam_results(exam_id, actor)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.get("/api/exam/{exam_id}/paper", response_model=TeacherExamPaper)
+def exam_paper_endpoint(
+    exam_id: int,
+    requester_id: int | None = Query(None, gt=0, description="已废弃：以 token 身份为准"),
+    user: AuthUser = Depends(require_teacher),
+):
+    """教师校对答案（只读，**含参考答案**）。
+
+    与 GET /api/exam/{exam_id} 是两条路，别合并：那个只要求登录、且刻意不回 answer
+    （学生答自己的卷子也走它）。这个走 require_teacher + 班级归属校验，所以才敢回答案。
+    """
+    actor = resolve_actor(user, requester_id, what="requester_id")
+    try:
+        return get_exam_paper_for_teacher(exam_id, actor)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.post("/api/exam/{exam_id}/status", response_model=ExamStatusUpdateResponse)
+def exam_status_endpoint(
+    exam_id: int,
+    request: ExamStatusUpdateRequest,
+    requester_id: int | None = Query(None, gt=0, description="已废弃：以 token 身份为准"),
+    user: AuthUser = Depends(require_teacher),
+):
+    """结束考试（closed）/ 重新开放（published）。只改 exams.status，不动作答数据。
+
+    学生端表现：卷子仍在列表里但标示「已结束」、不能再作答；已交卷的学生仍能回看自己的成绩。
+    """
+    actor = resolve_actor(user, requester_id, what="requester_id")
+    try:
+        return set_exam_status(exam_id, actor, request.status)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.get("/api/exam/{exam_id}/my-submission", response_model=ExamSubmitResponse)
+def my_submission_endpoint(
+    exam_id: int,
+    user: AuthUser = Depends(get_current_user),
+):
+    """学生回看**自己**已交卷的得分与逐题对错。
+
+    刻意**不接受 user_id 参数** —— 身份只能来自 token，从根上就没有「看别人的作答」这条路径。
+    """
+    try:
+        return get_student_submission(exam_id, user.user_id)
     except ManagementError as exc:
         _raise_http(exc)
 

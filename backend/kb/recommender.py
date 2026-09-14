@@ -96,6 +96,7 @@ class QuestionRecommender:
         node_id: str,
         level: int = 2,
         count: int = 5,
+        types: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
         根据薄弱知识点和当前掌握等级推荐题目。
@@ -104,6 +105,7 @@ class QuestionRecommender:
             node_id: 薄弱知识点的 node_id
             level: 当前掌握等级 (0-4)
             count: 需要返回的题目数
+            types: 只从这些题型里出题（None 或空 = 不限）。教师组卷的「题型多选」走这里。
 
         逻辑:
             - 优先出 level+1 难度的题（挑战区）
@@ -114,6 +116,12 @@ class QuestionRecommender:
         self._ensure_loaded()
 
         candidates = self.by_node.get(node_id, [])
+        if types:
+            # 题型过滤必须发生在下面「按难度分层」之前。
+            # 若改成「先按难度取够 count 道再筛题型」：某知识点有 10 道概念题 + 4 道证明题时，
+            # level=2 会先取走 4 道证明题、再补 1 道概念题，筛完只剩 1 道 —— 明明有 10 道
+            # 却报「题量不足」。先筛后取，count 的上限才对得上真正可用的题量。
+            candidates = [q for q in candidates if q["type"] in types]
         if not candidates:
             return []
 
