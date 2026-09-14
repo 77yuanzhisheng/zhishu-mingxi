@@ -27,6 +27,7 @@ from backend.management.exam_service import (
     get_exam_results,
     get_student_exam,
     get_student_exams,
+    list_teacher_exams,
     submit_exam,
 )
 from backend.management.exceptions import ManagementError
@@ -50,6 +51,7 @@ from backend.management.models import (
     StudentExamInfo,
     TeacherAccountInfo,
     TeacherAccountListResponse,
+    TeacherExamInfo,
 )
 from backend.management.share_service import (
     create_share_request,
@@ -215,6 +217,23 @@ def student_exam_endpoint(
     # 「老师预览自己班的试卷」这类正常需求挡掉。
     try:
         return get_student_exam(exam_id)
+    except ManagementError as exc:
+        _raise_http(exc)
+
+
+@router.get("/api/exam/teacher/{teacher_id}", response_model=list[TeacherExamInfo])
+def teacher_exam_list_endpoint(
+    teacher_id: int,
+    user: AuthUser = Depends(require_teacher),
+):
+    """教师回看自己发布过的试卷（列表；点开某份再看题目走 GET /api/exam/{exam_id}）。
+
+    路径是两段，不会和单段的 GET /api/exam/{exam_id} 抢路由 —— 与既有的
+    GET /api/exam/student/{user_id} 同一形状。
+    """
+    actor = resolve_actor(user, teacher_id, what="teacher_id")
+    try:
+        return list_teacher_exams(actor)
     except ManagementError as exc:
         _raise_http(exc)
 

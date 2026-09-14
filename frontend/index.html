@@ -43,6 +43,12 @@
     .node-option small { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .node-option-empty { cursor: not-allowed; opacity: .55; }
     .node-option-empty:hover { background: transparent; }
+
+    /* 历史试卷：.study-card 是 grid，按钮不写 justify-self 会被拉满整行 */
+    .teacher-exam-history > button { justify-self: start; }
+    /* 右端「已交 N 人」徽标与「查看题目」按钮并排，与 .approval-actions 同一形状 */
+    .exam-history-actions { display: flex; align-items: center; gap: 8px; }
+    .exam-history-actions button { min-height: 32px; padding: 6px 10px; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -876,6 +882,12 @@
               <button type="submit">生成并发布</button>
             </form>
             <div id="teacherExamResult" class="exam-result empty-state">选择班级和知识点后生成试卷。</div>
+            <div class="study-card teacher-exam-history">
+              <h4>我发布的试卷</h4>
+              <p>该教师名下各班已发布的试卷会一直留在这里，刷新页面也在。点「查看题目」可在上方只读回看题干、题型与分值。</p>
+              <button id="refreshTeacherExamListButton" class="ghost-button" type="button">刷新试卷列表</button>
+              <div id="teacherExamHistory" class="student-report-list empty-state">正在读取已发布试卷...</div>
+            </div>
           </section>
           <aside class="insight-panel">
             <h3>发布状态</h3>
@@ -934,6 +946,6 @@
   <script src="grading-utils.js?v=4"></script>
   <script src="team4-utils.js?v=5"></script>
   <script src="chat-stream-utils.js?v=1"></script>
-  <script defer src="app.js?v=64"></script>
+  <script defer src="app.js?v=65"></script>
 </body>
 </html>

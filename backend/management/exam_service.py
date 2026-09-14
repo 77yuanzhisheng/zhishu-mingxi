@@ -24,6 +24,7 @@ from backend.management.models import (
     StudentExamInfo,
     StudentExamQuestion,
     StudentExamResult,
+    TeacherExamInfo,
 )
 from backend.management.question_source import recommend_exam_questions
 
@@ -74,6 +75,56 @@ def get_student_exams(user_id: int, database_path=None) -> list[StudentExamInfo]
             created_at=row["created_at"],
             total_score=row["total_score"],
             submitted=bool(row["submitted"]),
+        )
+        for row in rows
+    ]
+
+
+def list_teacher_exams(teacher_id: int, database_path=None) -> list[TeacherExamInfo]:
+    """Return exams published across the classes a teacher manages.
+
+    与 get_student_exams 的分工：那个按「学生所在班级」查、且只认 student 角色
+    （教师调它会 403），所以教师回看自己发过的卷子必须走这个函数。
+
+    班级归属以 classes.teacher_id 为准，与 require_class_manager / generate_exam
+    的判据保持一致（不用 exams.teacher_id —— 班级转手后应以班级归属为准）。
+    admin 可以看到全部。
+    """
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        teacher = require_user(connection, teacher_id)
+        require_teacher_or_admin(teacher)
+        sql = """
+            SELECT e.id AS id,
+                   e.title AS title,
+                   e.class_id AS class_id,
+                   c.name AS class_name,
+                   e.status AS status,
+                   e.created_at AS created_at,
+                   e.total_score AS total_score,
+                   (SELECT COUNT(*) FROM exam_questions q WHERE q.exam_id = e.id) AS question_count,
+                   (SELECT COUNT(*) FROM exam_submissions s WHERE s.exam_id = e.id) AS submitted_count
+            FROM exams e
+            JOIN classes c ON c.id = e.class_id
+        """
+        params: tuple = ()
+        if teacher["role"] != "admin":
+            sql += " WHERE c.teacher_id = ?"
+            params = (teacher_id,)
+        sql += " ORDER BY e.created_at DESC, e.id DESC"
+        rows = connection.execute(sql, params).fetchall()
+    return [
+        TeacherExamInfo(
+            exam_id=row["id"],
+            title=row["title"],
+            class_id=row["class_id"],
+            class_name=row["class_name"],
+            status=row["status"],
+            created_at=row["created_at"],
+            total_score=row["total_score"],
+            question_count=row["question_count"],
+            submitted_count=row["submitted_count"],
         )
         for row in rows
     ]

@@ -131,6 +131,25 @@ class StudentExamInfo(BaseModel):
     submitted: bool
 
 
+class TeacherExamInfo(BaseModel):
+    """教师侧「我发布的试卷」条目，用于回看自己发过的卷子。
+
+    与 StudentExamInfo 的区别：没有 submitted（那是学生视角），
+    改为 class_name（教师名下常有多个班，只给 class_id 认不出是哪个班）
+    和 question_count / submitted_count（列表上直接看出题量与交卷情况）。
+    """
+
+    exam_id: int
+    title: str
+    class_id: int
+    class_name: str
+    status: str
+    created_at: datetime
+    total_score: float
+    question_count: int
+    submitted_count: int
+
+
 class StudentExamQuestion(BaseModel):
     question_id: int
     node_id: str

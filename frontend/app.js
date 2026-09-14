@@ -120,7 +120,7 @@ const examNodeState = {
   onlyWithQuestions: true,   // 默认只列有题的知识点；取消勾选可看到全部模块及"暂无题目"标注
   loading: false,
 };
-const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null };
+const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null, teacherExams: [] };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
 const companionState = { kind: "today", loading: false };
@@ -671,6 +671,12 @@ if (teacherApprovalRefreshButton) {
   teacherApprovalRefreshButton.addEventListener("click", () => loadPendingTeachers());
 }
 document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
+// 同 teacherApprovalRefreshButton：新按钮必须判空 —— 若浏览器还缓存着旧 index.html，
+// 这里会拿到 null，直接 .addEventListener 会让整个 app.js 顶层抛错（白屏）。
+const refreshTeacherExamListButton = document.getElementById("refreshTeacherExamListButton");
+if (refreshTeacherExamListButton) {
+  refreshTeacherExamListButton.addEventListener("click", loadTeacherExamList);
+}
 // 知识点选择器（教师端组卷）：搜索 / 只看有题 / 清空 / 载入示例 / 题量变化时重算预检
 const examNodeSearchInput = document.getElementById("teacherExamNodeSearch");
 if (examNodeSearchInput) {
@@ -4930,6 +4936,7 @@ async function loadExamWorkspace() {
     await loadClassWorkspace();
     syncTeacherExamClasses();
     ensureExamNodeCatalog();   // 不 await：自管加载态与错误态，不阻塞考试页其余部分
+    loadTeacherExamList();     // 同上：回看入口要能自己刷出来，不拖住表单渲染
     return;
   }
   await loadStudentExams();
@@ -5374,6 +5381,7 @@ async function generateTeacherExam(event) {
     document.getElementById("teacherLatestExam").textContent = `#${data.exam_id}`;
     document.getElementById("teacherLatestExamCount").textContent = data.questions.length;
     document.getElementById("loadExamResultsButton").disabled = false;
+    loadTeacherExamList();   // 刚发布的这一份立刻出现在下面的列表里
   } catch (error) {
     target.className = "exam-result error-state";
     target.textContent = explainExamGenerateError(error.message);
@@ -5392,6 +5400,71 @@ async function loadTeacherExamResults() {
   } catch (error) {
     target.className = "student-report-list error-state";
     target.textContent = `成绩读取失败：${error.message}`;
+  }
+}
+
+// ==================== 在线考试：回看已发布的试卷 ====================
+// 原先「生成并发布」把题目渲染进 #teacherExamResult 之后就再无入口：
+// loadExamWorkspace 不恢复、examState 是纯内存，刷新即丢，教师找不到自己发过的卷子。
+// 现在走 GET /api/exam/teacher/{id} 拿列表（教师名下所有班级），
+// 点某份再走既有的 GET /api/exam/{id} 渲染只读题目。
+
+async function loadTeacherExamList() {
+  const target = document.getElementById("teacherExamHistory");
+  if (!target) return;   // 旧缓存 index.html 没有这个节点
+  target.className = "student-report-list empty-state";
+  target.textContent = "正在读取已发布试卷...";
+  try {
+    examState.teacherExams = await fetchApiJson(`/api/exam/teacher/${getCurrentUserId()}`);
+    renderTeacherExamList();
+  } catch (error) {
+    target.className = "student-report-list error-state";
+    target.textContent = `试卷列表读取失败：${error.message}`;
+  }
+}
+
+function renderTeacherExamList() {
+  const target = document.getElementById("teacherExamHistory");
+  if (!target) return;
+  const exams = Array.isArray(examState.teacherExams) ? examState.teacherExams : [];
+  if (!exams.length) {
+    target.className = "student-report-list empty-state";
+    target.textContent = "还没有发布过试卷。用上面的表单生成第一份后，这里会一直留着，随时可以回看。";
+    return;
+  }
+  target.className = "student-report-list";
+  target.innerHTML = exams.map((exam) => `
+    <article>
+      <div><strong>${escapeHtml(exam.title)}</strong><span>${escapeHtml(exam.class_name)} · ${formatDateTime(exam.created_at)} · ${Number(exam.question_count)} 题 · 满分 ${Number(exam.total_score)}</span></div>
+      <div class="exam-history-actions">
+        <span class="source-badge ${Number(exam.submitted_count) ? "synced" : "local"}">${Number(exam.submitted_count)} 人已交</span>
+        <button type="button" class="ghost-button" data-preview-exam-id="${Number(exam.exam_id)}">查看题目</button>
+      </div>
+    </article>`).join("");
+  target.querySelectorAll("[data-preview-exam-id]").forEach((button) => {
+    button.addEventListener("click", () => previewTeacherExam(Number(button.dataset.previewExamId)));
+  });
+}
+
+async function previewTeacherExam(examId) {
+  const target = document.getElementById("teacherExamResult");
+  target.className = "exam-result empty-state";
+  target.textContent = "正在加载试卷...";
+  try {
+    const exam = await fetchApiJson(`/api/exam/${examId}`);
+    const questions = exam.questions || [];
+    // 学生端的 GET /api/exam/{id} 刻意不返回 answer 列（它只要求登录，
+    // 回了答案就等于任何登录者都能偷到任意试卷的答案），所以这里只回看题干/题型/分值。
+    // 顺手把它记成「最近试卷」，右侧「查看最近试卷成绩」便能直接查到这一份。
+    examState.latestTeacherExamId = exam.exam_id;
+    document.getElementById("teacherLatestExam").textContent = `#${exam.exam_id}`;
+    document.getElementById("teacherLatestExamCount").textContent = questions.length;
+    document.getElementById("loadExamResultsButton").disabled = false;
+    target.className = "exam-result";
+    target.innerHTML = `<div class="tool-status-banner success"><div><span>历史试卷（只读回看，不含答案）</span><strong>${escapeHtml(exam.title)}</strong></div><span>${questions.length} 道题 · 满分 ${Number(exam.total_score)}</span></div><div class="teacher-question-list">${questions.map((question, index) => `<article><strong>${index + 1}. ${escapeHtml(question.content)}</strong><span>${escapeHtml(question.question_type)} · ${Number(question.score)} 分 · ${escapeHtml(findNodeName(question.node_id))}</span></article>`).join("")}</div>`;
+  } catch (error) {
+    target.className = "exam-result error-state";
+    target.textContent = `试卷加载失败：${error.message}`;
   }
 }
 
