@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -144,28 +145,43 @@ def next_version(user_id: int, connection: sqlite3.Connection) -> int:
 def persist_snapshot(path: dict[str, Any], source_summary: dict[str, Any], database_path: str | Path | None = None) -> None:
     init_database(database_path)
     with connection_scope(database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO learning_path_snapshots (
-                user_id, path_id, version, strategy, data_quality, diagnosis,
-                stages, ai_notes, source_summary, status, fallback_reason, generated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                path["user_id"],
-                path["path_id"],
-                path["version"],
-                path["strategy"],
-                json.dumps(path["data_quality"], ensure_ascii=False),
-                json.dumps(path["diagnosis"], ensure_ascii=False),
-                json.dumps(path["stages"], ensure_ascii=False),
-                json.dumps(path["ai_notes"], ensure_ascii=False),
-                json.dumps(source_summary, ensure_ascii=False),
-                path["data_quality"].get("status", "ok"),
-                path["ai_notes"].get("fallback_reason"),
-                path["generated_at"],
-            ),
-        )
+        # 并发刷新时多个请求都会用 SELECT MAX(version) + 1 算出同一个版本号，
+        # 直接插入会撞 user_id + version 唯一约束并把接口打成 500。
+        # 这里在同一个事务里重新取版本号，冲突则取下一版本重试（写入锁竞争一并重试）。
+        last_error: Exception | None = None
+        for attempt in range(5):
+            version = next_version(path["user_id"], connection)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO learning_path_snapshots (
+                        user_id, path_id, version, strategy, data_quality, diagnosis,
+                        stages, ai_notes, source_summary, status, fallback_reason, generated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        path["user_id"],
+                        path["path_id"],
+                        version,
+                        path["strategy"],
+                        json.dumps(path["data_quality"], ensure_ascii=False),
+                        json.dumps(path["diagnosis"], ensure_ascii=False),
+                        json.dumps(path["stages"], ensure_ascii=False),
+                        json.dumps(path["ai_notes"], ensure_ascii=False),
+                        json.dumps(source_summary, ensure_ascii=False),
+                        path["data_quality"].get("status", "ok"),
+                        path["ai_notes"].get("fallback_reason"),
+                        path["generated_at"],
+                    ),
+                )
+            except (sqlite3.IntegrityError, sqlite3.OperationalError) as exc:
+                last_error = exc
+                time.sleep(0.05 * (attempt + 1))
+                continue
+            # 回填真实落库的版本号，保证接口返回的 version 与实际快照一致
+            path["version"] = version
+            return
+        raise last_error if last_error else RuntimeError("persist_snapshot: snapshot version conflict")
 
 
 def _flatten_path(stages: list[dict[str, Any]]) -> list[str]:

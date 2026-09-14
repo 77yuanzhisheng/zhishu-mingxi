@@ -26,7 +26,7 @@ function resolveApiBaseUrl() {
 
 const tabRoutes = {
   dashboard: "/",
-  chat: "/chat",
+  chat: "/qa",
   graph: "/knowledge-graph",
   practice: "/practice",
   learning: "/learning",
@@ -34,8 +34,8 @@ const tabRoutes = {
   classes: "/classes",
   exam: "/exam",
   lessonPrep: "/lesson-prep",
-  tools: "/tools",
-  textbook: "/textbook",
+  tools: "/tool-center",
+  textbook: "/textbook-center",
   // ⚠️ 单段路径：见《部署说明》「路由为什么不能用两段」。
   // 两段路径会让浏览器去要 /admin/app.js，nginx 兜底回 HTML → 拒执行 → 白屏。
   teacherApproval: "/teacher-approval",
