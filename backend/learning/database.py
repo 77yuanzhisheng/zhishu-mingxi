@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
     class_id INTEGER,
+    -- 教师注册后需超级管理员审批才能使用教师功能。三个状态而不是一个布尔值：
+    -- 被拒的人要能看到「申请未通过」，否则会反复找管理员。
+    -- DEFAULT 'approved' 就是「存量教师全部已批准」，不需要任何回填 UPDATE。
+    teacher_status TEXT NOT NULL DEFAULT 'approved'
+        CHECK (teacher_status IN ('pending', 'approved', 'rejected')),
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE SET NULL
 );
 
@@ -281,6 +286,34 @@ def _migrate_users_auth_columns(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_users_teacher_status(connection: sqlite3.Connection) -> None:
+    """给旧库的 users 表补上 teacher_status（教师审批状态）。
+
+    DEFAULT 'approved' 让存量教师一次性全部视为已批准，不需要回填 UPDATE，
+    因此线上现有的教师账号（含演示号与指导老师的号）不受影响。
+
+    多进程/热重载启动时可能有两个进程同时 ALTER，后到的那个必然抛
+    `duplicate column name` —— 那是正常竞态，吞掉即可（同 _migrate_users_auth_columns 的
+    PRAGMA 守卫也挡不掉这种时序）。
+    """
+
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+    }
+    if "teacher_status" in columns:
+        return
+    try:
+        connection.execute(
+            """
+            ALTER TABLE users ADD COLUMN teacher_status TEXT NOT NULL DEFAULT 'approved'
+                CHECK (teacher_status IN ('pending', 'approved', 'rejected'))
+            """
+        )
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+
+
 def _migrate_grading_result_columns(connection: sqlite3.Connection) -> None:
     columns = {row["name"] for row in connection.execute("PRAGMA table_info(grading_results)").fetchall()}
     if "question_type" not in columns:
@@ -296,4 +329,5 @@ def init_database(database_path: str | Path | None = None) -> None:
     with connection_scope(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
         _migrate_users_auth_columns(connection)
+        _migrate_users_teacher_status(connection)
         _migrate_grading_result_columns(connection)

@@ -11,7 +11,9 @@ from backend.learning.models import LearningReport, RadarModule
 
 
 class ClassCreateRequest(BaseModel):
-    teacher_id: int = Field(gt=0)
+    # 2026-09-14 起可选：省略则一律以 token 里的身份为准（auth/dependencies.py:resolve_actor）。
+    # 保留这个字段只是不想把旧客户端打成 422；传了就必须与 token 一致，否则 403。
+    teacher_id: int | None = Field(default=None, gt=0)
     name: str = Field(min_length=1, max_length=100)
 
 
@@ -23,7 +25,8 @@ class ClassInfo(BaseModel):
 
 
 class ClassJoinRequest(BaseModel):
-    user_id: int = Field(gt=0)
+    # 同 ClassCreateRequest：可选，以 token 身份为准。
+    user_id: int | None = Field(default=None, gt=0)
     invite_code: str = Field(min_length=1, max_length=20)
 
 
@@ -82,7 +85,8 @@ class ExamGenerateRequest(BaseModel):
         }
     )
 
-    teacher_id: int = Field(gt=0)
+    # 同 ClassCreateRequest：可选，以 token 身份为准。
+    teacher_id: int | None = Field(default=None, gt=0)
     class_id: int = Field(gt=0)
     title: str = Field(min_length=1, max_length=200)
     node_ids: list[str] = Field(min_length=1, max_length=20)
@@ -153,7 +157,8 @@ class SubmittedAnswer(BaseModel):
 
 class ExamSubmitRequest(BaseModel):
     exam_id: int = Field(gt=0)
-    user_id: int = Field(gt=0)
+    # 同 ClassCreateRequest：可选，以 token 身份为准。原先信任它 = 可以替别人交卷。
+    user_id: int | None = Field(default=None, gt=0)
     answers: list[SubmittedAnswer] = Field(default_factory=list)
 
 
@@ -202,12 +207,15 @@ class ExamResultsResponse(BaseModel):
 
 
 class ShareRequestCreate(BaseModel):
-    requester_id: int = Field(gt=0)
+    # 可选，以 token 身份为准 —— 否则可以替别人发起共享申请。
+    requester_id: int | None = Field(default=None, gt=0)
     target_user_id: int = Field(gt=0)
 
 
 class ShareRequestDecision(BaseModel):
     request_id: int = Field(gt=0)
+    # ⚠️ 这一个**必须传**、且必须等于登录者本人（端点里用 ensure_self 钉死）。
+    # 它就是"谁批准了自己这条申请"的凭据，不能从 request_id 反推成可选。
     target_user_id: int = Field(gt=0)
     approved: bool
 
@@ -224,3 +232,22 @@ class ShareRequestInfo(BaseModel):
 class SharedLearningReport(BaseModel):
     authorized: bool
     report: LearningReport
+
+
+# ==================== 教师账号审批（超级管理员） ====================
+
+
+class TeacherAccountInfo(BaseModel):
+    user_id: int
+    username: str | None = None
+    name: str
+    status: Literal["pending", "approved", "rejected"]
+    # 该教师已建的班级数。管理员点「拒绝」前需要知道这个数 ——
+    # 审批不回收已有班级关系，建过班的教师被拒后仍能读那些班的学情。
+    class_count: int = 0
+
+
+class TeacherAccountListResponse(BaseModel):
+    teachers: list[TeacherAccountInfo]
+    # 前端导航项角标用；恒等于「全部 pending 数」，与 teachers 是否被 status 过滤无关。
+    pending_count: int = 0

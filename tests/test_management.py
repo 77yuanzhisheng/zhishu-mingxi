@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.auth.service import register_user
 from backend.learning.database import connection_scope, init_database
 from backend.learning.service import create_user, get_learning_report, update_mastery
 from backend.management.class_service import (
@@ -194,9 +195,20 @@ def test_existing_kb_question_source_is_reused_without_synthesizing_answers():
 def test_management_http_routes_and_permission_status(tmp_path, monkeypatch):
     database_path = tmp_path / "http.db"
     monkeypatch.setenv("LEARNING_DB_PATH", str(database_path))
-    teacher_id = create_user("HTTP教师", "teacher", database_path=database_path)
-    student_id = create_user("HTTP学生", "student", database_path=database_path)
-    stranger_id = create_user("陌生学生", "student", database_path=database_path)
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-only-secret-with-sufficient-entropy")
+    teacher = register_user("http-teacher", "123456", "HTTP教师", "teacher", database_path)
+    student = register_user("http-student", "123456", "HTTP学生", "student", database_path)
+    stranger = register_user("http-stranger", "123456", "陌生学生", "student", database_path)
+    teacher_id = teacher.user.user_id
+    student_id = student.user.user_id
+    stranger_id = stranger.user.user_id
+    with connection_scope(database_path) as connection:
+        connection.execute(
+            "UPDATE users SET teacher_status = 'approved' WHERE id = ?", (teacher_id,)
+        )
+    teacher_headers = {"Authorization": f"Bearer {teacher.token}"}
+    student_headers = {"Authorization": f"Bearer {student.token}"}
+    stranger_headers = {"Authorization": f"Bearer {stranger.token}"}
     app = FastAPI()
     app.include_router(management_router)
     client = TestClient(app)
@@ -209,23 +221,28 @@ def test_management_http_routes_and_permission_status(tmp_path, monkeypatch):
     assert ensured.json()["id"] == 99
 
     created = client.post(
-        "/api/class/create", json={"teacher_id": teacher_id, "name": "HTTP班级"}
+        "/api/class/create",
+        json={"teacher_id": teacher_id, "name": "HTTP班级"},
+        headers=teacher_headers,
     )
     assert created.status_code == 200
     class_info = created.json()
     joined = client.post(
         "/api/class/join",
         json={"user_id": student_id, "invite_code": class_info["invite_code"]},
+        headers=student_headers,
     )
     assert joined.status_code == 200
     forbidden = client.get(
         f"/api/class/{class_info['class_id']}/report",
         params={"requester_id": stranger_id},
+        headers=stranger_headers,
     )
     assert forbidden.status_code == 403
     allowed = client.get(
         f"/api/class/{class_info['class_id']}/report",
         params={"requester_id": teacher_id},
+        headers=teacher_headers,
     )
     assert allowed.status_code == 200
 

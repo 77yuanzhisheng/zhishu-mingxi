@@ -36,6 +36,9 @@ const tabRoutes = {
   lessonPrep: "/lesson-prep",
   tools: "/tools",
   textbook: "/textbook",
+  // ⚠️ 单段路径：见《部署说明》「路由为什么不能用两段」。
+  // 两段路径会让浏览器去要 /admin/app.js，nginx 兜底回 HTML → 拒执行 → 白屏。
+  teacherApproval: "/teacher-approval",
 };
 
 const titles = {
@@ -49,7 +52,8 @@ const titles = {
   classes: "班级管理",
   exam: "在线考试",
   lessonPrep: "教师智能备课",
-  textbook: "Web 交互式教材 2.0",
+  textbook: "Web 交互式教材 5.0",
+  teacherApproval: "教师审批",
 };
 
 // 角色专属页：教师端不提供学生向页面，学生端不提供教师向页面。
@@ -661,6 +665,11 @@ const teacherDashboardRefreshButton = document.getElementById("teacherDashboardR
 if (teacherDashboardRefreshButton) {
   teacherDashboardRefreshButton.addEventListener("click", () => loadTeacherClassOverview());
 }
+// 教师审批页：手动刷新（管理员可能开着页面等人注册）
+const teacherApprovalRefreshButton = document.getElementById("teacherApprovalRefresh");
+if (teacherApprovalRefreshButton) {
+  teacherApprovalRefreshButton.addEventListener("click", () => loadPendingTeachers());
+}
 document.getElementById("loadExamResultsButton").addEventListener("click", loadTeacherExamResults);
 // 知识点选择器（教师端组卷）：搜索 / 只看有题 / 清空 / 载入示例 / 题量变化时重算预检
 const examNodeSearchInput = document.getElementById("teacherExamNodeSearch");
@@ -719,19 +728,50 @@ renderDashboard();
 selectExtendedTool(extendedToolState.current);
 selectUnifiedTool(unifiedToolState.current);
 switchTab(getTabFromLocation(), false);
+
+// ⚠️ 演示账号口令写在静态文件里 = 等于公开。这三个账号只用于评委演示：
+//    都是普通 student / teacher（**没有任何管理员权限**），也不要往里放真实教学数据。
+//    数据库那一侧由《演示账号初始化.py》按本表写入，两边必须一致。
+const DEMO_ACCOUNTS = {
+  1: { username: "demo1", password: "ZhishuDemo-2026" },
+  2: { username: "demo2", password: "ZhishuDemo-2026" },
+  1003: { username: "demo1003", password: "ZhishuDemo-2026" },
+};
+
+async function loginDemoAccount(demoUserId) {
+  const account = DEMO_ACCOUNTS[demoUserId];
+  if (!account) throw new Error("这个 ID 没有配置演示账号（可用 1 / 2 / 1003）");
+  const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: account.username, password: account.password }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readApiError(data, `登录被拒绝（HTTP ${response.status}）`));
+  // token 只放内存、**不写 localStorage**：?demo= 的双窗口演示（一个教师窗口、一个学生窗口）
+  // 靠的就是每个窗口各自持有一份登录态；写进 localStorage 会互相覆盖，两个窗口会变成同一个人。
+  authState.token = data.token;
+  authState.user = data.user;
+  return data.user;
+}
+
 bootstrapApp();
 
 async function bootstrapApp() {
-  // 演示/截图模式：?demo=1003 直接以演示账户进入（评委演示也方便）。
+  // 演示/截图模式：?demo=<用户ID> 以演示账户**真实登录**进应用（评委演示也方便）。
+  // 后端要求教师接口认 token 之后，原来只伪造 authState.user、不带 token 的写法
+  // 会让演示的班级/考试页整片 401 —— 改成走 POST /api/auth/login 拿真 token。
+  // 角色不再由 ?demoRole= 决定，一律以数据库里该账号的 role 为准（demoRole 后门已关）。
   const demoParams = new URLSearchParams(location.search);
   const demoParam = demoParams.get("demo");
   if (demoParam !== null) {
     const demoUserId = Number(demoParam) || DEFAULT_USER_ID;
-    authState.user = {
-      user_id: demoUserId,
-      name: demoUserId === 1003 ? "张鹤轩" : `演示用户 ${demoUserId}`,
-      role: demoParams.get("demoRole") === "teacher" ? "teacher" : "student",
-    };
+    try {
+      await loginDemoAccount(demoUserId);
+    } catch (error) {
+      showAuthGate(`演示账户 ${demoUserId} 登录失败：${error.message}`);
+      return;
+    }
     await startAuthenticatedApp();
     // 演示/截图模式：?ask=问题 自动在 RAG 问答中发送（真实问答，用于截图）
     const askQuestion = demoParams.get("ask");
@@ -791,6 +831,22 @@ function applyAuthenticatedUser() {
   document.getElementById("appLayout").hidden = false;
   document.getElementById("currentUserName").textContent = user.name;
   document.getElementById("currentUserRole").textContent = formatRole(user.role);
+  // 取元素后判空：万一只换了 app.js 没同步换 index.html（部署失误），
+  // 只是提示条不出现，不会因为 getElementById 返回 null 而整页脚本抛错白屏
+  // （与 4325 行 setTextById 那段注释同一个约定）。
+  const accountNotice = document.getElementById("accountNotice");
+  if (accountNotice) {
+    if (user.role === "teacher" && user.teacher_status === "pending") {
+      accountNotice.textContent = "教师账号正在等待管理员审批，通过后即可使用教师功能。";
+      accountNotice.hidden = false;
+    } else if (user.role === "teacher" && user.teacher_status === "rejected") {
+      accountNotice.textContent = "教师账号申请未通过审批，暂时无法使用教师功能。";
+      accountNotice.hidden = false;
+    } else {
+      accountNotice.textContent = "";
+      accountNotice.hidden = true;
+    }
+  }
   document.getElementById("learningUserInput").value = `${user.name} · ID ${user.user_id}`;
   classState.role = ["teacher", "admin"].includes(user.role) ? "teacher" : "student";
   updateRoleInterface();
@@ -907,6 +963,16 @@ function switchTab(tabName, updateHistory = true) {
 
   // 角色准入：classState.role 在登录态就绪前为 null（模块加载期那次 switchTab），
   // 此时不拦截；applyAuthenticatedUser() 设好角色后会再调一次，那时才真正生效。
+  // 教师审批页仅超级管理员可见。直链、popstate 与页面内按钮都能走到这里，
+  // 所以准入判断必须写在 switchTab 里，光靠导航项 hidden 不够。
+  // authState.user 判空是必需的：登录态恢复前的那次 switchTab 读不到 role，
+  // 不判空就会把深链 rewrite 成首页（详见 patch_frontend.py 第 11 条注释）。
+  if (tabName === "teacherApproval" && authState.user && authState.user.role !== "admin") {
+    window.history.replaceState({ tab: "dashboard" }, "", tabRoutes.dashboard);
+    tabName = "dashboard";
+    updateHistory = false;
+  }
+
   const blockedTabs = classState.role ? ROLE_BLOCKED_TABS[classState.role] : null;
   if (blockedTabs && blockedTabs.has(tabName)) {
     // 必须 replaceState：否则地址栏停在 /practice 而页面是首页，一刷新又走一遍重定向
@@ -980,6 +1046,7 @@ function switchTab(tabName, updateHistory = true) {
   }
   if (tabName === "tools") selectUnifiedTool(unifiedToolState.current);
   if (tabName === "classes") loadClassWorkspace();
+  if (tabName === "teacherApproval") loadPendingTeachers();
   if (tabName === "exam") loadExamWorkspace();
   if (tabName === "lessonPrep") loadLessonPrepWorkspace();
 }
@@ -1061,6 +1128,8 @@ async function requestPreferredAssistant(payload, message = null) {
 }
 
 async function requestBasicAssistant(payload) {
+  // /chat 已要求登录（后端 ensure_self）：未登录时给出明确提示，而不是把 401 原文弹给用户。
+  if (!authState.token) throw new Error("请先登录后再使用智能问答");
   const response = await postJson("/chat", payload);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(readApiError(data, "基础模型暂时无法响应"));
@@ -1087,9 +1156,8 @@ function updateAssistantChannelUI(channel) {
 async function requestStreamingChat(payload, message) {
   // 演示/截图模式：?nostream=1 走非流式（一次拿完整回答再打字机输出），规避流式偶发挂起
   if (new URLSearchParams(location.search).get("nostream") === "1") {
-    let resp = await fetch(`${RAG_API_BASE_URL}/chat`, {
+    let resp = await authenticatedFetch("/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const data = await resp.json().catch(() => ({}));
@@ -1101,15 +1169,13 @@ async function requestStreamingChat(payload, message) {
     fallbackWriter.finalize(data.answer || "");
     return data;
   }
-  let response = await fetch(`${RAG_API_BASE_URL}/chat/stream`, {
+  let response = await authenticatedFetch("/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (response.status === 404) {
-    response = await fetch(`${RAG_API_BASE_URL}/chat`, {
+    response = await authenticatedFetch("/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({}));
@@ -2877,9 +2943,13 @@ async function loadGraphNodeLearning(node) {
   const userId = getCurrentUserId();
 
   try {
+    if (!authState.token) {
+      target.innerHTML = '<p class="muted-line">请先登录后查看学情数据。</p>';
+      return;
+    }
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(`${API_BASE_URL}/api/learning/report?user_id=${encodeURIComponent(userId)}`, {
+    const response = await authenticatedFetch(`/api/learning/report?user_id=${encodeURIComponent(userId)}`, {
       signal: controller.signal,
     });
     const data = await response.json();
@@ -3708,7 +3778,7 @@ async function fetchLearningReport(userId) {
   ];
   let lastResponse;
   for (const path of paths) {
-    const response = await fetch(`${API_BASE_URL}${path}`);
+    const response = await authenticatedFetch(path);
     if (response.ok || response.status !== 404) return response;
     lastResponse = response;
   }
@@ -3751,14 +3821,16 @@ async function loadAiSummary() {
   // 该元素在教师视图下是 hidden 的，没必要为它发一次请求。
   if (classState.role === "teacher") return;
   const userId = getCurrentUserId();
-  if (!userId) {
+  // 未登录时 getCurrentUserId() 会回落到 DEFAULT_USER_ID（=1），
+  // 所以判定登录必须看 token，不能看 userId。
+  if (!authState.token || !userId) {
     target.textContent = "请先登录后再生成学情分析。";
     return;
   }
 
   target.textContent = "正在综合问答与答题数据生成学情分析...";
   try {
-    const response = await fetch(`${API_BASE_URL}/api/learning/ai-summary?user_id=${encodeURIComponent(userId)}`);
+    const response = await authenticatedFetch(`/api/learning/ai-summary?user_id=${encodeURIComponent(userId)}`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.detail || "学情分析生成失败");
@@ -4306,7 +4378,14 @@ function showRoleView(id, visible) {
 }
 
 function updateRoleInterface() {
-  classState.role = ["teacher", "admin"].includes(authState.user?.role) ? "teacher" : "student";
+  // 待审批 / 被拒的教师按**学生界面**显示 —— 后端也会拒掉他们的教师端点，两边口径一致。
+  // ⚠️ 先判 role === "teacher" 再看审批状态：超管的 role 是 "admin"，
+  // 不能因为它 teacher_status 恰好是 pending 就被降成学生界面。
+  const currentUser = authState.user;
+  const teacherUsable =
+    currentUser?.role !== "teacher" || currentUser?.teacher_status === "approved";
+  classState.role =
+    ["teacher", "admin"].includes(currentUser?.role) && teacherUsable ? "teacher" : "student";
   const roleName = formatRole(classState.role);
   document.querySelectorAll("[data-role-only]").forEach((element) => {
     element.hidden = element.dataset.roleOnly !== classState.role;
@@ -4327,6 +4406,10 @@ function updateRoleInterface() {
   // 导航文案随角色变，避免出现「导航写个人仪表盘、面板写班级学情总览」的现场穿帮
   setTextById("navTitleDashboard", isTeacher ? "班级学情总览" : "个人仪表盘");
   setTextById("navTitleLearning", isTeacher ? "班级学情分析" : "学情面板");
+
+  // 教师审批页只对超级管理员出现（**不要**用 data-role-only：那套按 classState.role 比较，
+  // 而 admin 在那个字段里是 "teacher"，会把这一页永久隐藏）
+  showRoleView("navTeacherApproval", authState.user?.role === "admin");
 }
 
 async function joinClass(event) {
@@ -4735,6 +4818,78 @@ function renderEmptyClassOverview(message = "请选择一个班级查看学生�
   const target = document.getElementById("classStudentList");
   target.className = "student-report-list empty-state";
   target.textContent = message;
+}
+
+// ==================== 教师审批（超级管理员） ====================
+
+async function loadPendingTeachers() {
+  const target = document.getElementById("teacherApprovalList");
+  if (!target) return;
+  target.className = "data-list empty-state";
+  target.textContent = "正在加载待审批教师…";
+  try {
+    const data = await fetchApiJson("/api/admin/teachers?status=pending");
+    renderTeacherApproval(data.teachers || []);
+  } catch (error) {
+    // 非超管走不到这里（switchTab 已挡），但 token 过期时会 —— 文案直接来自后端 detail。
+    showClassError("teacherApprovalList", `加载失败：${error.message}`);
+  }
+}
+
+function renderTeacherApproval(teachers) {
+  const target = document.getElementById("teacherApprovalList");
+  if (!target) return;
+  if (!teachers.length) {
+    target.className = "data-list empty-state";
+    target.textContent = "当前没有待审批的教师账号。";
+    return;
+  }
+  target.className = "data-list";
+  target.textContent = "";
+  teachers.forEach((teacher) => {
+    const row = document.createElement("div");
+    row.className = "class-row";
+
+    const info = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = `${teacher.name} · ${teacher.username || "（无用户名）"}`;
+    const detail = document.createElement("span");
+    // 带上已建班级数：审批**不回收**已有班级关系，所以这个数决定"点了拒绝会留下什么"
+    detail.textContent = `ID ${teacher.user_id} · 已建班级 ${teacher.class_count} 个`;
+    info.append(name, detail);
+
+    const actions = document.createElement("div");
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.className = "ghost-button";
+    approve.textContent = "通过";
+    approve.addEventListener("click", () => decideTeacherApproval(teacher.user_id, true));
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "ghost-button";
+    reject.textContent = "拒绝";
+    reject.addEventListener("click", () => decideTeacherApproval(teacher.user_id, false));
+    actions.append(approve, reject);
+
+    row.append(info, actions);
+    target.append(row);
+  });
+}
+
+async function decideTeacherApproval(userId, approved) {
+  const status = document.getElementById("teacherApprovalStatus");
+  try {
+    // ⚠️ postJson 返回的是 Response 不是 JSON，必须自己 await response.json() 并查 ok
+    //    （照 decideShareRequest 的写法）。
+    const action = approved ? "approve" : "reject";
+    const response = await postJson(`/api/admin/teachers/${userId}/${action}`, {});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "审批失败"));
+    if (status) status.textContent = approved ? "已通过该教师账号。" : "已拒绝该教师账号。";
+    await loadPendingTeachers();
+  } catch (error) {
+    if (status) status.textContent = `审批失败：${error.message}`;
+  }
 }
 
 function showClassError(targetId, message) {

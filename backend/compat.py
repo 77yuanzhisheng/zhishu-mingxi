@@ -18,10 +18,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.auth.dependencies import (
+    ensure_can_read_user,
+    ensure_self,
+    get_current_user,
+    require_teacher,
+    resolve_actor,
+)
+from backend.auth.models import AuthUser
 from backend.learning.database import connection_scope
 
 router = APIRouter(prefix="/api", tags=["前端兼容"])
@@ -118,7 +126,10 @@ def chat_stream(request: StreamChatRequest):
 class UserEnsureRequest(BaseModel):
     user_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=50)
-    role: str = Field(default="student", pattern="^(student|teacher|admin)$")
+    # 2026-09-14 收窄：原来是 student|teacher|admin，等于公开送人一个 admin。
+    # 不加鉴权的理由与 backend/management/router.py 同名端点一致（死接口、只能插入、
+    # 插入的行没有 username 签不出 token），下一轮直接删。
+    role: str = Field(default="student", pattern="^(student|teacher)$")
 
 
 @router.post("/user/ensure")
@@ -130,9 +141,15 @@ def ensure_user(request: UserEnsureRequest) -> dict[str, Any]:
             (request.user_id,),
         ).fetchone()
         if row is None:
+            # 自报 teacher 的同样按待审批处理，别让这个后门绕过审批。
             conn.execute(
-                "INSERT INTO users (id, name, role) VALUES (?, ?, ?)",
-                (request.user_id, request.name, request.role),
+                "INSERT INTO users (id, name, role, teacher_status) VALUES (?, ?, ?, ?)",
+                (
+                    request.user_id,
+                    request.name,
+                    request.role,
+                    "pending" if request.role == "teacher" else "approved",
+                ),
             )
             conn.commit()
             row = conn.execute(
@@ -150,8 +167,16 @@ def ensure_user(request: UserEnsureRequest) -> dict[str, Any]:
 # ==================== 学情报告别名 ====================
 
 @router.get("/learning-report")
-def learning_report_alias(user_id: int = Query(..., gt=0)):
-    """GET /api/learning-report — 前端使用的别名"""
+def learning_report_alias(
+    user_id: int = Query(..., gt=0),
+    user: AuthUser = Depends(get_current_user),
+):
+    """GET /api/learning-report — 前端使用的别名
+
+    授权必须与 /api/learning/report 完全一致：前端 fetchLearningReport 在拿到 404 时
+    会回退到这条别名，只堵正名等于没堵。
+    """
+    ensure_can_read_user(user, user_id)
     from backend.learning.service import get_learning_report, UserNotFoundError
     try:
         return get_learning_report(user_id)
@@ -172,8 +197,13 @@ def _class_dict(row) -> dict[str, Any]:
 
 
 @router.get("/class/student/{user_id}")
-def student_class(user_id: int):
-    """学生加入的班级（前端：classState.studentClass = data.class）"""
+def student_class(user_id: int, user: AuthUser = Depends(get_current_user)):
+    """学生加入的班级（前端：classState.studentClass = data.class）
+
+    ⚠️ 这个响应里**含 invite_code**（见 _class_dict）—— 拿到它就等于可以把自己塞进
+    别人的班级。所以必须走 ensure_can_read_user：本人 / admin / 班主任 / 已批准共享。
+    """
+    ensure_can_read_user(user, user_id)
     with connection_scope() as conn:
         user = conn.execute(
             "SELECT class_id FROM users WHERE id = ?", (user_id,)
@@ -191,8 +221,10 @@ def student_class(user_id: int):
 
 
 @router.get("/class/teacher/{user_id}")
-def teacher_classes(user_id: int):
+def teacher_classes(user_id: int, user: AuthUser = Depends(get_current_user)):
     """老师管理的班级列表"""
+    # 只认自己：这份列表同样含 invite_code。
+    ensure_self(user, user_id)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT * FROM classes WHERE teacher_id = ? ORDER BY id",
@@ -204,8 +236,13 @@ def teacher_classes(user_id: int):
 # ==================== 分享申请列表 ====================
 
 @router.get("/share/requests")
-def list_share_requests(target_user_id: int = Query(..., gt=0)):
+def list_share_requests(
+    target_user_id: int = Query(..., gt=0),
+    user: AuthUser = Depends(get_current_user),
+):
     """待处理的分享申请（前端班级页面加载时调用）"""
+    # 只列自己的：别人收到的申请是别人的隐私，而且这条是上面那个偷学情链路的侦察步骤。
+    ensure_self(user, target_user_id)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT * FROM share_requests WHERE target_user_id = ? ORDER BY id DESC",
@@ -227,19 +264,24 @@ def list_share_requests(target_user_id: int = Query(..., gt=0)):
 # ==================== 班级创建/加入响应补 id 字段 ====================
 
 class ClassCreateCompatRequest(BaseModel):
-    teacher_id: int = Field(gt=0)
+    # 可选，以 token 身份为准（auth/dependencies.py:resolve_actor）。
+    teacher_id: int | None = Field(default=None, gt=0)
     name: str = Field(min_length=1, max_length=100)
 
 
 @router.post("/class/create")
-def create_class_compat(request: ClassCreateCompatRequest):
+def create_class_compat(
+    request: ClassCreateCompatRequest,
+    user: AuthUser = Depends(require_teacher),
+):
     """包装队员3 create_class，响应补充 id 字段（前端读 data.id）"""
     from backend.management.class_service import create_class
     from backend.management.exceptions import ManagementError
+    actor = resolve_actor(user, request.teacher_id, what="teacher_id")
     try:
-        info = create_class(request.teacher_id, request.name)
+        info = create_class(actor, request.name)
     except ManagementError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return {
         "id": info.class_id,
         "class_id": info.class_id,
@@ -250,19 +292,26 @@ def create_class_compat(request: ClassCreateCompatRequest):
 
 
 class ClassJoinCompatRequest(BaseModel):
-    user_id: int = Field(gt=0)
+    # 可选，以 token 身份为准。
+    user_id: int | None = Field(default=None, gt=0)
     invite_code: str = Field(min_length=1, max_length=20)
 
 
 @router.post("/class/join")
-def join_class_compat(request: ClassJoinCompatRequest):
+def join_class_compat(
+    request: ClassJoinCompatRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     """包装队员3 join_class，直接返回班级对象（前端 classState.studentClass = data）"""
     from backend.management.class_service import join_class
     from backend.management.exceptions import ManagementError
+    # 原先信任 body 里的 user_id：可以把一个刚注册、class_id 还是 NULL 的学生
+    # 直接写进攻击者的班，之后 _is_class_teacher_of 成立 —— 那是偷学情的另一条路。
+    actor = resolve_actor(user, request.user_id, what="user_id")
     try:
-        result = join_class(request.user_id, request.invite_code)
+        result = join_class(actor, request.invite_code)
     except ManagementError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     info = result.class_info
     return {
         "id": info.class_id,

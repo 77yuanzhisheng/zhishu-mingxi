@@ -24,8 +24,21 @@ def require_class(connection: sqlite3.Connection, class_id: int) -> sqlite3.Row:
 
 
 def require_teacher_or_admin(user: sqlite3.Row) -> None:
+    """服务层的教师门 —— 与 auth/dependencies.py:require_teacher 是同一道门的两把锁。
+
+    端点上的 Depends(require_teacher) 是主锁；这里是第二把，防的是「绕过端点直接调
+    服务函数」的路径（service 层拿到的常常是数据库行，不是 AuthUser，所以必须自己判一次）。
+
+    用 `"teacher_status" in user.keys()` 而不是直接取键：旧库若还没跑迁移，
+    直接取会 IndexError → 500，而这里的语义应该是「那就不拦」（= 迁移前的既有行为）。
+    """
     if user["role"] not in {"teacher", "admin"}:
         raise PermissionDeniedError("仅 teacher 或 admin 可执行此操作")
+    if user["role"] == "teacher" and "teacher_status" in user.keys():
+        if user["teacher_status"] == "pending":
+            raise PermissionDeniedError("教师账号待管理员审批，审批通过后才能使用教师功能")
+        if user["teacher_status"] == "rejected":
+            raise PermissionDeniedError("教师账号申请未通过审批，无法使用教师功能")
 
 
 def require_class_manager(

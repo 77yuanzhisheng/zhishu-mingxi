@@ -24,6 +24,44 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _log_super_admin_status() -> None:
+    """启动时核对 SUPER_ADMIN_USERNAME 指向的账号是否真的存在。
+
+    超管身份靠 .env 点名（backend/auth/service.py:is_configured_super_admin），
+    配置写错**不会有任何报错** —— 只会在管理员登录后发现"看不到教师审批页"。
+    这里把三种失配在启动日志里直接说清楚。
+
+    只打印用户名与库内 role，**不打印任何口令**。
+    """
+    configured = os.getenv("SUPER_ADMIN_USERNAME", "").strip()
+    if not configured:
+        logger.warning(
+            "未配置 SUPER_ADMIN_USERNAME —— 教师审批将无人可操作"
+            "（数据库里 role='admin' 的账号仍可访问，可用来救场）"
+        )
+        return
+
+    from backend.learning.database import connection_scope
+
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT id, role FROM users WHERE username = ?", (configured,)
+        ).fetchone()
+    if row is None:
+        logger.warning(
+            "SUPER_ADMIN_USERNAME=%s 在库里找不到对应账号 —— 请先用正常注册流程建号，"
+            "或核对拼写；在此之前教师审批不可用",
+            configured,
+        )
+        return
+    logger.info(
+        "超级管理员：%s（id=%s，库内 role=%s）→ 该账号登录后 role 将提升为 admin",
+        configured,
+        row["id"],
+        row["role"],
+    )
+
+
 # ==================== 应用生命周期 ====================
 
 @asynccontextmanager
@@ -33,6 +71,9 @@ async def lifespan(app: FastAPI):
     from backend.learning.database import init_database
     init_database()
     logger.info("学情分析数据库初始化完成")
+
+    # 启动时：超级管理员自检（只报状态，不打印口令）
+    _log_super_admin_status()
 
     # 启动时：初始化知识库模块
     logger.info("正在初始化知识库模块...")

@@ -138,8 +138,15 @@ def test_student_exam_list_submission_state_and_safe_detail(
     client_and_database, monkeypatch
 ):
     client, database_path = client_and_database
-    teacher_id = create_user("考试教师", "teacher", database_path=database_path)
-    student_id = create_user("考试学生", "student", database_path=database_path)
+    teacher = register(client, "exam-teacher", "teacher").json()
+    student = register(client, "exam-student").json()
+    teacher_id = teacher["user"]["user_id"]
+    student_id = student["user"]["user_id"]
+    with connection_scope(database_path) as connection:
+        connection.execute(
+            "UPDATE users SET teacher_status = 'approved' WHERE id = ?", (teacher_id,)
+        )
+    student_headers = {"Authorization": f"Bearer {student['token']}"}
     class_info = create_class(teacher_id, "认证考试班", database_path)
     join_class(student_id, class_info.invite_code, database_path)
 
@@ -163,12 +170,12 @@ def test_student_exam_list_submission_state_and_safe_detail(
         database_path,
     )
 
-    before = client.get(f"/api/exam/student/{student_id}")
+    before = client.get(f"/api/exam/student/{student_id}", headers=student_headers)
     assert before.status_code == 200
     assert before.json()[0]["exam_id"] == exam.exam_id
     assert before.json()[0]["submitted"] is False
 
-    detail = client.get(f"/api/exam/{exam.exam_id}")
+    detail = client.get(f"/api/exam/{exam.exam_id}", headers=student_headers)
     assert detail.status_code == 200
     assert detail.json()["questions"]
     assert "answer" not in detail.json()["questions"][0]
@@ -180,15 +187,18 @@ def test_student_exam_list_submission_state_and_safe_detail(
         [SubmittedAnswer(question_id=exam.questions[0].question_id, answer="A")],
         database_path,
     )
-    after = client.get(f"/api/exam/student/{student_id}")
+    after = client.get(f"/api/exam/student/{student_id}", headers=student_headers)
     assert after.status_code == 200
     assert after.json()[0]["submitted"] is True
 
 
-def test_student_exam_list_validates_user_role(client_and_database):
+def test_student_exam_list_validates_self_and_student_role(client_and_database):
     client, database_path = client_and_database
-    teacher_id = create_user("不是学生", "teacher", database_path=database_path)
-    missing = client.get("/api/exam/student/999999")
-    wrong_role = client.get(f"/api/exam/student/{teacher_id}")
-    assert missing.status_code == 404
+    teacher = register(client, "exam-role-teacher", "teacher").json()
+    teacher_id = teacher["user"]["user_id"]
+    headers = {"Authorization": f"Bearer {teacher['token']}"}
+    missing = client.get("/api/exam/student/999999", headers=headers)
+    wrong_role = client.get(f"/api/exam/student/{teacher_id}", headers=headers)
+    # 先按 token 校验收口，再进入 service 的角色校验：非本人查他人一律 403。
+    assert missing.status_code == 403
     assert wrong_role.status_code == 403

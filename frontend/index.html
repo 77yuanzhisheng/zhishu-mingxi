@@ -90,7 +90,7 @@
           <fieldset class="role-choice">
             <legend>身份</legend>
             <label><input type="radio" name="role" value="student" checked><span>学生</span><small>加入班级、学习与参加考试</small></label>
-            <label><input type="radio" name="role" value="teacher"><span>教师</span><small>创建班级、发布考试与查看学情</small></label>
+            <label><input type="radio" name="role" value="teacher"><span>教师</span><small>注册后需管理员审批</small></label>
           </fieldset>
           <button type="submit">创建账户</button>
         </form>
@@ -150,9 +150,13 @@
           <span>教学</span>
           <strong>智能备课</strong>
         </button>
+        <button class="nav-item" id="navTeacherApproval" data-tab="teacherApproval" hidden>
+          <span>管理</span>
+          <strong>教师审批</strong>
+        </button>
         <button class="nav-item" data-tab="textbook">
           <span>Web 教材</span>
-          <strong>交互式教材 2.0</strong>
+          <strong>交互式教材 5.0</strong>
         </button>
       </nav>
 
@@ -175,6 +179,8 @@
             <div><strong id="currentUserName">未登录</strong><span id="currentUserRole">--</span></div>
             <button class="ghost-button" id="logoutButton" type="button">退出</button>
           </div>
+          <!-- 待审批/被拒教师的提示条。默认 hidden，由 applyAuthenticatedUser 按角色填。 -->
+          <div id="accountNotice" class="inline-status" hidden></div>
         </div>
       </header>
 
@@ -809,6 +815,18 @@
         </div>
       </section>
 
+      <section id="teacherApproval" class="panel">
+        <section class="work-panel">
+          <div class="exam-topline">
+            <div><p class="eyebrow">Teacher Approval</p><h3>教师账号审批</h3></div>
+            <button class="ghost-button" id="teacherApprovalRefresh" type="button">刷新</button>
+          </div>
+          <p class="hint">新注册的教师账号默认处于「待审批」状态，审批通过前无法创建班级、发布考试或查看班级学情；已批准的历史账号不受影响。审批不会回收该教师已建立的班级关系。</p>
+          <div id="teacherApprovalStatus" class="inline-status">待审批列表如下。</div>
+          <div id="teacherApprovalList" class="data-list empty-state">正在加载…</div>
+        </section>
+      </section>
+
       <section id="exam" class="panel">
         <div id="studentExamView" class="exam-layout">
           <section class="work-panel">
@@ -876,7 +894,7 @@
         <div class="textbook-shell">
           <header class="textbook-toolbar">
             <div>
-              <p class="eyebrow">Interactive Textbook 2.0</p>
+              <p class="eyebrow">Interactive Textbook 5.0</p>
               <h3>可计算 · 可证明 · 可构造 · Web 交互式教材</h3>
             </div>
             <div class="textbook-actions">
@@ -888,7 +906,7 @@
           <div class="textbook-hint">
             每个知识点右上角的 🤖 走 <code>/chat</code>（星火 MaaS + Qwen3-32B 文本问答），图片题目和手写答案可由 Qwen3-VL-32B 视觉识别后再进入问答或批阅；训练题库的 ✍️ AI 评阅走 <code>/api/grading</code>（五维评分）。
           </div>
-          <iframe id="textbookFrame" class="textbook-frame" src="/textbook/index.html" title="Web 交互式教材 2.0" allow="fullscreen"></iframe>
+          <iframe id="textbookFrame" class="textbook-frame" src="/textbook/index.html" title="Web 交互式教材 5.0" allow="fullscreen"></iframe>
         </div>
       </section>
 
@@ -916,6 +934,6 @@
   <script src="grading-utils.js?v=4"></script>
   <script src="team4-utils.js?v=5"></script>
   <script src="chat-stream-utils.js?v=1"></script>
-  <script defer src="app.js?v=61"></script>
+  <script defer src="app.js?v=64"></script>
 </body>
 </html>

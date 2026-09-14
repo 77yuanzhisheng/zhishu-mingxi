@@ -51,6 +51,12 @@ class AuthUser(BaseModel):
     name: str
     role: str
     class_id: int | None = None
+    # 教师审批状态。非教师账号恒为 "approved"（student 用不到这个门）。
+    teacher_status: str = "approved"
+    # 是否由 .env 的 SUPER_ADMIN_USERNAME 点名提升（见 auth/service.py:_user_from_row）。
+    # 提升后 role 也会变成 "admin"，这个字段只是让前端能区分「配置点名的超管」
+    # 与「数据库里写死的 admin」，不该被当作额外的权限依据。
+    is_super_admin: bool = False
 
 
 class AuthResponse(BaseModel):
