@@ -1,0 +1,53 @@
+# 交互式教材 5.0 验收基准清单（CRC32 + 字节数）
+#
+# 来源：指导老师 Web交互式教材5.0.rar 在 Windows 上解压出的 textbook/ 全树
+#       解压后 1169 个文件已与 rar 清单核对，并与**线上真实字节**逐个比对过。
+# 生成时间：2026-09-14
+#
+# 用法：验收.py 会读本文件；本地有 textbook/ 全树时优先用全树（两者判定等价），
+#       所以交付包不必携带 61MB 的教材全树。
+#
+# 格式：CRC32  字节数  相对路径（相对 <站点根>/textbook/）
+
+[DELTA] 本次要上传的 16 个文件
+BCA80696      68462  data/kg-content-1.js
+F4843D11      22938  data/kg-content-2.js
+4CAAB059      73580  data/kg-content-3.js
+B15F9A56      58117  data/kg-content-4.js
+4FCF4E57      76712  data/kg-content-5.js
+1DEF1B37      70341  data/kg-content-6.js
+EA611FB5      65709  data/kg-kpmap.js
+F4E24BC2    1153554  data/kg-ppt-read.js
+94AF6C5C      16600  data/kg-structure-1.js
+0DB42BB2       6731  data/kg-structure-2.js
+41A56006      17014  data/kg-structure-3.js
+283C5ED7      10177  data/kg-structure-4.js
+F98D81C7      11277  data/kg-structure-5.js
+AA47100C      12571  data/kg-structure-6.js
+44E87927     202381  index.html
+454DBC88       4581  ppt_html_simple/第6部分chap15-19/page142.html
+
+[CH5FIG] 第5章 图的基本概念 的 23 张图（老师点名要看的那件事）
+FA1C6308      69324  img/第3部分chap5-9/media/image107.png
+1BE5EE39      22611  img/第3部分chap5-9/media/image110.png
+F43E955B      23810  img/第3部分chap5-9/media/image113.png
+CFC37401      19376  img/第3部分chap5-9/media/image120.png
+0EC72F69      19171  img/第3部分chap5-9/media/image122.png
+1F99D4F1      41796  img/第3部分chap5-9/media/image14.png
+9D5EBE49      22725  img/第3部分chap5-9/media/image18.png
+B736CA6A      99614  img/第3部分chap5-9/media/image21.png
+712FE592      41959  img/第3部分chap5-9/media/image28.png
+42FC7567      41629  img/第3部分chap5-9/media/image31.png
+29F38199      18779  img/第3部分chap5-9/media/image32.png
+D726E2D9     180601  img/第3部分chap5-9/media/image44.png
+FBF91AA5      17470  img/第3部分chap5-9/media/image45.png
+2D0284F7      12757  img/第3部分chap5-9/media/image50.png
+BFBD8A2B      71971  img/第3部分chap5-9/media/image70.png
+2A1851EA      82388  img/第3部分chap5-9/media/image74.png
+E3B5C313      17672  img/第3部分chap5-9/media/image77.png
+369C03B4      17769  img/第3部分chap5-9/media/image80.png
+36E83C59      53944  img/第3部分chap5-9/media/image84.png
+3B3FB99E      23060  img/第3部分chap5-9/media/image86.png
+7C643FA8      45702  img/第3部分chap5-9/media/image9.png
+0C450D10      14119  img/第3部分chap5-9/media/image97.png
+E8E08864      49835  img/第3部分chap5-9/media/image99.png
