@@ -4884,6 +4884,10 @@ function syncTeacherDashboardClassSelect(classes, classId) {
   }
 }
 
+// 在途请求标记：连点「查看学情」不再叠加请求（后端每个学生要算一份报告，
+// 叠加几次就慢几倍），也保证只有最后一次点击的结果会覆盖界面。
+let teacherClassDetailsInFlight = null;
+
 async function loadTeacherClassDetails(classId) {
   classState.selectedClassId = classId;
   const overview = document.getElementById("classOverview");
@@ -4891,18 +4895,34 @@ async function loadTeacherClassDetails(classId) {
   overview.innerHTML = '<div><span>状态</span><strong>读取中</strong></div>';
   studentList.className = "student-report-list empty-state";
   studentList.textContent = "正在读取学生学情...";
+  const controller = new AbortController();
+  const token = Symbol("classDetails");
+  teacherClassDetailsInFlight = { token, controller };
+  // 没有超时的话，后端不回就永远停在「读取中」——老师报的正是这个现象。
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
   try {
-    const [studentsData, reportData] = await Promise.all([
-      fetchApiJson(`/api/class/${classId}/students?requester_id=${getCurrentUserId()}`),
-      fetchApiJson(`/api/class/${classId}/report?requester_id=${getCurrentUserId()}`),
-    ]);
-    const students = reportData.students || studentsData.students || [];
+    // 只打 /report 一次。原先并发的那条 /students 是纯重复：后端要再按学生逐个算一遍
+    // 报告，而下面的 students 本来就优先取 reportData.students，那份数据没人用。
+    const reportData = await fetchApiJson(
+      `/api/class/${classId}/report?requester_id=${getCurrentUserId()}`,
+      { signal: controller.signal },
+    );
+    if (teacherClassDetailsInFlight?.token !== token) return;   // 已经被后一次点击取代
+    const students = reportData.students || [];
     const average = Math.round(Number(reportData.overall_accuracy || 0) * 100);
     const attention = students.filter((item) => Number(item.learning_summary?.weak_nodes || 0) > 0).length;
     overview.innerHTML = `<div><span>学生人数</span><strong>${students.length}</strong></div><div><span>平均正确率</span><strong>${average}%</strong></div><div><span>待关注学生</span><strong>${attention}</strong></div>`;
     renderStudentReports(students);
   } catch (error) {
-    renderEmptyClassOverview(`班级报告读取失败：${error.message}`);
+    if (teacherClassDetailsInFlight?.token !== token) return;
+    renderEmptyClassOverview(
+      error.name === "AbortError"
+        ? "班级报告读取超时（20s），请稍后重试。"
+        : `班级报告读取失败：${error.message}`,
+    );
+  } finally {
+    clearTimeout(timeoutId);
+    if (teacherClassDetailsInFlight?.token === token) teacherClassDetailsInFlight = null;
   }
 }
 
@@ -5033,8 +5053,8 @@ function showClassError(targetId, message) {
   target.textContent = message;
 }
 
-async function fetchApiJson(path) {
-  const response = await authenticatedFetch(path);
+async function fetchApiJson(path, options = {}) {
+  const response = await authenticatedFetch(path, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(readApiError(data, `请求失败（${response.status}）`));
   return data;
@@ -6721,18 +6741,21 @@ function formatAnswerHtml(text) {
   let html = escapeHtml(protectedText)
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     // 对没有数学分隔符的残缺 LaTeX 做可读降级。
-    .replace(/\\rightarrow|\\to/g, "→")
-    .replace(/\\leftrightarrow/g, "↔")
-    .replace(/\\wedge|\\land/g, "∧")
-    .replace(/\\vee|\\lor/g, "∨")
-    .replace(/\\neg|\\lnot/g, "¬")
-    .replace(/\\in/g, "∈")
-    .replace(/\\notin/g, "∉")
-    .replace(/\\forall/g, "∀")
-    .replace(/\\exists/g, "∃")
-    .replace(/\\neq/g, "≠")
-    .replace(/\\leq?/g, "≤")
-    .replace(/\\geq?/g, "≥")
+    // ⚠️ 每个命令后面都要 `\b`：没有它，`\int_0^1` 会被 `\in` 吃成 `∈t_0^1`、
+    //    `\infty` 变成 `∈fty`、`\top` 变成 `→p`、`\leftarrow` 变成 `≤ftarrow`。
+    //    模型漏掉 $ 时会吐裸 LaTeX，这条降级就是唯一接住它的地方，所以必错不可。
+    .replace(/\\rightarrow\b|\\to\b/g, "→")
+    .replace(/\\leftrightarrow\b/g, "↔")
+    .replace(/\\wedge\b|\\land\b/g, "∧")
+    .replace(/\\vee\b|\\lor\b/g, "∨")
+    .replace(/\\neg\b|\\lnot\b/g, "¬")
+    .replace(/\\notin\b/g, "∉")
+    .replace(/\\in\b/g, "∈")
+    .replace(/\\forall\b/g, "∀")
+    .replace(/\\exists\b/g, "∃")
+    .replace(/\\neq\b/g, "≠")
+    .replace(/\\leq?\b/g, "≤")
+    .replace(/\\geq?\b/g, "≥")
     .replace(/\\tag\{([^{}]+)\}/g, "（$1）")
     .replace(/\\notag\b/g, "");
 
@@ -6744,14 +6767,42 @@ function formatAnswerHtml(text) {
   return html;
 }
 
+// `---` / `***` / `___` 单独成行是分隔线，必须在列表之前认出来：
+// 下面 `^\s*[-*+]\s*\S` 会先把 `---` 看成「一个 - 加内容 --」的无序列表项，
+// 渲染成 `• --` —— 就是老师截图里那个东西。
+const THEMATIC_BREAK = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+
+// 表格要「表头行 + |---| 分隔行」两行都在才算数 —— 光有竖线不算：
+// 正文里的 `|x|`（绝对值、行列式）不该把整段切成块模式。
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR = /^\s*\|[\s:|-]*-[\s:|-]*\|\s*$/;
+
+function isTableStart(lines, index) {
+  const head = lines[index];
+  const separator = lines[index + 1];
+  return Boolean(head && separator && TABLE_ROW.test(head) && TABLE_SEPARATOR.test(separator));
+}
+
+// 一行表格拆成单元格。此时 html 已经过 escapeHtml，拆竖线不会碰到 HTML 实体。
+function splitTableRow(row) {
+  return row
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
 function renderMarkdownBlocks(html) {
   const lines = html.split("\n");
   // ⚠️ 这里**刻意不**把「·」「•」算作块级语法：纯文本里冒出一个「·」不该让整段
   //    从 <br> 模式切成块模式，那是扩散半径最大的一处，必须克制。
   //    （但已经在块模式里时，「·」会被下面当成无序列表项 —— 见 putItem 的调用点。）
-  const hasBlockSyntax = lines.some((line) => (
+  const hasBlockSyntax = lines.some((line, index) => (
     /^\s*$/.test(line)
     || /^\s{0,3}#{1,6}\s+/.test(line)
+    || THEMATIC_BREAK.test(line)
+    || isTableStart(lines, index)
     || /^\s*[-*+]\s+/.test(line)
     || /^\s*\d+[.)]\s+/.test(line)
     || /^\s*&gt;\s+/.test(line)
@@ -6848,7 +6899,25 @@ function renderMarkdownBlocks(html) {
 
   const isListLine = (line) => /^\s*(?:\d+[.)]|[-*+·•])\s*\S/.test(line);
 
-  lines.forEach((line, index) => {
+  // 一张表要一次吃掉好几行，所以这里用 for 而不是 forEach（forEach 里推不动 index）。
+  const putTable = (start) => {
+    const header = splitTableRow(lines[start]);
+    let end = start + 2;                              // 跳过表头行与 |---| 分隔行
+    while (end < lines.length && TABLE_ROW.test(lines[end])) end += 1;
+    const cell = (tag, values) => values.map((value) => `<${tag}>${value}</${tag}>`).join("");
+    const body = lines
+      .slice(start + 2, end)
+      .map((row) => `<tr>${cell("td", splitTableRow(row))}</tr>`)
+      .join("");
+    output.push(
+      `<table class="answer-table"><thead><tr>${cell("th", header)}</tr></thead>`
+      + `<tbody>${body}</tbody></table>`,
+    );
+    return end - start;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed) {
       flushParagraph();
@@ -6858,7 +6927,7 @@ function renderMarkdownBlocks(html) {
       const continuesOrderedList =
         frame() && frame().type === "ol" && /^\s*\d+[.)]\s+/.test(nextContentLine || "");
       if (!continuesOrderedList) closeAllFrames();
-      return;
+      continue;
     }
 
     const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
@@ -6867,24 +6936,39 @@ function renderMarkdownBlocks(html) {
       closeAllFrames();
       const level = Math.min(heading[1].length + 3, 6);
       output.push(`<h${level} class="answer-heading">${heading[2]}</h${level}>`);
-      return;
+      continue;
     }
 
-    if (isListLine(line) && listLine(line)) return;
+    // 分隔线要排在列表前面 —— `---` 长得就像列表项（见 THEMATIC_BREAK 的说明）。
+    if (THEMATIC_BREAK.test(trimmed)) {
+      flushParagraph();
+      closeAllFrames();
+      output.push('<hr class="answer-rule">');
+      continue;
+    }
+
+    if (isTableStart(lines, index)) {
+      flushParagraph();
+      closeAllFrames();
+      index += putTable(index) - 1;
+      continue;
+    }
+
+    if (isListLine(line) && listLine(line)) continue;
 
     const quote = trimmed.match(/^&gt;\s+(.+)$/);
     if (quote) {
       flushParagraph();
       closeAllFrames();
       output.push(`<blockquote class="answer-quote">${quote[1]}</blockquote>`);
-      return;
+      continue;
     }
 
     // 列表之外的普通行：先把列表收干净再当段落 —— 编号由 start="N" 保住，
     // 结构不需要为了「不断号」而变形。
     closeAllFrames();
     paragraph.push(trimmed);
-  });
+  }
 
   flushParagraph();
   closeAllFrames();
@@ -6909,11 +6993,54 @@ function normalizeLatexText(text) {
 
   // 先把美元分隔符统一为 \(...\) / \[...\]，避免后续 HTML 处理丢失边界。
   value = value.replace(/\$\$([\s\S]*?)\$\$/g, (_, body) => `\\[${cleanDisplayMath(body)}\\]`);
-  value = value.replace(/(^|[^\\])\$([^$\n]+?)\$/g, (_, prefix, body) => {
-    return `${prefix}\\(${cleanInlineMath(body)}\\)`;
-  });
 
-  return value;
+  return value.split("\n").map(convertInlineDollarMath).join("\n");
+}
+
+// 行内 $...$ → \(...\)。
+//
+// 原先是一条正则 `\$([^$\n]+?)\$` 从左往右配对。模型漏 $ 的时候（生成被截断时
+// 尤其常见，尾部就是「…度数为奇数…$f(1) = a」这样半截的公式），它会把落单的那个 $
+// 和**后面最近的一个 $** 硬凑成一对，把中间的中文整个当成公式体 —— 渲染出来就是
+// 一片乱码，老师截图里的 `$f(1) = a` 就是这么来的。index.html 里 MathJax 自己也把
+// $ 配成行内分隔符，所以漏网的那个 $ 到了它手上照样会乱配。
+//
+// 判据是**看两个 $ 之间装的是什么**：真公式不会夹着中文。夹了中文就说明是配错对，
+// 把这个 $ 当字面量转义掉（\$），然后从它后面接着往下找 —— 这样既拆得开错配，
+// 又不会像「整行有奇数个 $ 就全转义」那样把同在一行里的真公式一起牺牲掉。
+const CJK = /[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/;
+const MAX_INLINE_MATH_CHARS = 200;
+
+function looksLikeMath(body) {
+  return Boolean(body) && body.length <= MAX_INLINE_MATH_CHARS && !CJK.test(body);
+}
+
+function convertInlineDollarMath(line) {
+  let result = "";
+  let cursor = 0;
+  while (cursor < line.length) {
+    const open = line.indexOf("$", cursor);
+    if (open < 0) {
+      result += line.slice(cursor);
+      break;
+    }
+    // 前面带反斜杠的 $ 已经是要显示的字面量了，别再当分隔符。
+    if (open > 0 && line[open - 1] === "\\") {
+      result += line.slice(cursor, open + 1);
+      cursor = open + 1;
+      continue;
+    }
+    const close = line.indexOf("$", open + 1);
+    const body = close < 0 ? "" : line.slice(open + 1, close);
+    if (!looksLikeMath(body)) {
+      result += `${line.slice(cursor, open)}\\$`;   // 落单或配错 → 当字面量
+      cursor = open + 1;
+      continue;
+    }
+    result += `${line.slice(cursor, open)}\\(${cleanInlineMath(body)}\\)`;
+    cursor = close + 1;
+  }
+  return result;
 }
 
 function cleanDisplayMath(math) {

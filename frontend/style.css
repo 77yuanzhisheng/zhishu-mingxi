@@ -1705,6 +1705,36 @@ textarea {
   background: rgba(47, 143, 131, 0.08);
 }
 
+.answer-rule {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid rgba(47, 143, 131, 0.28);
+}
+
+/* 备课里那张「时间 | 内容」表。窄屏允许横向滚动，别把面板撑破。 */
+.answer-table {
+  width: 100%;
+  margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.55;
+  display: block;
+  overflow-x: auto;
+}
+
+.answer-table th,
+.answer-table td {
+  padding: 6px 10px;
+  border: 1px solid rgba(47, 143, 131, 0.28);
+  text-align: left;
+  vertical-align: top;
+}
+
+.answer-table th {
+  background: rgba(47, 143, 131, 0.1);
+  font-weight: 600;
+}
+
 .message.user {
   justify-self: end;
   color: #ffffff;

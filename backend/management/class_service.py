@@ -7,6 +7,7 @@ import string
 from pathlib import Path
 
 from backend.learning.database import connection_scope, init_database
+from backend.learning.models import LearningReport
 from backend.learning.service import MODULE_PREFIXES, get_learning_report
 from backend.management.auth import (
     require_class,
@@ -85,31 +86,38 @@ def join_class(user_id: int, invite_code: str, database_path=None) -> ClassJoinR
         )
 
 
-def _student_items(class_id: int, database_path=None) -> tuple[dict, list[ClassStudent]]:
+def _student_items(
+    class_id: int, database_path=None
+) -> tuple[dict, list[ClassStudent], list[LearningReport]]:
+    """Return the roster plus the reports it was built from.
+
+    The reports come back out because ``get_class_report`` needs the same ones;
+    it used to call ``get_learning_report`` a second time for every student.
+    """
+
     with connection_scope(database_path) as connection:
         class_row = require_class(connection, class_id)
         users = connection.execute(
             "SELECT id, name, role FROM users WHERE class_id = ? AND role = 'student' ORDER BY id",
             (class_id,),
         ).fetchall()
-    students = []
-    for user in users:
-        report = get_learning_report(user["id"], database_path)
-        students.append(
-            ClassStudent(
-                user_id=user["id"],
-                name=user["name"],
-                role=user["role"],
-                learning_summary=LearningSummary(**report.summary),
-            )
+    reports = [get_learning_report(user["id"], database_path) for user in users]
+    students = [
+        ClassStudent(
+            user_id=user["id"],
+            name=user["name"],
+            role=user["role"],
+            learning_summary=LearningSummary(**report.summary),
         )
-    return dict(class_row), students
+        for user, report in zip(users, reports)
+    ]
+    return dict(class_row), students, reports
 
 
 def get_class_students(requester_id: int, class_id: int, database_path=None):
     init_database(database_path)
     require_class_manager(requester_id, class_id, database_path)
-    class_row, students = _student_items(class_id, database_path)
+    class_row, students, _reports = _student_items(class_id, database_path)
     return ClassStudentsResponse(
         class_id=class_id, name=class_row["name"], students=students
     )
@@ -118,8 +126,7 @@ def get_class_students(requester_id: int, class_id: int, database_path=None):
 def get_class_report(requester_id: int, class_id: int, database_path=None):
     init_database(database_path)
     require_class_manager(requester_id, class_id, database_path)
-    class_row, students = _student_items(class_id, database_path)
-    reports = [get_learning_report(student.user_id, database_path) for student in students]
+    class_row, students, reports = _student_items(class_id, database_path)
     radar_data = []
     for index, module_name in enumerate(MODULE_PREFIXES.values()):
         levels = [report.radar_data[index].average_level for report in reports]

@@ -323,11 +323,50 @@ def _migrate_grading_result_columns(connection: sqlite3.Connection) -> None:
     if "review_reasons" not in columns:
         connection.execute("ALTER TABLE grading_results ADD COLUMN review_reasons TEXT NOT NULL DEFAULT '[]'")
 
+# 建表语句是幂等的，但每一次 init_database() 都要重开连接、重解析整份 SCHEMA_SQL
+# （31 条 DDL）再跑三次迁移探测。班级学情会按学生逐个取报告，每个报告又各自 init 一次，
+# 32 人的班就是 32 遍同样的建表检查 —— 实测这占了单份报告的 4 成耗时。
+# 文件没被动过就跳过：_SCHEMA_READY[解析后路径] 存建完之后的文件指纹。
+_SCHEMA_READY: dict[str, tuple[int, int]] = {}
+
+
+def _schema_fingerprint(database_path: str | Path | None) -> tuple[str, int, int] | None:
+    """Return ``(path, mtime_ns, size)`` for this database, or None if it can't be cached.
+
+    The fingerprint is what makes the memo below safe: tests point
+    ``LEARNING_DB_PATH`` at a fresh path per case, and a file that is deleted and
+    recreated comes back with a different ``(mtime_ns, size)``, so its schema is
+    rebuilt rather than assumed.
+    """
+
+    path = Path(database_path) if database_path is not None else get_database_path()
+    if str(path) == ":memory:":
+        # 每次 connect 都是一个全新的空库，没有东西可记。
+        return None
+    try:
+        resolved = path.resolve()
+        stat = resolved.stat()
+    except OSError:
+        # 还没建出来（首次 init 就是这种情况），不缓存。
+        return None
+    return str(resolved), stat.st_mtime_ns, stat.st_size
+
+
 def init_database(database_path: str | Path | None = None) -> None:
     """Create tables and apply additive migrations without rebuilding existing data."""
+
+    fingerprint = _schema_fingerprint(database_path)
+    if fingerprint is not None and _SCHEMA_READY.get(fingerprint[0]) == fingerprint[1:]:
+        return
 
     with connection_scope(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
         _migrate_users_auth_columns(connection)
         _migrate_users_teacher_status(connection)
         _migrate_grading_result_columns(connection)
+
+    # 建表本身会改文件，所以只记建完之后的指纹。
+    fingerprint = _schema_fingerprint(database_path)
+    if fingerprint is not None:
+        _SCHEMA_READY[fingerprint[0]] = fingerprint[1:]
+
