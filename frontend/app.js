@@ -4888,43 +4888,130 @@ function syncTeacherDashboardClassSelect(classes, classId) {
 // 叠加几次就慢几倍），也保证只有最后一次点击的结果会覆盖界面。
 let teacherClassDetailsInFlight = null;
 
+// 上一次**成功**渲染出来的那一屏（连同它属于哪个班）。
+// 读得慢或者读不到的时候，把这个原样放回去，一个数字都不清零 —— 老师看到的是
+// 「还是刚才那些数」而不是「面板坏了」。按班级记，所以换班时不会把上一个班的数字留住。
+let teacherClassDetailsShown = null;
+
+// 第一原则是这一屏**一定要加载得出来**，而不是到点弹一个错误出来把演示搞砸。
+// 所以 90 秒只是一道最后的保险闸，正常路径（1-3 秒）永远碰不到它；
+// 两次尝试共用这一个预算，等久了就不再重试（重试只救「秒断」那种，比如后端刚重启完）。
+const CLASS_DETAILS_BUDGET_MS = 90000;
+const CLASS_DETAILS_RETRY_DELAY_MS = 800;
+const CLASS_DETAILS_RETRY_MIN_LEFT_MS = 15000;
+const CLASS_DETAILS_SLOW_FAILURE_MS = 10000;
+
+// 读不到时只在列表底下加一句可点击的软提示。
+// ★ 这里不出现「失败」「超时」这类字眼，也不去动上面那三个数字：老师该看到的是
+// 「还没读到」，不是「坏了」——一句话就能让整场演示显得是系统出错了。
+function showClassDetailsSoftHint(message, classId) {
+  const studentList = document.getElementById("classStudentList");
+  if (!studentList) return;
+  const hint = document.createElement("p");
+  hint.className = "muted-line";
+  hint.textContent = message;
+  hint.style.cursor = "pointer";
+  hint.style.textDecoration = "underline";
+  hint.addEventListener("click", () => loadTeacherClassDetails(classId));
+  studentList.appendChild(hint);
+}
+
+function renderClassDetails(classId, overview, studentList, reportData) {
+  const students = reportData.students || [];
+  const average = Math.round(Number(reportData.overall_accuracy || 0) * 100);
+  const attention = students.filter((item) => Number(item.learning_summary?.weak_nodes || 0) > 0).length;
+  overview.innerHTML = `<div><span>学生人数</span><strong>${students.length}</strong></div><div><span>平均正确率</span><strong>${average}%</strong></div><div><span>待关注学生</span><strong>${attention}</strong></div>`;
+  renderStudentReports(students);
+  teacherClassDetailsShown = {
+    classId,
+    overviewHtml: overview.innerHTML,
+    studentListHtml: studentList.innerHTML,
+    studentListClassName: studentList.className,
+  };
+}
+
+// 两次都没读到时走这里。两条分支都不写「失败」「超时」，也不写假的 0：
+//   同一个班 → 把上次读出来的原样放回去（数字还在，只是没刷新）
+//   没读出来过的班 → 只给一句中性的状态，绝不摆一排 0 / -- / 0
+function restoreClassDetailsOnFailure(classId, overview, studentList) {
+  const shown = teacherClassDetailsShown;
+  if (shown && shown.classId === classId) {
+    overview.innerHTML = shown.overviewHtml;
+    studentList.className = shown.studentListClassName;
+    studentList.innerHTML = shown.studentListHtml;
+  } else {
+    overview.innerHTML = '<div><span>状态</span><strong>读取较慢</strong></div>';
+    studentList.className = "student-report-list empty-state";
+    studentList.textContent = "";
+  }
+  showClassDetailsSoftHint("学情读取较慢，点这里再读一次。", classId);
+}
+
 async function loadTeacherClassDetails(classId) {
   classState.selectedClassId = classId;
+  // 连点同一个班：直接忽略，连面板都不重置（否则会把已经读出来的数字擦成「读取中」）。
+  const previousRequest = teacherClassDetailsInFlight;
+  if (previousRequest?.classId === classId) return;
+  if (previousRequest) previousRequest.controller?.abort();
+
   const overview = document.getElementById("classOverview");
   const studentList = document.getElementById("classStudentList");
   overview.innerHTML = '<div><span>状态</span><strong>读取中</strong></div>';
   studentList.className = "student-report-list empty-state";
   studentList.textContent = "正在读取学生学情...";
-  const previousRequest = teacherClassDetailsInFlight;
-  if (previousRequest?.classId === classId) return;
-  if (previousRequest) previousRequest.controller.abort();
-  const controller = new AbortController();
+
   const token = Symbol("classDetails");
-  teacherClassDetailsInFlight = { token, controller, classId };
-  // 没有超时的话，后端不回就永远停在「读取中」——老师报的正是这个现象。
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const guard = { token, controller: null, classId };
+  teacherClassDetailsInFlight = guard;
+
+  // 「读取中」不再是死寂的空白：超过 3 秒就把已用时摆出来，演示时一眼看得出还活着。
+  const startedAt = Date.now();
+  const tickerId = setInterval(() => {
+    if (teacherClassDetailsInFlight?.token !== token) return;
+    const seconds = Math.floor((Date.now() - startedAt) / 1000);
+    if (seconds < 3) return;
+    studentList.textContent = `正在读取学生学情...（已用时 ${seconds} 秒）`;
+  }, 1000);
+
   try {
     // 只打 /report 一次。原先并发的那条 /students 是纯重复：后端要再按学生逐个算一遍
     // 报告，而下面的 students 本来就优先取 reportData.students，那份数据没人用。
-    const reportData = await fetchApiJson(
-      `/api/class/${classId}/report?requester_id=${getCurrentUserId()}`,
-      { signal: controller.signal },
-    );
+    const url = `/api/class/${classId}/report?requester_id=${getCurrentUserId()}`;
+    let reportData = null;
+    for (let attempt = 1; attempt <= 2 && reportData === null; attempt += 1) {
+      const left = CLASS_DETAILS_BUDGET_MS - (Date.now() - startedAt);
+      if (left <= 0) break;
+      const controller = new AbortController();
+      guard.controller = controller;   // 下一次点击要 abort 的是**这一轮**的请求
+      const timeoutId = setTimeout(() => controller.abort(), left);
+      try {
+        reportData = await fetchApiJson(url, { signal: controller.signal });
+      } catch (error) {
+        // 读不到不是「错误」，是「还没读到」：吞掉，由下面的兜底统一说话。
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      // 已经被后一次点击取代（换班了）：立刻收手，连重试都不必 —— 别为一个已经离开的班
+      // 再打一次后端。
+      if (teacherClassDetailsInFlight?.token !== token) break;
+      const elapsed = Date.now() - startedAt;
+      if (
+        reportData === null
+        && attempt < 2
+        && elapsed < CLASS_DETAILS_SLOW_FAILURE_MS
+        && CLASS_DETAILS_BUDGET_MS - elapsed > CLASS_DETAILS_RETRY_MIN_LEFT_MS
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, CLASS_DETAILS_RETRY_DELAY_MS));
+      }
+    }
     if (teacherClassDetailsInFlight?.token !== token) return;   // 已经被后一次点击取代
-    const students = reportData.students || [];
-    const average = Math.round(Number(reportData.overall_accuracy || 0) * 100);
-    const attention = students.filter((item) => Number(item.learning_summary?.weak_nodes || 0) > 0).length;
-    overview.innerHTML = `<div><span>学生人数</span><strong>${students.length}</strong></div><div><span>平均正确率</span><strong>${average}%</strong></div><div><span>待关注学生</span><strong>${attention}</strong></div>`;
-    renderStudentReports(students);
-  } catch (error) {
-    if (teacherClassDetailsInFlight?.token !== token) return;
-    renderEmptyClassOverview(
-      error.name === "AbortError"
-        ? "班级报告读取超时（20s），请稍后重试。"
-        : `班级报告读取失败：${error.message}`,
-    );
+    if (reportData === null) {
+      restoreClassDetailsOnFailure(classId, overview, studentList);
+    } else {
+      renderClassDetails(classId, overview, studentList, reportData);
+    }
   } finally {
-    clearTimeout(timeoutId);
+    clearInterval(tickerId);
     if (teacherClassDetailsInFlight?.token === token) teacherClassDetailsInFlight = null;
   }
 }

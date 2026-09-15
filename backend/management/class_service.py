@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import secrets
+import sqlite3
 import string
 from pathlib import Path
 
 from backend.learning.database import connection_scope, init_database
 from backend.learning.models import LearningReport
-from backend.learning.service import MODULE_PREFIXES, get_learning_report
+from backend.learning.service import MODULE_PREFIXES, build_learning_reports
 from backend.management.auth import (
     require_class,
     require_class_manager,
@@ -87,21 +88,35 @@ def join_class(user_id: int, invite_code: str, database_path=None) -> ClassJoinR
 
 
 def _student_items(
-    class_id: int, database_path=None
+    connection: sqlite3.Connection, class_id: int
 ) -> tuple[dict, list[ClassStudent], list[LearningReport]]:
-    """Return the roster plus the reports it was built from.
+    """在**调用方给的**连接上取花名册与每人的学情报告。
+
+    Return the roster plus the reports it was built from.
 
     The reports come back out because ``get_class_report`` needs the same ones;
     it used to call ``get_learning_report`` a second time for every student.
+
+    报告走一次批量取数（``build_learning_reports``），所以这里的库操作数与班级人数无关
+    —— 原来是一个学生一条连接、六条查询地串行跑，32 人的班 >20 秒。
+    ``include_details=False``：班级页只读 summary / radar_data / weak_nodes，
+    每人一两百个知识点的明细不必构造也不必留着。
+
+    连接由调用方掌控，好让「取花名册 → 算报告 → 班级聚合」走同一条连接。
     """
 
-    with connection_scope(database_path) as connection:
-        class_row = require_class(connection, class_id)
-        users = connection.execute(
-            "SELECT id, name, role FROM users WHERE class_id = ? AND role = 'student' ORDER BY id",
-            (class_id,),
-        ).fetchall()
-    reports = [get_learning_report(user["id"], database_path) for user in users]
+    class_row = require_class(connection, class_id)
+    users = connection.execute(
+        "SELECT id, name, role FROM users WHERE class_id = ? AND role = 'student' ORDER BY id",
+        (class_id,),
+    ).fetchall()
+    reports_by_user = build_learning_reports(
+        connection,
+        [user["id"] for user in users],
+        include_details=False,
+    )
+    # 按 users 的顺序取回来 —— 报告字典的顺序不保证，学生列表的顺序必须稳定。
+    reports = [reports_by_user[user["id"]] for user in users]
     students = [
         ClassStudent(
             user_id=user["id"],
@@ -117,7 +132,8 @@ def _student_items(
 def get_class_students(requester_id: int, class_id: int, database_path=None):
     init_database(database_path)
     require_class_manager(requester_id, class_id, database_path)
-    class_row, students, _reports = _student_items(class_id, database_path)
+    with connection_scope(database_path) as connection:
+        class_row, students, _reports = _student_items(connection, class_id)
     return ClassStudentsResponse(
         class_id=class_id, name=class_row["name"], students=students
     )
@@ -126,7 +142,16 @@ def get_class_students(requester_id: int, class_id: int, database_path=None):
 def get_class_report(requester_id: int, class_id: int, database_path=None):
     init_database(database_path)
     require_class_manager(requester_id, class_id, database_path)
-    class_row, students, reports = _student_items(class_id, database_path)
+    with connection_scope(database_path) as connection:
+        class_row, students, reports = _student_items(connection, class_id)
+        correct_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(n.correct_count), 0) AS correct
+            FROM node_mastery n JOIN users u ON u.id = n.user_id
+            WHERE u.class_id = ? AND u.role = 'student'
+            """,
+            (class_id,),
+        ).fetchone()
     radar_data = []
     for index, module_name in enumerate(MODULE_PREFIXES.values()):
         levels = [report.radar_data[index].average_level for report in reports]
@@ -143,15 +168,6 @@ def get_class_report(requester_id: int, class_id: int, database_path=None):
         )
 
     total_answers = sum(int(report.summary["total_answers"]) for report in reports)
-    with connection_scope(database_path) as connection:
-        correct_row = connection.execute(
-            """
-            SELECT COALESCE(SUM(n.correct_count), 0) AS correct
-            FROM node_mastery n JOIN users u ON u.id = n.user_id
-            WHERE u.class_id = ? AND u.role = 'student'
-            """,
-            (class_id,),
-        ).fetchone()
     weak_counts: dict[str, int] = {}
     for report in reports:
         for node_id in report.weak_nodes:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -314,46 +315,114 @@ def _later_timestamp(*timestamps: str | None) -> str | None:
     return max(present) if present else None
 
 
-def _build_node_insights(
-    connection: sqlite3.Connection,
-    user_id: int,
-) -> list[NodeLearningInsight]:
-    """Combine reliable chat-node links with objective answer evidence.
+# 班级学情要给整班学生各算一份报告，而原来那是「一个学生跑一轮单查」：32 人的班就是
+# 6N 条 SQL、N+4 条连接，线上实测 >20 秒（前端 20 秒的闸门就是这么被撞出来的）。
+# 这里把三条按 user_id 过滤的查询放宽成 IN (…)，一次取回整批，组装逻辑一行不改
+# —— 于是班级页的库操作数与学生人数无关。
 
-    Only user messages carrying explicit ``node_ids`` participate. Chat activity
-    never increments answer counts or mastery levels.
+_SCOPE_COLUMNS = frozenset({"user_id", "s.user_id"})
+
+
+def _user_id_scope(
+    user_ids: Sequence[int],
+    column: str = "user_id",
+) -> tuple[str, list[int]]:
+    """拼出 ``user_id IN (?, ?, …)`` 和对应参数。
+
+    ``column`` 会直接进 SQL，所以拿白名单挡一道（两个调用点都是字面量，这行只是保险）。
+    **空名单是调用方必须自己挡住的**：``IN ()`` 是语法错误，不是空结果 —— 真拼出来就是
+    500，而它现在返回的是一份空报告。
     """
 
+    if column not in _SCOPE_COLUMNS:
+        raise ValueError(f"不允许的过滤列：{column}")
+    ids = [int(user_id) for user_id in user_ids]
+    return f"{column} IN ({', '.join('?' for _ in ids)})", ids
+
+
+def _group_rows_by_user(rows: Iterable[sqlite3.Row]) -> dict[int, list[sqlite3.Row]]:
+    """把批量查询的行按 user_id 分回各人。
+
+    每条查询都补了 ``user_id`` 前缀排序键，所以每个人拿到的行序和单查时一致
+    —— 下面的字典和 ``sorted(set(...))`` 都不依赖顺序，保持一致只是为了不必再想这件事。
+    """
+
+    grouped: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["user_id"]), []).append(row)
+    return grouped
+
+
+def _fetch_node_evidence(
+    connection: sqlite3.Connection,
+    user_ids: Sequence[int],
+) -> tuple[
+    dict[int, list[sqlite3.Row]],
+    dict[int, list[sqlite3.Row]],
+    dict[int, list[sqlite3.Row]],
+]:
+    """一次取回整批学生的知识点证据，返回 (掌握度行, 答题聚合行, 用户消息行)。
+
+    三条 SQL 都是原来单学生版本的逐字复制（含各自的聚合与过滤），只做两处改动：
+    ``user_id = ?`` → ``IN (…)``，以及补一个 ``user_id`` 排序键 + ``GROUP BY`` 分组键。
+    """
+
+    ids = [int(user_id) for user_id in user_ids]
+    if not ids:
+        return {}, {}, {}
+
+    scope, params = _user_id_scope(ids)
     mastery_rows = connection.execute(
-        "SELECT * FROM node_mastery WHERE user_id = ?", (user_id,)
+        f"""
+        SELECT * FROM node_mastery
+        WHERE {scope}
+        ORDER BY user_id, level ASC, node_id ASC
+        """,
+        params,
     ).fetchall()
-    mastery_by_node = {row["node_id"]: row for row in mastery_rows}
     event_rows = connection.execute(
-        """
-        SELECT node_id,
+        f"""
+        SELECT user_id,
+               node_id,
                COUNT(*) AS question_count,
                SUM(CASE WHEN is_correct IS NOT NULL THEN 1 ELSE 0 END) AS graded_count,
                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct_count,
                SUM(CASE WHEN is_correct IS NULL THEN 1 ELSE 0 END) AS pending_count,
                MAX(created_at) AS last_practice_at
         FROM answer_events
-        WHERE user_id = ?
-        GROUP BY node_id
+        WHERE {scope}
+        GROUP BY user_id, node_id
         """,
-        (user_id,),
+        params,
     ).fetchall()
-    events_by_node = {row["node_id"]: row for row in event_rows}
-
+    message_scope, message_params = _user_id_scope(ids, column="s.user_id")
     message_rows = connection.execute(
-        """
-        SELECT m.id, m.session_id, m.node_ids, m.timestamp
+        f"""
+        SELECT s.user_id AS user_id, m.id, m.session_id, m.node_ids, m.timestamp
         FROM messages m
         JOIN sessions s ON s.id = m.session_id
-        WHERE s.user_id = ? AND m.role = 'user'
-        ORDER BY m.session_id, m.id
+        WHERE {message_scope} AND m.role = 'user'
+        ORDER BY s.user_id, m.session_id, m.id
         """,
-        (user_id,),
+        message_params,
     ).fetchall()
+
+    return (
+        _group_rows_by_user(mastery_rows),
+        _group_rows_by_user(event_rows),
+        _group_rows_by_user(message_rows),
+    )
+
+
+def _node_insights_from_rows(
+    mastery_rows: list[sqlite3.Row],
+    event_rows: list[sqlite3.Row],
+    message_rows: list[sqlite3.Row],
+) -> list[NodeLearningInsight]:
+    """把已经取好的行合成知识点结论（原来 _build_node_insights 的正文，逐字未改）。"""
+
+    mastery_by_node = {row["node_id"]: row for row in mastery_rows}
+    events_by_node = {row["node_id"]: row for row in event_rows}
     chat_by_node: dict[str, dict[str, int | str | None]] = {}
     previous_nodes_by_session: dict[int, set[str]] = {}
     for row in message_rows:
@@ -450,6 +519,29 @@ def _build_node_insights(
             )
         )
     return insights
+
+
+def _build_node_insights(
+    connection: sqlite3.Connection,
+    user_id: int,
+) -> list[NodeLearningInsight]:
+    """Combine reliable chat-node links with objective answer evidence.
+
+    Only user messages carrying explicit ``node_ids`` participate. Chat activity
+    never increments answer counts or mastery levels.
+
+    单学生入口，签名与行为都不变。批量场景（班级页）走 :func:`build_learning_reports`，
+    不要在这里循环 —— 那正是这次要治的 N 次查询。
+    """
+
+    mastery_by_user, events_by_user, messages_by_user = _fetch_node_evidence(
+        connection, [user_id]
+    )
+    return _node_insights_from_rows(
+        mastery_by_user.get(user_id, []),
+        events_by_user.get(user_id, []),
+        messages_by_user.get(user_id, []),
+    )
 
 
 def _recent_chat_nodes(insights: list[NodeLearningInsight]) -> list[str]:
@@ -717,26 +809,59 @@ def update_mastery(
     return MasteryUpdateResponse(message="掌握度更新成功", mastery=mastery)
 
 
-def get_learning_report(
-    user_id: int,
-    database_path: str | Path | None = None,
-) -> LearningReport:
-    """Return raw mastery plus fused per-node evidence and status."""
+def build_learning_reports(
+    connection: sqlite3.Connection,
+    user_ids: Sequence[int],
+    *,
+    include_details: bool = True,
+) -> dict[int, LearningReport]:
+    """在一份**已经开好的**连接上，给一批学生各算一份学情报告。
 
-    init_database(database_path)
-    with connection_scope(database_path) as connection:
-        user = connection.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
-        if user is None:
-            raise UserNotFoundError(f"用户 {user_id} 不存在")
-        rows = connection.execute(
-            """
-            SELECT * FROM node_mastery
-            WHERE user_id = ?
-            ORDER BY level ASC, node_id ASC
-            """,
-            (user_id,),
-        ).fetchall()
-        node_insights = _build_node_insights(connection, user_id)
+    这是单学生报告唯一的实现：``get_learning_report`` 是它取一个人的包装，班级页是它取
+    整班 —— 两条路径共用同一段组装代码，所以不可能算出两套不同的结果。
+
+    库操作数与人数无关：三条批量查询 + 每人一次纯 Python 组装。
+    ``init_database`` 和 ``connection_scope`` 都归调用方管，这里不再自己开连接。
+
+    ``include_details=False`` 只清空**班级页不读**的明细字段（``node_mastery`` /
+    ``node_insights`` / ``understanding_nodes`` / ``mastered_nodes`` / ``recent_chat_nodes``）；
+    ``summary`` / ``radar_data`` / ``weak_nodes`` **照常算满** —— 班级页最上面那几个数字
+    正是从它们来的，所以它是「少带」而不是「少算」。
+
+    ⚠️ 空名单返回 ``{}``：空班是正常状态，而 ``IN ()`` 是语法错误，不挡就是 500。
+    """
+
+    ids = [int(user_id) for user_id in user_ids]
+    if not ids:
+        return {}
+
+    mastery_by_user, events_by_user, messages_by_user = _fetch_node_evidence(
+        connection, ids
+    )
+    reports: dict[int, LearningReport] = {}
+    for user_id in ids:
+        mastery_rows = mastery_by_user.get(user_id, [])
+        reports[user_id] = _assemble_learning_report(
+            user_id,
+            mastery_rows,
+            _node_insights_from_rows(
+                mastery_rows,
+                events_by_user.get(user_id, []),
+                messages_by_user.get(user_id, []),
+            ),
+            include_details=include_details,
+        )
+    return reports
+
+
+def _assemble_learning_report(
+    user_id: int,
+    rows: list[sqlite3.Row],
+    node_insights: list[NodeLearningInsight],
+    *,
+    include_details: bool = True,
+) -> LearningReport:
+    """把掌握度行与知识点结论拼成 LearningReport（原来 get_learning_report 的正文）。"""
 
     mastery_items = [_row_to_mastery(row) for row in rows]
     weak_nodes = [
@@ -766,7 +891,7 @@ def get_learning_report(
     total_correct = sum(item.correct_count for item in mastery_items)
     return LearningReport(
         user_id=user_id,
-        node_mastery=mastery_items,
+        node_mastery=mastery_items if include_details else [],
         weak_nodes=weak_nodes,
         radar_data=radar_data,
         summary={
@@ -781,15 +906,34 @@ def get_learning_report(
                 item.status == "理解中" for item in node_insights
             ),
         },
-        node_insights=node_insights,
-        understanding_nodes=[
-            item.node_id for item in node_insights if item.status == "理解中"
-        ],
-        mastered_nodes=[
-            item.node_id for item in node_insights if item.status == "掌握"
-        ],
-        recent_chat_nodes=_recent_chat_nodes(node_insights),
+        node_insights=node_insights if include_details else [],
+        understanding_nodes=(
+            [item.node_id for item in node_insights if item.status == "理解中"]
+            if include_details
+            else []
+        ),
+        mastered_nodes=(
+            [item.node_id for item in node_insights if item.status == "掌握"]
+            if include_details
+            else []
+        ),
+        recent_chat_nodes=_recent_chat_nodes(node_insights) if include_details else [],
     )
+
+
+def get_learning_report(
+    user_id: int,
+    database_path: str | Path | None = None,
+) -> LearningReport:
+    """Return raw mastery plus fused per-node evidence and status."""
+
+    init_database(database_path)
+    with connection_scope(database_path) as connection:
+        user = connection.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if user is None:
+            raise UserNotFoundError(f"用户 {user_id} 不存在")
+        reports = build_learning_reports(connection, [user_id])
+    return reports[user_id]
 
 
 def _fetch_recent_user_questions(

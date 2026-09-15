@@ -26,6 +26,31 @@ def get_database_path() -> Path:
     return DEFAULT_DATABASE_PATH
 
 
+def _enable_wal(connection: sqlite3.Connection) -> None:
+    """让读不再被写阻塞 —— 前提是这个库文件所在的文件系统支持 WAL。
+
+    默认的 rollback journal 模式下读和写互相排斥，于是一条 1.9 KB 的读请求会被
+    并发的写事务（答题、聊天）挡住，线上实测同一个接口因此在 0.10 秒和 1.53 秒之间
+    来回跳。WAL 让读写在同一个库上并行，这个抖动就没了。
+
+    journal_mode 是**库文件自身的持久属性**，写一次就一直有效；这里每条连接都设一次，
+    是为了让从旧备份恢复回来的库自动补上 —— 已经是 WAL 时这是个空操作，不需要写锁。
+
+    失败时（只读介质、网络盘、恰有写者持锁）SQLite 会抛 OperationalError 或原样返回
+    旧模式，**两种都不该让请求失败**：最差就是退回原来的行为。
+
+    ⚠️ synchronous=NORMAL 只在确实切成 WAL 之后才设。rollback journal 模式下用 NORMAL
+    是有丢库风险的，所以这个 if 是安全线，不是风格问题。
+    """
+
+    try:
+        row = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+    except sqlite3.OperationalError:
+        return
+    if row is not None and str(row[0]).lower() == "wal":
+        connection.execute("PRAGMA synchronous = NORMAL")
+
+
 def get_connection(database_path: str | Path | None = None) -> sqlite3.Connection:
     """Open a SQLite connection with foreign keys and named rows enabled."""
 
@@ -37,6 +62,7 @@ def get_connection(database_path: str | Path | None = None) -> sqlite3.Connectio
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 10000")
+    _enable_wal(connection)
     return connection
 
 
@@ -323,50 +349,50 @@ def _migrate_grading_result_columns(connection: sqlite3.Connection) -> None:
     if "review_reasons" not in columns:
         connection.execute("ALTER TABLE grading_results ADD COLUMN review_reasons TEXT NOT NULL DEFAULT '[]'")
 
-# 建表语句是幂等的，但每一次 init_database() 都要重开连接、重解析整份 SCHEMA_SQL
-# （31 条 DDL）再跑三次迁移探测。班级学情会按学生逐个取报告，每个报告又各自 init 一次，
-# 32 人的班就是 32 遍同样的建表检查 —— 实测这占了单份报告的 4 成耗时。
-# 文件没被动过就跳过：_SCHEMA_READY[解析后路径] 存建完之后的文件指纹。
-_SCHEMA_READY: dict[str, tuple[int, int]] = {}
+# 建表语句本身是幂等的，但重跑的代价不幂等：31 条 DDL 加三次迁移探测，每条都要写事务，
+# 在 rollback journal 下还会和答题、聊天的写入互斥。
+#
+# 上一版拿 `(路径, mtime_ns, size)` 当判据 —— 问题是**任何**一次写库都会改 mtime，
+# 线上等于永远不命中，32 人的班就是 32 遍同样的建表检查（实测这是「整个应用都慢」的
+# 公共来源，不只班级页）。改用 SQLite 自带的、随库文件持久存在的 PRAGMA user_version：
+# 只有标记落后才重跑 DDL，和「有没有人写过库」彻底解耦，也和进程是否重启无关。
+#
+# ⚠️ 代价：标记一旦写上，之后即使表被人为删掉也不会再重建（老的 mtime 方案会在下次
+#    写入时自愈）。真遇到这种情况，把它按回去再重启即可：
+#        python -c "import sqlite3;sqlite3.connect('data/learning.db').execute('PRAGMA user_version = 0')"
+#    改动 SCHEMA_SQL 或任一 _migrate_* 时，必须把 SCHEMA_VERSION 加一。
+SCHEMA_VERSION = 1
 
 
-def _schema_fingerprint(database_path: str | Path | None) -> tuple[str, int, int] | None:
-    """Return ``(path, mtime_ns, size)`` for this database, or None if it can't be cached.
+def _apply_schema(connection: sqlite3.Connection) -> None:
+    """跑一遍建表与三个增量迁移（幂等，可重复执行）。"""
 
-    The fingerprint is what makes the memo below safe: tests point
-    ``LEARNING_DB_PATH`` at a fresh path per case, and a file that is deleted and
-    recreated comes back with a different ``(mtime_ns, size)``, so its schema is
-    rebuilt rather than assumed.
+    connection.executescript(SCHEMA_SQL)
+    _migrate_users_auth_columns(connection)
+    _migrate_users_teacher_status(connection)
+    _migrate_grading_result_columns(connection)
+
+
+def ensure_schema(connection: sqlite3.Connection) -> None:
+    """在一个已经打开的连接上保证 schema 是最新的。
+
+    稳态开销 = 一次 `PRAGMA user_version` 读（微秒级），不再重跑 31 条 DDL。
+    `:memory:` 无需特判：新内存库的 user_version 永远是 0，自然走建表那条路。
+    从更旧的库文件恢复回来的库版本号更低，会自己升上来；更高的库则不动（比较用 >=，
+    不做降级）。
     """
 
-    path = Path(database_path) if database_path is not None else get_database_path()
-    if str(path) == ":memory:":
-        # 每次 connect 都是一个全新的空库，没有东西可记。
-        return None
-    try:
-        resolved = path.resolve()
-        stat = resolved.stat()
-    except OSError:
-        # 还没建出来（首次 init 就是这种情况），不缓存。
-        return None
-    return str(resolved), stat.st_mtime_ns, stat.st_size
+    version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if version >= SCHEMA_VERSION:
+        return
+    _apply_schema(connection)
+    # PRAGMA 不吃参数占位符；SCHEMA_VERSION 是本模块的整数常量，不是外部输入。
+    connection.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
 
 
 def init_database(database_path: str | Path | None = None) -> None:
     """Create tables and apply additive migrations without rebuilding existing data."""
 
-    fingerprint = _schema_fingerprint(database_path)
-    if fingerprint is not None and _SCHEMA_READY.get(fingerprint[0]) == fingerprint[1:]:
-        return
-
     with connection_scope(database_path) as connection:
-        connection.executescript(SCHEMA_SQL)
-        _migrate_users_auth_columns(connection)
-        _migrate_users_teacher_status(connection)
-        _migrate_grading_result_columns(connection)
-
-    # 建表本身会改文件，所以只记建完之后的指纹。
-    fingerprint = _schema_fingerprint(database_path)
-    if fingerprint is not None:
-        _SCHEMA_READY[fingerprint[0]] = fingerprint[1:]
+        ensure_schema(connection)
 
