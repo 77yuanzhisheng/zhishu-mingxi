@@ -4895,9 +4895,12 @@ async function loadTeacherClassDetails(classId) {
   overview.innerHTML = '<div><span>状态</span><strong>读取中</strong></div>';
   studentList.className = "student-report-list empty-state";
   studentList.textContent = "正在读取学生学情...";
+  const previousRequest = teacherClassDetailsInFlight;
+  if (previousRequest?.classId === classId) return;
+  if (previousRequest) previousRequest.controller.abort();
   const controller = new AbortController();
   const token = Symbol("classDetails");
-  teacherClassDetailsInFlight = { token, controller };
+  teacherClassDetailsInFlight = { token, controller, classId };
   // 没有超时的话，后端不回就永远停在「读取中」——老师报的正是这个现象。
   const timeoutId = setTimeout(() => controller.abort(), 20000);
   try {
