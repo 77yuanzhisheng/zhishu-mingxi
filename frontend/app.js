@@ -3547,15 +3547,174 @@ function renderProofList(target) {
   typesetMath(target);
 }
 
+// ==================== 拍照识别：发送前压缩 ====================
+// 为什么要有这一段（2026-09-16 对线上实测，不是推测）：
+//   · nginx 1.27.5 用的是**默认**的 client_max_body_size = 1 MiB；
+//   · 对不存在的路径 POST：body 1,048,576 B → 404（请求进了 FastAPI），
+//     body 1,048,577 B → 413，并且响应体是 nginx 自己的 HTML（text/html、183 B、
+//     Connection: close）—— 请求根本没到 uvicorn；
+//   · 拍照走的是 capture="environment" 的相机原图（模拟 12 MP 原图 = 3,448 KB），必然超标；
+//   · 后端自己的 10 MiB 上限（backend/vision/router.py:18）因此从没被触发过 ——
+//     学生看到的「图片识别失败（413）」是 readApiError 拿不到 detail 时露出来的裸状态码。
+// parseVisionImage 是 5 个拍照入口（计算题 :3443 / 教材答疑 :3592 / 证明题 :3619 /
+// 考试答题纸 :5994 / 智能批改 :6191）**唯一**的汇聚点，压在这里改一处就全部修好。
+
+// 原图不超过这个字节数就**原样上传**：不动画质、不冒解码失败的风险、不白花手机 CPU。
+// 900 KB 距 nginx 的 1,048,576 B 留 12% 余量（multipart 的边界加两个头部实测约 200 B）；
+// 600 KB 的请求已实测能进应用（返回 422 而不是 413）。
+const VISION_UPLOAD_MAX_BYTES = 900 * 1024;
+
+// 逐级降档 [最长边, JPEG 质量]，从好到差，**一旦达标就停**。
+// 第一档为什么是 2000 px：A4 纸竖拍占满画面时一行手写推导约等于照片长边的 1/40，
+// 缩到 2000 px 后字高还有 45 px 上下，上下标、分数线、根号都分得开；再往下（<1200 px）
+// 分式与根号开始糊，x 和 ×、1 和 l 会认混。2000 px 也基本等于视觉大模型自己的输入上限
+// （超出的像素模型自己会丢），再大只是白花上传时间。
+// 实测：模拟 12 MP 手机原图（3,448 KB）走第一档出 676 KB，正常情况只用得到第一档，
+// 后面三档是保险。
+const VISION_SHRINK_STEPS = [[2000, 0.85], [1600, 0.8], [1280, 0.72], [1024, 0.62]];
+
+// 压缩整体限时。解码/编码都在浏览器内部，正常 0.5–2.5 秒，但**没有上限** ——
+// 万一卡住学生就永远停在「正在识别…」，考试页还有 15 分钟倒计时，那比报错更难堪。
+// 到点就放弃压缩、用原图（原图至少还有一次机会，后端给的话也比这里具体）。
+const VISION_COMPRESS_BUDGET_MS = 8000;
+
+function visionJpegName(name) {
+  const text = String(name || "photo");
+  const dot = text.lastIndexOf(".");
+  const base = dot > 0 ? text.slice(0, dot) : text;
+  return `${base || "photo"}.jpg`;
+}
+
+// 解码成「已经按 EXIF 摆正」的位图。imageOrientation:"from-image" 是**必须**的：
+// 手机竖拍时像素其实是横躺着的，方向只写在 EXIF 里；若按像素原样解码，送给模型的就是
+// 一张躺倒的卷子，整页读成乱码 —— 这种故障比 413 难查得多，而且不会报任何错。
+// 三层回退：老浏览器认不出 "from-image" 这个枚举值时 WebIDL 会直接抛错。
+async function decodeVisionImage(file) {
+  if (typeof createImageBitmap === "function") {
+    for (const options of [{ imageOrientation: "from-image" }, undefined]) {
+      try {
+        return await createImageBitmap(file, options);
+      } catch (error) {
+        // 换下一种解码方式（不认这个选项 / 解不开这个格式，例如 iPhone 的 HEIC）
+      }
+    }
+  }
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("图片解码失败")); };
+    image.src = url;
+  });
+}
+
+function canvasToJpegBlob(canvas, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob || null), "image/jpeg", quality);
+  });
+}
+
+// 把位图缩到「最长边 ≤ maxSide」再编码成 JPEG；失败返回 null（调用方继续降下一档）。
+async function shrinkVisionJpeg(source, width, height, maxSide, quality) {
+  try {
+    const scale = Math.min(1, maxSide / Math.max(width, height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    // 缩小取样默认是低质量档，打开高质量重采样能让手写细笔画少一些锯齿
+    // （Safari 不支持这个属性，赋值会被忽略，不影响后面的回退）
+    context.imageSmoothingQuality = "high";
+    // JPEG 没有透明通道：不先铺白底，带透明的 PNG 会被合成成**黑底黑字**，
+    // 模型一个符号都读不出来。改这一处之前这类图是原样透传的，所以这行是必须的。
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return await canvasToJpegBlob(canvas, quality);
+  } catch (error) {
+    return null;
+  }
+}
+
+// 压出来的 Blob 要包成 File 再进 FormData：后端的白名单（backend/vision/router.py:17）
+// 查的是 multipart part 里的 Content-Type，而它来自 File 的 type —— 少了这一步，
+// 浏览器会按 application/octet-stream 发，后端直接 415。
+function toVisionJpegFile(blob, original) {
+  const name = visionJpegName(original.name);
+  try {
+    return new File([blob], name, { type: "image/jpeg" });
+  } catch (error) {
+    return blob;   // 老到没有 File 构造器的浏览器：退回 Blob（它的 type 也是 image/jpeg）
+  }
+}
+
+// 逐档试，返回第一张达标（≤ VISION_UPLOAD_MAX_BYTES）的 JPEG；全不达标返回 null。
+async function shrinkVisionImage(file) {
+  let source = null;
+  try {
+    source = await decodeVisionImage(file);
+    const width = source.width || source.naturalWidth || 0;
+    const height = source.height || source.naturalHeight || 0;
+    if (!width || !height) return null;
+    for (const [maxSide, quality] of VISION_SHRINK_STEPS) {
+      const blob = await shrinkVisionJpeg(source, width, height, maxSide, quality);
+      if (blob && blob.size <= VISION_UPLOAD_MAX_BYTES) return toVisionJpegFile(blob, file);
+    }
+    // 四档都还超标：只可能是高熵噪声图，再往下压字就真糊了。
+    // 这时宁可原样上传、让上层如实报错，也别给学生一张认不出的图。
+    return null;
+  } catch (error) {
+    return null;
+  } finally {
+    // ImageBitmap 里是解码后的原始像素（12 MP 约 48 MB），手机上必须主动放掉
+    if (source && typeof source.close === "function") source.close();
+  }
+}
+
+// 把入参换成「可以安全发出去的那一份」。契约三条，缺一不可：
+//   ① **任何一步失败都原样返回入参对象本身** —— 绝不能因为「压缩失败」把学生挡在门外；
+//   ② 本来就 ≤ 900 KB 的原图原样透传，不重新编码（不引入无谓的质量损失）；
+//   ③ 一定在 VISION_COMPRESS_BUDGET_MS 内返回，绝不永远挂起。
+async function prepareVisionUpload(file) {
+  if (!file || file.size <= VISION_UPLOAD_MAX_BYTES) return file;
+  let timer = 0;
+  try {
+    const giveUp = new Promise((resolve) => { timer = setTimeout(() => resolve(null), VISION_COMPRESS_BUDGET_MS); });
+    return (await Promise.race([shrinkVisionImage(file), giveUp])) || file;
+  } catch (error) {
+    return file;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 把 HTTP 状态码翻成学生看得懂的话。413 有两个来源 —— nginx（HTML 响应体，没有 detail）
+// 和后端（10 MiB 那条，有 detail）—— 两种都给学生同一句可执行的指令：
+// 客户端的压缩已经让 > 900 KB 的上传几乎不可能发生，真出现 413 就说明该重拍了。
+// 同理 415 也不再暴露后端那句给开发看的「仅支持 PNG、JPEG、WebP 图片」。
+// 其余状态码仍然优先用后端给的 detail（那是人话，而且更具体）。
+function describeVisionError(response, data) {
+  if (response.status === 413) return "图片太大，请离题目近一点重拍";
+  if (response.status === 415) return "图片格式不支持，请用相机重拍";
+  if (response.status === 401 || response.status === 403) return "登录已过期，请重新登录后再试";
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    return "识别服务暂时不可用，请稍后重试";
+  }
+  return readApiError(data, `图片识别失败（HTTP ${response.status}）`);
+}
+
 async function parseVisionImage(file) {
+  // 线上 nginx 的 client_max_body_size 是 1 MiB，相机原图必然超标 —— 先压再发（见上方说明）
+  const upload = await prepareVisionUpload(file);
   const form = new FormData();
-  form.append("file", file, file.name || "image.png");
+  form.append("file", upload, upload.name || "image.png");
   const response = await authenticatedFetch("/api/vision/parse", {
     method: "POST",
     body: form,
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(readApiError(data, `图片识别失败（${response.status}）`));
+  if (!response.ok) throw new Error(describeVisionError(response, data));
   return data;
 }
 
