@@ -324,7 +324,7 @@ const extendedToolConfigs = {
     title: "哈斯图生成",
     fields: [
       { name: "relation_type", label: "偏序关系类型", type: "select", value: "divisibility", options: [["divisibility", "整除关系 a | b"], ["less_equal", "小于等于 a ≤ b"], ["subset", "子集关系 A ⊆ B"], ["explicit", "手动输入有序对"]] },
-      { name: "elements", label: "元素集合", type: "json", value: "[1, 2, 4]" },
+      { name: "elements", label: "元素集合", type: "json", value: "[1, 2, 4]", hint: "子集关系支持 [a] 或 [\"a\"]；空集支持 []、[Ø] 或 [∅]。" },
       { name: "relation", label: "偏序关系有序对", type: "json", rows: 5, value: "[[1,1],[2,2],[4,4],[1,2],[2,4],[1,4]]", showWhen: { name: "relation_type", value: "explicit" } },
     ],
   },
@@ -944,6 +944,7 @@ function selectExtendedTool(toolName) {
 function renderExtendedToolField(field) {
   const value = escapeHtml(String(field.value ?? ""));
   const wrapper = `data-tool-field="${escapeHtml(field.name)}"`;
+  const hint = field.hint ? `<small class="tool-field-hint">${escapeHtml(field.hint)}</small>` : "";
   if (field.type === "select") {
     return `<label ${wrapper}>${escapeHtml(field.label)}<select name="${escapeHtml(field.name)}">${field.options.map(([optionValue, label]) => `<option value="${escapeHtml(optionValue)}" ${optionValue === field.value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>`;
   }
@@ -951,7 +952,7 @@ function renderExtendedToolField(field) {
     return `<label class="tool-checkbox" ${wrapper}><input type="checkbox" name="${escapeHtml(field.name)}" ${field.value ? "checked" : ""}><span>${escapeHtml(field.label)}</span></label>`;
   }
   if (field.type === "json" || field.type === "textarea") {
-    return `<label ${wrapper}>${escapeHtml(field.label)}<textarea name="${escapeHtml(field.name)}" rows="${Number(field.rows || 3)}">${value}</textarea></label>`;
+    return `<label ${wrapper}>${escapeHtml(field.label)}<textarea name="${escapeHtml(field.name)}" rows="${Number(field.rows || 3)}">${value}</textarea>${hint}</label>`;
   }
   return `<label ${wrapper}>${escapeHtml(field.label)}<input name="${escapeHtml(field.name)}" value="${value}"></label>`;
 }
@@ -996,7 +997,14 @@ async function runExtendedTool() {
         params[field.name] = control.checked;
       } else if (field.type === "json") {
         const raw = control.value.trim();
-        if (raw) params[field.name] = parseToolJson(raw, field.label);
+        if (raw) {
+          const isSubsetElements = toolName === "hasse-diagram"
+            && field.name === "elements"
+            && form.querySelector('[name="relation_type"]')?.value === "subset";
+          params[field.name] = isSubsetElements
+            ? parseHasseSubsetElements(raw, field.label)
+            : parseToolJson(raw, field.label);
+        }
       } else if (["start", "end"].includes(field.name)) {
         params[field.name] = parseToolScalar(control.value.trim());
       } else {
@@ -1026,6 +1034,105 @@ function parseToolJson(value, label) {
   } catch (error) {
     throw new Error(`${label} 必须是有效 JSON`);
   }
+}
+
+function parseHasseSubsetElements(value, label) {
+  const normalized = value.replace(/[，]/g, ",").replace(/[：]/g, ":");
+  let parsed;
+  try {
+    parsed = JSON.parse(normalized);
+  } catch (error) {
+    parsed = parseRelaxedArraySyntax(normalized, label);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${label} 必须使用方括号表示`);
+  }
+  if (!parsed.length) return [[]];
+  return parsed.map((subset, index) => {
+    if (!Array.isArray(subset)) {
+      if (isEmptySetToken(subset)) return [];
+      return [subset];
+    }
+    if (subset.length === 1 && isEmptySetToken(subset[0])) return [];
+    if (subset.some(isEmptySetToken)) {
+      throw new Error(`第 ${index + 1} 个子集中，空集符号不能与其他元素同时出现`);
+    }
+    return subset;
+  });
+}
+
+function parseRelaxedArraySyntax(value, label) {
+  let cursor = 0;
+  const skipWhitespace = () => {
+    while (/\s/.test(value[cursor] || "")) cursor += 1;
+  };
+  const fail = () => {
+    throw new Error(`${label} 格式不正确，请检查方括号和逗号`);
+  };
+  const parseQuotedString = () => {
+    const start = cursor;
+    cursor += 1;
+    let escaped = false;
+    while (cursor < value.length) {
+      const character = value[cursor];
+      cursor += 1;
+      if (character === '"' && !escaped) {
+        try {
+          return JSON.parse(value.slice(start, cursor));
+        } catch (error) {
+          fail();
+        }
+      }
+      escaped = character === "\\" && !escaped;
+      if (character !== "\\") escaped = false;
+    }
+    fail();
+  };
+  const parseValue = () => {
+    skipWhitespace();
+    if (value[cursor] === "[") return parseArray();
+    if (value[cursor] === '"') return parseQuotedString();
+    const start = cursor;
+    while (cursor < value.length && ![",", "]"].includes(value[cursor])) cursor += 1;
+    const token = value.slice(start, cursor).trim();
+    if (!token) fail();
+    if (/^-?\d+(?:\.\d+)?$/.test(token)) return Number(token);
+    if (token === "true") return true;
+    if (token === "false") return false;
+    if (token === "null") return null;
+    return token;
+  };
+  const parseArray = () => {
+    if (value[cursor] !== "[") fail();
+    cursor += 1;
+    const items = [];
+    skipWhitespace();
+    if (value[cursor] === "]") {
+      cursor += 1;
+      return items;
+    }
+    while (cursor < value.length) {
+      items.push(parseValue());
+      skipWhitespace();
+      if (value[cursor] === "]") {
+        cursor += 1;
+        return items;
+      }
+      if (value[cursor] !== ",") fail();
+      cursor += 1;
+      skipWhitespace();
+    }
+    fail();
+  };
+  skipWhitespace();
+  const result = parseArray();
+  skipWhitespace();
+  if (cursor !== value.length) fail();
+  return result;
+}
+
+function isEmptySetToken(value) {
+  return typeof value === "string" && ["Ø", "∅"].includes(value.trim());
 }
 
 function parseToolScalar(value) {
@@ -1117,7 +1224,8 @@ function renderHasseDiagramResult(result) {
       <div><div class="result-kicker">偏序关系可视化</div><h4>哈斯图</h4></div>
       <div class="result-counts"><span>${escapeHtml(formatHasseRelationType(result.relation_type))}</span><span>${nodes.length} 个元素</span><span>${edges.length} 条覆盖关系</span></div>
     </div>
-    <div id="hasseResultChart" class="hasse-result-chart" role="img" aria-label="哈斯图计算结果"></div>
+    <p class="hasse-chart-hint">节点按层级静态排布；元素较多时可横向滚动，或使用滚轮缩放、拖动画布查看。</p>
+    <div class="hasse-chart-viewport"><div id="hasseResultChart" class="hasse-result-chart" role="img" aria-label="哈斯图计算结果"></div></div>
   </section>`;
 }
 
@@ -1187,15 +1295,32 @@ function renderHasseResultChart(result) {
     grouped.get(level).push(node);
   });
   const maxLevel = Math.max(0, ...grouped.keys());
+  const orderedLevels = [...grouped.keys()].sort((left, right) => left - right);
+  const maxNodesInLevel = Math.max(1, ...[...grouped.values()].map((items) => items.length));
+  const horizontalGap = nodes.length > 48 ? 145 : nodes.length > 24 ? 165 : 190;
+  const verticalGap = nodes.length > 48 ? 95 : 115;
+  const chartWidth = Math.max(760, maxNodesInLevel * horizontalGap + 180);
+  const chartHeight = Math.max(420, orderedLevels.length * verticalGap + 150);
+  container.style.width = `${chartWidth}px`;
+  container.style.height = `${chartHeight}px`;
   const chartNodes = [];
-  grouped.forEach((levelNodes, level) => {
+  orderedLevels.forEach((level) => {
+    const levelNodes = grouped.get(level).slice().sort((left, right) => {
+      const leftLabel = formatHasseNodeLabel(left);
+      const rightLabel = formatHasseNodeLabel(right);
+      return leftLabel.localeCompare(rightLabel, "zh-CN", { numeric: true });
+    });
     levelNodes.forEach((node, index) => {
+      const label = formatHasseNodeLabel(node);
+      const labelLength = Array.from(label).length;
+      const nodeWidth = Math.max(54, Math.min(horizontalGap - 22, 30 + labelLength * 13));
       chartNodes.push({
         id: String(node.id),
-        name: String(node.label ?? node.value ?? node.id),
-        x: (index - (levelNodes.length - 1) / 2) * 190,
-        y: (maxLevel - level) * 115,
-        symbolSize: 58,
+        name: label,
+        x: chartWidth / 2 + (index - (levelNodes.length - 1) / 2) * horizontalGap,
+        y: 75 + (maxLevel - level) * verticalGap,
+        symbol: "roundRect",
+        symbolSize: [nodeWidth, nodes.length > 48 ? 40 : 46],
         itemStyle: { color: level === maxLevel ? "#246a96" : "#ffffff", borderColor: "#246a96", borderWidth: 2 },
         label: { color: level === maxLevel ? "#ffffff" : "#17212f" },
       });
@@ -1209,10 +1334,17 @@ function renderHasseResultChart(result) {
       type: "graph", layout: "none", roam: true, data: chartNodes,
       links: edges.map((edge) => ({ source: String(edge.source), target: String(edge.target) })),
       lineStyle: { color: "#86a9be", width: 2 },
-      label: { show: true, fontSize: 15, fontWeight: 700 },
+      label: { show: true, fontSize: nodes.length > 48 ? 11 : nodes.length > 24 ? 12 : 14, fontWeight: 700, overflow: "truncate" },
       emphasis: { focus: "adjacency", lineStyle: { width: 4 } },
     }],
   });
+}
+
+function formatHasseNodeLabel(node) {
+  if (Array.isArray(node?.value)) {
+    return node.value.length ? `{${node.value.map((item) => String(item)).join(", ")}}` : "∅";
+  }
+  return String(node?.label ?? node?.value ?? node?.id ?? "");
 }
 
 function bindGeneratedCodeCopy(code) {
