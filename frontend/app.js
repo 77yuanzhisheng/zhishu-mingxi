@@ -1530,8 +1530,12 @@ function updateMatrixPreview() {
 }
 
 function loadMatrixSample(type) {
-  document.getElementById("matrixInput").value = JSON.stringify(relationSamples[type], null, 2);
+  document.getElementById("matrixInput").value = formatMatrixInput(relationSamples[type]);
   updateMatrixPreview();
+}
+
+function formatMatrixInput(matrix) {
+  return `[\n${matrix.map((row) => `  ${JSON.stringify(row)}`).join(",\n")}\n]`;
 }
 
 function readMatrixInput() {
