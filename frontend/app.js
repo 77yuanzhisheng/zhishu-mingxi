@@ -3547,8 +3547,8 @@ function renderCalcList(target) {
       ${q.fig ? `<img class="practice-figure" src="${escapeHtml(q.fig)}" alt="题目图示" />` : ""}
       <p class="muted-line">请在纸上完成计算过程，拍照上传后核对识别文本，也可直接修改文本再提交。</p>
       <div class="calc-action-row">
-        <label class="calc-upload-btn" for="calc-file-${escapeHtml(q.id)}">拍照上传</label>
-        <input id="calc-file-${escapeHtml(q.id)}" class="calc-file-input" type="file" accept="image/*" capture="environment" data-calc-upload="${escapeHtml(q.id)}" />
+        <label class="calc-upload-btn" for="calc-file-${escapeHtml(q.id)}">拍照 / 选图上传</label>
+        <input id="calc-file-${escapeHtml(q.id)}" class="calc-file-input" type="file" accept="image/*" data-calc-upload="${escapeHtml(q.id)}" />
         <span class="calc-status" data-calc-status="${escapeHtml(q.id)}"></span>
       </div>
       <div class="calc-ocr-box" data-calc-ocr="${escapeHtml(q.id)}" ${result || text || error ? "" : "hidden"}>
@@ -3652,9 +3652,9 @@ function renderProofList(target) {
       <h4>${escapeHtml(q.question)}</h4>
       <p class="muted-line">请在纸上作答，然后拍照上传（不支持键盘输入）。</p>
       <div class="proof-action-row">
-        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">拍照上传</label>
+        <label class="proof-upload-btn" for="proof-file-${escapeHtml(q.id)}">拍照 / 选图上传</label>
         <input id="proof-file-${escapeHtml(q.id)}" class="proof-file-input" type="file"
-               accept="image/*" capture="environment"
+               accept="image/*"
                data-proof-upload="${escapeHtml(q.id)}" />
         <span class="proof-status" data-proof-status="${escapeHtml(q.id)}"></span>
       </div>
@@ -3689,9 +3689,12 @@ function renderProofList(target) {
 //   · 对不存在的路径 POST：body 1,048,576 B → 404（请求进了 FastAPI），
 //     body 1,048,577 B → 413，并且响应体是 nginx 自己的 HTML（text/html、183 B、
 //     Connection: close）—— 请求根本没到 uvicorn；
-//   · 拍照走的是 capture="environment" 的相机原图（模拟 12 MP 原图 = 3,448 KB），必然超标；
+//   · 相机原图常见 2–8 MB、相册里的原图（长截图、全景）往往更大（模拟 12 MP 原图 = 3,448 KB），必然超标；
 //   · 后端自己的 10 MiB 上限（backend/vision/router.py:18）因此从没被触发过 ——
 //     学生看到的「图片识别失败（413）」是 readApiError 拿不到 detail 时露出来的裸状态码。
+//
+// 注意：5 个图片入口的 file 控件刻意**不带** capture 属性 —— 带上之后手机上的
+// 选择器会被锁死在相机、学生没法从相册里选图（2026-09-16 老师反馈）。改这几个 input 时别加回去。
 // parseVisionImage 是 5 个拍照入口（计算题 :3443 / 教材答疑 :3592 / 证明题 :3619 /
 // 考试答题纸 :5994 / 智能批改 :6191）**唯一**的汇聚点，压在这里改一处就全部修好。
 
@@ -3827,12 +3830,14 @@ async function prepareVisionUpload(file) {
 
 // 把 HTTP 状态码翻成学生看得懂的话。413 有两个来源 —— nginx（HTML 响应体，没有 detail）
 // 和后端（10 MiB 那条，有 detail）—— 两种都给学生同一句可执行的指令：
-// 客户端的压缩已经让 > 900 KB 的上传几乎不可能发生，真出现 413 就说明该重拍了。
-// 同理 415 也不再暴露后端那句给开发看的「仅支持 PNG、JPEG、WebP 图片」。
+// 客户端的压缩已经让 > 900 KB 的上传几乎不可能发生，真出现 413 就说明这张图太大了（换一张、裁一下）。
+// 415 同理：相册里选到的 HEIC 等格式解不开会**原样上传**，撞后端白名单就是 415，
+// 所以这句要给出相册里做得到的动作，而不是「请用相机重拍」（学生可能正是从相册来的）；
+// 也不再暴露后端那句给开发看的「仅支持 PNG、JPEG、WebP 图片」。
 // 其余状态码仍然优先用后端给的 detail（那是人话，而且更具体）。
 function describeVisionError(response, data) {
-  if (response.status === 413) return "图片太大，请离题目近一点重拍";
-  if (response.status === 415) return "图片格式不支持，请用相机重拍";
+  if (response.status === 413) return "图片太大，请换一张小一点的图片";
+  if (response.status === 415) return "图片格式不支持，请换一张 JPG 或 PNG 图片";
   if (response.status === 401 || response.status === 403) return "登录已过期，请重新登录后再试";
   if (response.status === 502 || response.status === 503 || response.status === 504) {
     return "识别服务暂时不可用，请稍后重试";
@@ -5566,8 +5571,8 @@ function renderExamPaper() {
       <label class="exam-answer-label" for="exam-answer-${question.id}">你的答案</label>
       <textarea id="exam-answer-${question.id}" data-question-id="${question.id}" rows="3" placeholder="${String(question.type).includes("选择") ? "输入选项字母，例如 A" : "输入完整作答过程"}"></textarea>
       <div class="grading-photo-row">
-        <label class="grading-photo-button" for="exam-photo-${question.id}">拍照识别</label>
-        <input id="exam-photo-${question.id}" class="proof-file-input" type="file" accept="image/*" capture="environment" data-exam-photo="${question.id}">
+        <label class="grading-photo-button" for="exam-photo-${question.id}">拍照 / 选图识别</label>
+        <input id="exam-photo-${question.id}" class="proof-file-input" type="file" accept="image/*" data-exam-photo="${question.id}">
         <span id="exam-ocr-status-${question.id}" class="grading-ocr-status"></span>
       </div>
     </fieldset>
