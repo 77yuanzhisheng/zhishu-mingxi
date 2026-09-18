@@ -22,6 +22,7 @@ import logging
 import os
 import random
 import re
+from collections import Counter
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -273,6 +274,13 @@ def load_teacher_fill_questions() -> List[Dict]:
                 "explanation": f"参考答案：{correct}",
             })
     return questions
+
+
+def count_practice_questions_by_node() -> Dict[str, int]:
+    """Return deterministic self-test availability for each real graph node."""
+
+    questions = parse_quiz_bank_md() + load_teacher_fill_questions()
+    return dict(Counter(question["nodeId"] for question in questions if question.get("nodeId")))
 
 
 @router.get("/questions")

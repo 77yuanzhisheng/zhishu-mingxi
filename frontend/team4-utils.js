@@ -27,21 +27,142 @@
       .filter(Boolean);
   }
 
-  function buildCompanionPrompt(kind, context) {
-    const labels = {
-      today: "安排今天的学习任务",
-      mistakes: "分析近期薄弱点并安排错题巩固",
-      duration: "根据当前状态建议学习时长和节奏",
+  function escapeCompanionHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function normalizeCompanionData(payload) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const today = source.today_plan && typeof source.today_plan === "object" ? source.today_plan : {};
+    const review = source.wrong_review && typeof source.wrong_review === "object" ? source.wrong_review : {};
+    const duration = source.duration_advice && typeof source.duration_advice === "object" ? source.duration_advice : {};
+    const items = Array.isArray(review.items) ? review.items.filter((item) => item && item.node_id) : [];
+    return {
+      ...source,
+      today_plan: {
+        node_id: String(today.node_id || ""),
+        title: String(today.title || today.node_id || "等待学习路径"),
+        reason: String(today.reason || "当前学情数据较少，先从基础知识点开始学习。"),
+        exercise_count: Math.max(0, Number(today.exercise_count || 0)),
+        available_question_count: Math.max(0, Number(today.available_question_count || 0)),
+        target_accuracy: Math.min(1, Math.max(0, Number(today.target_accuracy ?? 0.8))),
+        available: Boolean(today.available),
+        accuracy: today.accuracy == null ? null : Number(today.accuracy),
+        recent_practice_count: Math.max(0, Number(today.recent_practice_count || 0)),
+        status: String(today.status || "未评估"),
+        path_position: today.path_position == null ? null : Number(today.path_position),
+        path_total_nodes: Math.max(0, Number(today.path_total_nodes || 0)),
+        path_stage_title: String(today.path_stage_title || ""),
+      },
+      wrong_review: {
+        count: items.length,
+        total_wrong_answers: items.reduce((sum, item) => sum + Math.max(0, Number(item.wrong_count || 0)), 0),
+        items,
+        empty_message: String(review.empty_message || "最近练习中没有需要立即巩固的错题，可以继续完成今日计划。"),
+      },
+      duration_advice: {
+        total_minutes: Math.max(0, Number(duration.total_minutes || 0)),
+        review_minutes: Math.max(0, Number(duration.review_minutes || 0)),
+        practice_minutes: Math.max(0, Number(duration.practice_minutes || 0)),
+        summary_minutes: Math.max(0, Number(duration.summary_minutes || 0)),
+      },
     };
-    const weak = (context.weakNodes || []).slice(0, 5).join("、") || "暂无明确薄弱点";
-    return [
-      "你是离散数学学习陪伴助手，请给出简短、可执行的建议。",
-      `任务：${labels[kind] || labels.today}。`,
-      `当前知识点：${context.currentNode || "尚未选择"}。`,
-      `薄弱知识点：${weak}。`,
-      `今日已学习：${Number(context.todayMinutes || 0)} 分钟；本周完成：${Number(context.weeklyQuestions || 0)} 题。`,
-      "请按“现在做什么、练几题、完成标准”三项回答，不超过180字。",
-    ].join("\n");
+  }
+
+  function renderCompanionAdvice(kind, payload) {
+    const data = normalizeCompanionData(payload);
+    if (kind === "mistakes") return renderWrongReview(data.wrong_review);
+    if (kind === "duration") return renderDurationAdvice(data.duration_advice);
+    return renderTodayPlan(data.today_plan);
+  }
+
+  function renderTodayPlan(plan) {
+    const pathText = plan.path_position
+      ? `${plan.path_stage_title || "当前路径"} · 第 ${plan.path_position}/${plan.path_total_nodes} 个任务`
+      : "等待更多学情后更新路径位置";
+    const taskText = plan.available
+      ? `完成 ${plan.exercise_count} 道相关练习题`
+      : "当前题库暂无对应练习题，先复习概念与例题";
+    const targetText = plan.available
+      ? `正确率达到 ${Math.round(plan.target_accuracy * 100)}%`
+      : "完成概念复习后更新计划";
+    return `
+      <section class="companion-tab-content" data-companion-view="today">
+        <article class="companion-primary-card">
+          <span>今日重点</span>
+          <strong>${escapeCompanionHtml(plan.title)}</strong>
+          <small>${escapeCompanionHtml(plan.node_id)} · ${escapeCompanionHtml(plan.status)}</small>
+        </article>
+        <div class="companion-fact-grid">
+          <article><span>推荐原因</span><p>${escapeCompanionHtml(plan.reason)}</p></article>
+          <article><span>建议任务</span><p>${escapeCompanionHtml(taskText)}</p></article>
+          <article><span>完成目标</span><p>${escapeCompanionHtml(targetText)}</p></article>
+          <article><span>路径位置</span><p>${escapeCompanionHtml(pathText)}</p></article>
+        </div>
+      </section>`;
+  }
+
+  function renderWrongReview(review) {
+    if (!review.items.length) {
+      return `
+        <section class="companion-tab-content companion-empty" data-companion-view="mistakes">
+          <strong>暂无待复习错题</strong>
+          <p>${escapeCompanionHtml(review.empty_message)}</p>
+        </section>`;
+    }
+    const visibleItems = review.items.slice(0, 6);
+    const itemsHtml = visibleItems.map((item) => {
+      const date = String(item.recent_error_at || "").split("T")[0] || "时间未知";
+      const accuracy = Math.round(Math.min(1, Math.max(0, Number(item.accuracy || 0))) * 100);
+      const reminder = Number(item.wrong_count || 0) > 1
+        ? "该知识点近期出现多次错误"
+        : "该知识点近期出现错误";
+      return `
+        <article class="companion-wrong-item">
+          <div><span>知识点</span><strong>${escapeCompanionHtml(item.title || item.node_id)}</strong><small>${escapeCompanionHtml(item.node_id)}</small></div>
+          <div class="companion-wrong-stats"><span>最近错误 ${escapeCompanionHtml(date)}</span><strong>${Number(item.wrong_count || 0)} 次</strong><span>近期正确率 ${accuracy}%</span></div>
+          <p>${escapeCompanionHtml(reminder)}</p>
+        </article>`;
+    }).join("");
+    const remaining = review.count - visibleItems.length;
+    return `
+      <section class="companion-tab-content" data-companion-view="mistakes">
+        <div class="companion-list-heading"><strong>待复习 ${review.count} 个知识点</strong><span>共 ${review.total_wrong_answers} 次真实错误记录</span></div>
+        <div class="companion-wrong-list">${itemsHtml}</div>
+        ${remaining > 0 ? `<p class="companion-more">另有 ${remaining} 个待巩固知识点，可更新计划后继续查看。</p>` : ""}
+      </section>`;
+  }
+
+  function renderDurationAdvice(duration) {
+    return `
+      <section class="companion-tab-content" data-companion-view="duration">
+        <article class="companion-duration-total"><span>今日建议</span><strong>${duration.total_minutes}<small> 分钟</small></strong><p>按当前计划题量和真实错题数量计算</p></article>
+        <div class="companion-duration-grid">
+          <article><span>错题复盘</span><strong>${duration.review_minutes} min</strong></article>
+          <article><span>当前知识点练习</span><strong>${duration.practice_minutes} min</strong></article>
+          <article><span>总结检查</span><strong>${duration.summary_minutes} min</strong></article>
+        </div>
+      </section>`;
+  }
+
+  function practiceModuleForNode(nodeId) {
+    const modules = {
+      pl: "propositional_logic",
+      fl: "predicate_logic",
+      st: "set_theory",
+      mi: "induction",
+      rel: "relations",
+      gt: "graph_theory",
+      nt: "number_theory",
+      cm: "combinatorics",
+      ag: "algebraic_structure",
+    };
+    return modules[String(nodeId || "").split("_")[0]] || "all";
   }
 
   // 格式契约是补出来的，不是想出来的：模型原先会吐 `---` 分隔线（渲染器只认列表，
@@ -166,7 +287,9 @@
 
   return {
     splitProofSteps,
-    buildCompanionPrompt,
+    normalizeCompanionData,
+    renderCompanionAdvice,
+    practiceModuleForNode,
     buildLessonPrompt,
     normalizeAgentAnswer,
     resolveAssistantChannel,

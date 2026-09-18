@@ -19,7 +19,13 @@ from backend.learning.models import (
     AnswerEvent,
     AnswerEventsResponse,
     AnswerQuestionType,
+    CompanionDurationAdvice,
+    CompanionSource,
+    CompanionTodayPlan,
+    CompanionWrongItem,
+    CompanionWrongReview,
     LearningReport,
+    LearningCompanionResponse,
     MasteryDetail,
     MasteryUpdateResponse,
     NodeLearningEvidence,
@@ -60,6 +66,17 @@ PRACTICE_TARGET = 10
 MIN_GRADED_FOR_NODE_STATUS = 3
 AGENT_CONTEXT_ITEMS_PER_SECTION = 4
 AGENT_CONTEXT_MAX_CHARS = 1200
+COMPANION_EXERCISE_TARGET = 3
+COMPANION_TARGET_ACCURACY = 0.8
+COMPANION_RECENT_EVENT_LIMIT = 100
+COMPANION_MIN_MINUTES = 15
+COMPANION_MAX_MINUTES = 60
+COMPANION_MIN_PRACTICE_MINUTES = 10
+COMPANION_MAX_PRACTICE_MINUTES = 25
+COMPANION_MINUTES_PER_EXERCISE = 5
+COMPANION_MINUTES_PER_WRONG_ANSWER = 5
+COMPANION_MAX_REVIEW_MINUTES = 30
+COMPANION_SUMMARY_MINUTES = 5
 
 
 class UserNotFoundError(LookupError):
@@ -934,6 +951,224 @@ def get_learning_report(
             raise UserNotFoundError(f"用户 {user_id} 不存在")
         reports = build_learning_reports(connection, [user_id])
     return reports[user_id]
+
+
+def _companion_wrong_items(
+    user_id: int,
+    database_path: str | Path | None,
+) -> list[CompanionWrongItem]:
+    """Aggregate real wrong answers from the user's latest graded answer events."""
+
+    from backend.learning.node_names import node_name_map
+
+    with connection_scope(database_path) as connection:
+        rows = connection.execute(
+            """
+            WITH recent_events AS (
+                SELECT node_id, is_correct, created_at
+                FROM answer_events
+                WHERE user_id = ? AND is_correct IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            )
+            SELECT
+                node_id,
+                SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS wrong_count,
+                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct_count,
+                COUNT(*) AS practice_count,
+                MAX(CASE WHEN is_correct = 0 THEN created_at END) AS recent_error_at
+            FROM recent_events
+            GROUP BY node_id
+            HAVING SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) > 0
+            ORDER BY recent_error_at DESC, node_id
+            """,
+            (user_id, COMPANION_RECENT_EVENT_LIMIT),
+        ).fetchall()
+
+    names = node_name_map()
+    return [
+        CompanionWrongItem(
+            node_id=row["node_id"],
+            title=names.get(row["node_id"]) or row["node_id"],
+            module=module_for_node(row["node_id"]),
+            wrong_count=int(row["wrong_count"]),
+            recent_error_at=row["recent_error_at"],
+            recent_practice_count=int(row["practice_count"]),
+            accuracy=round(int(row["correct_count"]) / int(row["practice_count"]), 4),
+        )
+        for row in rows
+    ]
+
+
+def _companion_path_nodes(path) -> list[tuple[object, object]]:
+    return [
+        (stage, node)
+        for stage in path.stages
+        for node in stage.nodes
+    ]
+
+
+def _companion_reason(
+    *,
+    title: str,
+    insight: NodeLearningInsight | None,
+    wrong_item: CompanionWrongItem | None,
+    path_position: int | None,
+    path_total: int,
+    insufficient_data: bool,
+) -> str:
+    if wrong_item is not None:
+        return (
+            f"该知识点在最近 {wrong_item.recent_practice_count} 次相关练习中出现 "
+            f"{wrong_item.wrong_count} 次错误，建议优先巩固。"
+        )
+    if insight is not None and insight.graded_question_count > 0:
+        accuracy = round((insight.accuracy or 0) * 100)
+        return f"该知识点近期已完成 {insight.graded_question_count} 次练习，当前正确率为 {accuracy}%。"
+    if insufficient_data:
+        return "当前学情数据较少，先从离散数学基础知识点开始建立练习记录。"
+    if path_position is not None:
+        return f"学习路径将“{title}”排在当前 {path_total} 个任务中的第 {path_position} 位。"
+    return "根据当前学情状态，建议从这个知识点开始今天的学习。"
+
+
+def _companion_duration(
+    exercise_count: int,
+    total_wrong_answers: int,
+) -> CompanionDurationAdvice:
+    practice_minutes = 0
+    if exercise_count > 0:
+        practice_minutes = min(
+            COMPANION_MAX_PRACTICE_MINUTES,
+            max(
+                COMPANION_MIN_PRACTICE_MINUTES,
+                exercise_count * COMPANION_MINUTES_PER_EXERCISE,
+            ),
+        )
+    review_minutes = min(
+        COMPANION_MAX_REVIEW_MINUTES,
+        total_wrong_answers * COMPANION_MINUTES_PER_WRONG_ANSWER,
+    )
+    total_minutes = practice_minutes + review_minutes + COMPANION_SUMMARY_MINUTES
+    total_minutes = min(COMPANION_MAX_MINUTES, total_minutes)
+    return CompanionDurationAdvice(
+        total_minutes=total_minutes,
+        review_minutes=review_minutes,
+        practice_minutes=practice_minutes,
+        summary_minutes=COMPANION_SUMMARY_MINUTES,
+        min_minutes=min(COMPANION_MIN_MINUTES, total_minutes),
+        max_minutes=COMPANION_MAX_MINUTES,
+    )
+
+
+def get_learning_companion(
+    user_id: int,
+    database_path: str | Path | None = None,
+) -> LearningCompanionResponse:
+    """Build factual, deterministic companion tabs without asking an LLM for numbers."""
+
+    from backend.learning.node_names import node_name_map
+    from backend.learning.path_engine import get_learning_path
+    from backend.practice.router import count_practice_questions_by_node
+
+    report = get_learning_report(user_id, database_path)
+    wrong_items = _companion_wrong_items(user_id, database_path)
+    wrong_by_node = {item.node_id: item for item in wrong_items}
+    insights = {item.node_id: item for item in report.node_insights}
+
+    question_bank_available = True
+    try:
+        question_counts = count_practice_questions_by_node()
+    except Exception:
+        question_counts = {}
+        question_bank_available = False
+
+    path_available = True
+    path = None
+    try:
+        path = get_learning_path(user_id, database_path)
+    except Exception:
+        path_available = False
+
+    path_nodes = _companion_path_nodes(path) if path is not None else []
+    selected = next(
+        ((stage, node) for stage, node in path_nodes if question_counts.get(node.node_id, 0) > 0),
+        path_nodes[0] if path_nodes else None,
+    )
+
+    if selected is not None:
+        selected_stage, selected_node = selected
+        node_id = selected_node.node_id
+        title = selected_node.title
+        path_position = next(
+            index for index, (_, node) in enumerate(path_nodes, start=1) if node.node_id == node_id
+        )
+        path_stage = selected_stage.stage
+        path_stage_title = selected_stage.title
+    else:
+        fallback_node_ids = [
+            *report.weak_nodes,
+            *report.understanding_nodes,
+            *report.recent_chat_nodes,
+            "pl_01_01",
+        ]
+        node_id = next(
+            (candidate for candidate in fallback_node_ids if question_counts.get(candidate, 0) > 0),
+            fallback_node_ids[0],
+        )
+        title = node_name_map().get(node_id) or node_id
+        path_position = None
+        path_stage = None
+        path_stage_title = None
+
+    available_question_count = int(question_counts.get(node_id, 0))
+    exercise_count = min(COMPANION_EXERCISE_TARGET, available_question_count)
+    insight = insights.get(node_id)
+    path_total = len(path_nodes)
+    reason = _companion_reason(
+        title=title,
+        insight=insight,
+        wrong_item=wrong_by_node.get(node_id),
+        path_position=path_position,
+        path_total=path_total,
+        insufficient_data=bool(path and path.data_quality.get("status") == "insufficient_data"),
+    )
+    today_plan = CompanionTodayPlan(
+        node_id=node_id,
+        title=title,
+        reason=reason,
+        exercise_count=exercise_count,
+        available_question_count=available_question_count,
+        target_accuracy=COMPANION_TARGET_ACCURACY,
+        available=exercise_count > 0,
+        accuracy=insight.accuracy if insight is not None else None,
+        recent_practice_count=insight.graded_question_count if insight is not None else 0,
+        status=insight.status if insight is not None else "未评估",
+        path_position=path_position,
+        path_total_nodes=path_total,
+        path_stage=path_stage,
+        path_stage_title=path_stage_title,
+    )
+    total_wrong_answers = sum(item.wrong_count for item in wrong_items)
+    wrong_review = CompanionWrongReview(
+        count=len(wrong_items),
+        total_wrong_answers=total_wrong_answers,
+        items=wrong_items,
+        empty_message="最近练习中没有需要立即巩固的错题，可以继续完成今日计划。",
+    )
+    return LearningCompanionResponse(
+        user_id=user_id,
+        today_plan=today_plan,
+        wrong_review=wrong_review,
+        duration_advice=_companion_duration(exercise_count, total_wrong_answers),
+        generated_at=datetime.now(timezone.utc),
+        source=CompanionSource(
+            learning_profile=True,
+            answer_events=True,
+            learning_path=path_available,
+            question_bank=question_bank_available,
+        ),
+    )
 
 
 def _fetch_recent_user_questions(

@@ -12,6 +12,7 @@ from backend.learning.models import (
     AnswerEventsResponse,
     AnswerQuestionType,
     LearningReport,
+    LearningCompanionResponse,
     MasteryUpdateRequest,
     MasteryUpdateResponse,
 )
@@ -22,6 +23,7 @@ from backend.learning.service import (
     get_ability_profile,
     get_answer_events,
     get_learning_report,
+    get_learning_companion,
     update_mastery,
 )
 
@@ -110,6 +112,20 @@ def learning_report_endpoint(
 ) -> LearningReport:
     try:
         return get_learning_report(user_id)
+    except UserNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/companion",
+    response_model=LearningCompanionResponse,
+    summary="获取由真实学情、错题和题库规则生成的学习陪伴数据",
+)
+def learning_companion_endpoint(
+    user_id: int = Query(..., gt=0, description="User ID"),
+) -> LearningCompanionResponse:
+    try:
+        return get_learning_companion(user_id)
     except UserNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

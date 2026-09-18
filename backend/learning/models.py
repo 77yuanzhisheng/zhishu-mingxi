@@ -224,3 +224,62 @@ class AbilityProfile(BaseModel):
     mastered_nodes: list[str] = Field(default_factory=list)
     recent_chat_nodes: list[str] = Field(default_factory=list)
     chat_interaction_count: int = Field(default=0, ge=0)
+
+
+class CompanionTodayPlan(BaseModel):
+    node_id: str
+    title: str
+    reason: str
+    exercise_count: int = Field(ge=0)
+    available_question_count: int = Field(ge=0)
+    target_accuracy: float = Field(ge=0, le=1)
+    available: bool
+    accuracy: float | None = Field(default=None, ge=0, le=1)
+    recent_practice_count: int = Field(ge=0)
+    status: NodeLearningStatus
+    path_position: int | None = Field(default=None, ge=1)
+    path_total_nodes: int = Field(ge=0)
+    path_stage: str | None = None
+    path_stage_title: str | None = None
+
+
+class CompanionWrongItem(BaseModel):
+    node_id: str
+    title: str
+    module: str
+    wrong_count: int = Field(ge=1)
+    recent_error_at: datetime
+    recent_practice_count: int = Field(ge=1)
+    accuracy: float = Field(ge=0, le=1)
+
+
+class CompanionWrongReview(BaseModel):
+    count: int = Field(ge=0)
+    total_wrong_answers: int = Field(ge=0)
+    items: list[CompanionWrongItem]
+    empty_message: str
+
+
+class CompanionDurationAdvice(BaseModel):
+    total_minutes: int = Field(ge=0)
+    review_minutes: int = Field(ge=0)
+    practice_minutes: int = Field(ge=0)
+    summary_minutes: int = Field(ge=0)
+    min_minutes: int = Field(ge=0)
+    max_minutes: int = Field(ge=0)
+
+
+class CompanionSource(BaseModel):
+    learning_profile: bool
+    answer_events: bool
+    learning_path: bool
+    question_bank: bool
+
+
+class LearningCompanionResponse(BaseModel):
+    user_id: int
+    today_plan: CompanionTodayPlan
+    wrong_review: CompanionWrongReview
+    duration_advice: CompanionDurationAdvice
+    generated_at: datetime
+    source: CompanionSource

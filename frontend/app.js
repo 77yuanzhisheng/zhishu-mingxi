@@ -123,11 +123,12 @@ const examNodeState = {
 const examState = { examId: null, available: [], questions: [], answers: new Map(), secondsLeft: 900, timer: null, latestTeacherExamId: null, teacherExams: [], latestResult: null, latestExamClassId: null };
 const extendedToolState = { current: "formula-simplify", hasseChart: null };
 const unifiedToolState = { current: "truth" };
-const companionState = { kind: "today", loading: false };
+const companionState = { kind: "today", loading: false, data: null };
 const lessonPrepState = { loading: false, resultText: "" };
 
 const practiceState = {
   filter: "all",
+  focusNodeId: null,
   mode: "choice",
   questionIndex: {
     choice: 0,
@@ -642,7 +643,7 @@ document.getElementById("finishProofButton").addEventListener("click", finishPro
 document.getElementById("nextProofExplanationButton").addEventListener("click", revealNextProofExplanation);
 document.getElementById("continueLearningButton").addEventListener("click", continueLearning);
 document.getElementById("generateCompanionButton").addEventListener("click", generateCompanionAdvice);
-document.getElementById("companionPracticeButton").addEventListener("click", () => switchTab("practice"));
+document.getElementById("companionPracticeButton").addEventListener("click", startCompanionAction);
 document.getElementById("companionPathButton").addEventListener("click", () => switchTab("learning"));
 document.querySelectorAll(".companion-kind").forEach((button) => {
   button.addEventListener("click", () => setCompanionKind(button.dataset.companionKind));
@@ -3244,6 +3245,7 @@ function getCurrentUserId() {
 
 function setPracticeFilter(filter) {
   practiceState.filter = filter || "all";
+  practiceState.focusNodeId = null;
   practiceState.questionIndex[practiceState.mode] = 0;
   document.querySelectorAll(".practice-filter").forEach((button) => {
     button.classList.toggle("active", button.dataset.practiceFilter === practiceState.filter);
@@ -3315,7 +3317,8 @@ function renderPracticeList() {
   }
 
   const questions = practiceQuestions.filter((question) => (
-    practiceState.filter === "all" || question.module === practiceState.filter
+    (practiceState.filter === "all" || question.module === practiceState.filter)
+    && (!practiceState.focusNodeId || question.nodeId === practiceState.focusNodeId)
   ));
 
   if (!questions.length) {
@@ -4565,16 +4568,38 @@ function getLearningSnapshot() {
   };
 }
 
-function loadCompanionWorkspace() {
+async function loadCompanionWorkspace() {
   const snapshot = getLearningSnapshot();
   document.getElementById("companionTodayMinutes").textContent = `${snapshot.todayMinutes} 分钟`;
   document.getElementById("companionWeeklyQuestions").textContent = `${snapshot.weeklyQuestions} 题`;
-  document.getElementById("companionWeakCount").textContent = `${snapshot.weakNodes.length} 项`;
-  document.getElementById("companionCurrentNode").textContent = snapshot.currentNode || "尚未选择知识点";
-  const weakTarget = document.getElementById("companionWeakNodes");
-  weakTarget.innerHTML = snapshot.weakNodes.length
-    ? snapshot.weakNodes.slice(0, 6).map((name) => `<span>${escapeHtml(name)}</span>`).join("")
-    : '<p class="muted-line">当前没有待巩固知识点。</p>';
+  if (companionState.loading) return;
+  const target = document.getElementById("companionAdvice");
+  const button = document.getElementById("generateCompanionButton");
+  companionState.loading = true;
+  button.disabled = true;
+  button.textContent = companionState.data ? "正在更新" : "正在读取";
+  if (!companionState.data) {
+    target.className = "assistant-document loading-state";
+    target.textContent = "正在读取最新学情、错题记录和学习路径...";
+  }
+  try {
+    const response = await authenticatedFetch(
+      `/api/learning/companion?user_id=${encodeURIComponent(getCurrentUserId())}`,
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readApiError(data, "学习陪伴数据读取失败"));
+    companionState.data = window.Team4Utils.normalizeCompanionData(data);
+    renderCompanionWorkspace();
+  } catch (error) {
+    if (!companionState.data) {
+      target.className = "assistant-document error-state";
+      target.textContent = `学习陪伴数据读取失败：${error.message}`;
+    }
+  } finally {
+    companionState.loading = false;
+    button.disabled = false;
+    button.textContent = "更新计划";
+  }
 }
 
 function setCompanionKind(kind) {
@@ -4582,6 +4607,54 @@ function setCompanionKind(kind) {
   document.querySelectorAll(".companion-kind").forEach((button) => {
     button.classList.toggle("active", button.dataset.companionKind === companionState.kind);
   });
+  renderCompanionWorkspace();
+}
+
+function renderCompanionWorkspace() {
+  if (!companionState.data) return;
+  const data = window.Team4Utils.normalizeCompanionData(companionState.data);
+  const target = document.getElementById("companionAdvice");
+  const practiceButton = document.getElementById("companionPracticeButton");
+  const wrongItems = data.wrong_review.items;
+  target.className = "assistant-document companion-document";
+  target.innerHTML = window.Team4Utils.renderCompanionAdvice(companionState.kind, data);
+  document.getElementById("companionWeakCount").textContent = `${data.wrong_review.count} 项`;
+  document.getElementById("companionCurrentNode").textContent = data.today_plan.title || "尚未选择知识点";
+  document.getElementById("companionWeakNodes").innerHTML = wrongItems.length
+    ? wrongItems.slice(0, 6).map((item) => `<span>${escapeHtml(item.title || item.node_id)}</span>`).join("")
+    : '<p class="muted-line">暂无待复习错题。</p>';
+
+  if (companionState.kind === "mistakes") {
+    practiceButton.textContent = wrongItems.length ? "复习错题" : "暂无错题";
+    practiceButton.disabled = wrongItems.length === 0;
+  } else if (companionState.kind === "duration") {
+    practiceButton.textContent = "查看今日计划";
+    practiceButton.disabled = false;
+  } else {
+    practiceButton.textContent = "开始练习";
+    practiceButton.disabled = !data.today_plan.available;
+  }
+}
+
+function startCompanionAction() {
+  if (!companionState.data) return;
+  if (companionState.kind === "duration") {
+    setCompanionKind("today");
+    return;
+  }
+  const data = window.Team4Utils.normalizeCompanionData(companionState.data);
+  const target = companionState.kind === "mistakes"
+    ? data.wrong_review.items[0]
+    : data.today_plan;
+  if (!target?.node_id) return;
+  learningState.currentNodeId = target.node_id;
+  learningState.currentNodeName = target.title || findNodeName(target.node_id);
+  setPracticeMode("choice");
+  setPracticeFilter(window.Team4Utils.practiceModuleForNode(target.node_id));
+  practiceState.focusNodeId = practiceQuestions.some((question) => question.nodeId === target.node_id)
+    ? target.node_id
+    : null;
+  switchTab("practice");
 }
 
 async function requestAssistantText(prompt) {
@@ -4596,28 +4669,7 @@ async function requestAssistantText(prompt) {
 }
 
 async function generateCompanionAdvice() {
-  if (companionState.loading) return;
-  const target = document.getElementById("companionAdvice");
-  const button = document.getElementById("generateCompanionButton");
-  companionState.loading = true;
-  button.disabled = true;
-  button.textContent = "正在生成";
-  target.className = "assistant-document loading-state";
-  target.textContent = "正在结合学情和练习记录安排本次学习...";
-  try {
-    const prompt = window.Team4Utils.buildCompanionPrompt(companionState.kind, getLearningSnapshot());
-    const answer = await requestAssistantText(prompt);
-    target.className = "assistant-document";
-    target.innerHTML = formatAnswerHtml(answer);
-    typesetMath(target);
-  } catch (error) {
-    target.className = "assistant-document error-state";
-    target.textContent = `学习建议生成失败：${error.message}`;
-  } finally {
-    companionState.loading = false;
-    button.disabled = false;
-    button.textContent = "重新生成";
-  }
+  await loadCompanionWorkspace();
 }
 
 async function loadLessonPrepWorkspace() {

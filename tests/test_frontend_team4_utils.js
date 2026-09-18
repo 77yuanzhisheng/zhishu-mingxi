@@ -7,14 +7,67 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(utils.splitProofSteps("先设 n=k。于是结论成立；证毕。"), ["先设 n=k。", "于是结论成立；", "证毕。"]);
 
-const companion = utils.buildCompanionPrompt("today", {
-  currentNode: "德摩根律",
-  weakNodes: ["命题", "联结词"],
-  todayMinutes: 12,
-  weeklyQuestions: 8,
-});
-assert(companion.includes("德摩根律"));
-assert(companion.includes("12 分钟"));
+const emptyCompanion = {
+  today_plan: {
+    node_id: "pl_01_01",
+    title: "命题与真值",
+    reason: "当前学情数据较少",
+    exercise_count: 3,
+    available_question_count: 13,
+    target_accuracy: 0.8,
+    available: true,
+    status: "未评估",
+    path_position: 1,
+    path_total_nodes: 6,
+    path_stage_title: "补基础",
+  },
+  wrong_review: {
+    count: 0,
+    total_wrong_answers: 0,
+    items: [],
+    empty_message: "最近练习中没有需要立即巩固的错题，可以继续完成今日计划。",
+  },
+  duration_advice: {
+    total_minutes: 20,
+    review_minutes: 0,
+    practice_minutes: 15,
+    summary_minutes: 5,
+  },
+};
+const todayHtml = utils.renderCompanionAdvice("today", emptyCompanion);
+const emptyWrongHtml = utils.renderCompanionAdvice("mistakes", emptyCompanion);
+const durationHtml = utils.renderCompanionAdvice("duration", emptyCompanion);
+assert(todayHtml.includes("今日重点"));
+assert(todayHtml.includes("命题与真值"));
+assert(!todayHtml.includes("暂无待复习错题"));
+assert(emptyWrongHtml.includes("暂无待复习错题"));
+assert(!emptyWrongHtml.includes("3 道"));
+assert(durationHtml.includes("20"));
+assert(durationHtml.includes("错题复盘"));
+
+const wrongCompanion = {
+  ...emptyCompanion,
+  wrong_review: {
+    count: 1,
+    total_wrong_answers: 2,
+    items: [{
+      node_id: "rel_02_03",
+      title: "关系的反对称性",
+      wrong_count: 2,
+      recent_error_at: "2026-09-18T08:00:00+00:00",
+      recent_practice_count: 3,
+      accuracy: 1 / 3,
+    }],
+    empty_message: "",
+  },
+};
+const wrongHtml = utils.renderCompanionAdvice("mistakes", wrongCompanion);
+assert(wrongHtml.includes("关系的反对称性"));
+assert(wrongHtml.includes("2 次"));
+assert(wrongHtml.includes("2026-09-18"));
+assert.strictEqual(utils.normalizeCompanionData(wrongCompanion).wrong_review.count, 1);
+assert.notStrictEqual(todayHtml, wrongHtml);
+assert.strictEqual(utils.practiceModuleForNode("rel_02_03"), "relations");
 
 const lesson = utils.buildLessonPrompt({
   chapter: "命题逻辑",
